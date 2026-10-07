@@ -22,7 +22,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::model::{HardSoftScore, PlannerError, Solution};
+use crate::model::{HardSoftScore, PlannerError, ProblemModel, Solution};
 use crate::moves::{random_move, Move, MoveKind};
 use crate::rng::Rng;
 use crate::score::IncrementalScorer;
@@ -164,9 +164,10 @@ pub fn local_search(
     }
 
     // ---- 同步对与历史最优初始化 ----
-    // Solution 只暴露 &ProblemModel，而 IncrementalScorer 需要 Arc：一次性深拷贝模型
-    // （模型不可变，内容与原模型逐位相等；构造期成本，与搜索步数无关）。
-    let model = Arc::new(initial.model().clone());
+    // Solution 经 model_arc() 直接共享其 Arc<ProblemModel>（零拷贝；模型不可变，
+    // 内容与深拷贝逐位相等 ⇒ 搜索结果与随机流不变，且多起点并行下各 worker
+    // 可安全复用同一模型，消除每线程一次 O(n·m) 深拷贝）。
+    let model: Arc<ProblemModel> = initial.model_arc().clone();
     let n = model.entity_count();
     let mut rng = Rng::new(cfg.seed);
     let mut sol = initial;

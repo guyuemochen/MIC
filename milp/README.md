@@ -1,14 +1,17 @@
 # milp
 
 纯 Rust 标准库实现的混合整数线性规划（MILP）精确求解器：零第三方依赖、
-无 `unsafe`、单线程确定性（所有并列一律按最小下标破键），提供人类可读的
-`.milp` 算例格式、命令行入口与库 API。
+无 `unsafe`、默认单线程确定性（所有并列一律按最小下标破键；`--threads ≥2`
+并行下 objective/status 仍确定，统计量可变——见「并行架构与确定性」
+一节），提供人类可读的 `.milp` 算例格式、命令行入口与库 API。
 
 ## 定位与能力边界
 
 - **能力**：纯 LP（全连续）、0-1 规划、一般整数与混合类型 MILP 的**精确**
   求解——两阶段有界单纯形 + 深度优先分支定界 + 根节点 Gomory 混合整数割
-  （GMI）+ 取整/潜水启发式 + 保守预处理。求解完全确定，同一算例同一结果。
+  （GMI）+ 取整/潜水启发式 + 保守预处理，可选多线程并行与 MIP gap 提前
+  终止。`threads = 1` 时求解完全确定，同一算例同一结果（`threads ≥ 2` 见
+  「并行架构与确定性」一节）。
 - **规模目标**：以 ≤500 结构变量、≤2000 行的正确性为设计目标。分支定界
   使用显式 dense 表格，内存 ≈ m×(n+m+a)×8B（2000 行 × 500 变量约 72MB
   量级）；运行时间随分支节点数增长，由节点/时间上限兜底。
@@ -30,10 +33,22 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--verbose]
 ```
 
-无参时向 stderr 打印用法；`N` 非数字或为负报错（退出码 1）。
+无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
++ 退出码 1。
+
+### 参数
+
+| 参数 | 语义 | 默认值 | 校验（违例 ⇒ 退出码 1） |
+|------|------|--------|--------------------------|
+| `--time-limit-secs N` | 时间上限秒数（饱和映射毫秒） | 不限 | 非负整数；重复出现 |
+| `--threads N` | 线程数；`1` = 纯顺序路径（输出与历史版本逐字节一致），≥2 走并行引擎 | `1` | 整数 `1..=1024`（0/越界/非整数报错）；重复出现 |
+| `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
+| `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
+| `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
+| `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
 
 ### 输出格式
 
@@ -45,13 +60,17 @@ milp <算例路径> [--time-limit-secs N] [--verbose]
 - **Infeasible / Unbounded / LimitReached**：仅输出
   `status = infeasible|unbounded|limit_reached`，**没有 objective 行**；
   `LimitReached` 且已有 incumbent 时附一行 `best = <数值>`。
+- **gap 终止**（`--mipgap P` 且 P>0 触发）：依次输出 `status = gap_reached`、
+  `nodes = N`、`gap = <百分比>`（触发时刻证据 + 统一 clamp 双保证为**非负
+  有限**，永不 inf/负）、`best = <数值>`（**无 objective 行**——未证明最优，
+  绝不冒充）。
 - **错误**：向 stderr 输出 `error: <MilpError>`（中文信息，解析错误附
   1 起始行号），退出码 1。
 
 ```text
 $ cargo run --manifest-path milp/Cargo.toml --release -- milp/instances/knapsack-10.milp
 status = optimal
-nodes = 3                # 示意；实际节点数由求解器统计
+nodes = 1                # 实测（threads=1 默认路径；节点数由求解器统计）
 objective = 17.000000
 ```
 
@@ -60,10 +79,143 @@ objective = 17.000000
 | 退出码 | 含义 |
 |--------|------|
 | 0 | 最优（stdout 最后一行 `objective = <数值>`） |
-| 1 | 错误/用法（加载、解析、模型非法、数值异常等） |
+| 1 | 错误/用法（加载、解析、模型非法、参数非法、数值异常等） |
 | 2 | 不可行（Infeasible） |
 | 3 | 无界（Unbounded） |
-| 4 | 上限触发（LimitReached，附已有 incumbent） |
+| 4 | 未证明最优的提前终止——`limit_reached`（时间/节点上限触发）**或** `gap_reached`（`--mipgap` 达标触发），均附已有 incumbent |
+
+## 进度日志（--log-secs）
+
+- **默认关闭**：不带 `--log-secs` 时 stdout 不出现任何 `progress` 行，
+  保持既有输出契约逐字节稳定（脚本可解析不受扰动）；需要观测搜索过程时
+  显式开启。
+- **首行契约（不依赖计时）**：给出 `--log-secs` 后，首行进度在**根阶段
+  结束的唯一汇合点**无条件发射——覆盖一切捷径（纯 LP 单节点直返、根
+  Infeasible/Unbounded 终局、根割循环后终局均先发射再返回），先于任何
+  周期行与 `status` 行。
+- **周期行**：此后每 `F` 秒一行，**仅在搜索未结束时发射**；顺序路径以
+  待处理栈非空为前提（空栈轮次不发射，杜绝 `incumbent=X bound=none
+  gap=inf` 矛盾行）；并行协调线程接管节奏即发首周期行（此刻树搜索进行中、
+  池/在处理槽非空，不会空聚合出 `bound=none`），此后每 `F` 秒一行，
+  停止/完成标志置位后只退出不打印——亚毫秒搜索配极小 `F`（如 0.001）时
+  不依赖 OS 定时精度也必有周期行。
+- **行格式**：`progress t={耗时秒} nodes={已处理节点数} incumbent={当前最好解或none} bound={全局对偶界或none} gap={百分比或inf}`，例如：
+
+```text
+progress t=0.12 nodes=42 incumbent=512.000000 bound=526.487805 gap=2.83%
+```
+
+- **gap 恒非负**：展示与触发判定统一走 `search_ctrl::gap_percent`，raw
+  值一律 clamp 到 ≥0——`db ≤ inc`（incumbent 跳跃越过陈旧估计，或浮点
+  噪声如 est=39.999999999999996 < inc=40.0）时输出 `0.00%` 而非 `-0.00%`；
+  缺任一侧或相对口径无意义时打印 `inf`。
+- Optimal 终局仍以 `objective = <数值>` 最后一行收尾；进度行写 stdout
+  失败（如管道断裂）静默忽略。
+
+## MIP gap 提前终止（--mipgap）
+
+- **`P = 0` 等价关闭**（与不给出该参数完全一致）；`P > 0` 时，剩余对偶界
+  与 incumbent 的相对 gap ≤ P% 即提前终止。
+- **终止行为**：库层终态为 `LimitReached` + `gap_terminated = true`（诚实：
+  未证明最优），CLI 依次输出 `status = gap_reached`、`nodes = N`、
+  `gap = <百分比>`、`best = <数值>`（无 objective 行），退出码 4；`best`
+  为触发时刻的 incumbent（真实可行解，经安全网终检）。
+- **gap 口径**：`(方向差)/|incumbent| × 100`（Max 用 `bound − inc`，Min
+  镜像），其中 `bound` 为**触发时刻证据快照**——顺序路径在主循环顶部判定
+  即断即停（剩余子树 est 保守聚合，粘滞、不依赖后续栈态）；并行路径由
+  stop CAS 的胜者独占写入证据（绝不 join 后重聚合）。CLI 报告的 gap 以
+  该证据重算，与触发判定同源。
+- **clamp ≥ 0**：`db ≤ inc` 时 gap 记 0% 而非负值——此时全部剩余子树
+  `est ≤ inc` ⇒ 最优 ≤ `max(inc, db)` = incumbent ⇒ incumbent 在 est 有效
+  性内已达最优，0% 触发是诚实的；同时杜绝 `-0.00%` 之类的矛盾输出。
+- **诚实性**：gap 终止绝不冒充 optimal（无 objective 行、退出码 4）；
+  剩余子树的 est 均为父谱系 LP 目标（对其子树有效），聚合保守 ⇒ 触发
+  只会推迟、不会虚假。
+
+## 自适应启发式（--heuristic-mode）
+
+- **三档语义**：`off` ⇒ 关闭启发式（`BbOptions.heuristics = false`）；
+  `on` ⇒ 仅根节点启发式（取整复核 + dive，即历史版本行为）；
+  `auto`（默认）⇒ 根节点启发式 + **自适应**树节点 dive。
+- **控制器策略**（`search_ctrl::HeuristicController`，参数
+  32/50/8/0.25/0.8）：『无 incumbent ⇄ 连续 50 节点无改进（stall）⇄ 近期
+  8 次 dive 命中率 ≥ 0.25』三条件任一满足才授权 dive，叠加 **32 节点最
+  小间隔节流**与**时间预算保护**（有 `--time-limit-secs` 且已耗 80% 预算
+  并有 incumbent 时停投，把尾段留给最优性证明）。理由：一次 dive 的成本
+  ≈ `dive_max_fixes` 次 LP 重解，只在期望回报（更快拿到好 incumbent 以
+  加速剪枝）高时投资。
+- **正确性**：dive 只供应 incumbent，不改剪枝/分支语义 ⇒ `auto` 仍**精确
+  最优**（目标与 `on`/`off` 一致）。
+- **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值（32/50）⇒
+  `auto ≡ on`，CLI 默认输出与历史版本逐字节一致（由验收测试钉死）。
+- **hard-knapsack-12**（227 节点）超过阈值：实测 `auto` 与 `on` 同为
+  227 节点 / objective 523——该算例根启发式已供应最优 incumbent，树中
+  途 dive 不再改进，只增加 LP 迭代数（auto 856 vs on 819）；一般而言
+  中途 dive 若改进 incumbent 可使节点数**变少**（剪枝更早），`auto` 的
+  nodes/迭代数不承诺与 `on` 相同（目标与终态恒同）。
+
+### 策略级自动降级（auto + --time-limit-secs）
+
+在「树节点上要不要投资 dive」的微观自适应之上，`auto` 还有一层**策略级**
+自适应：自动判断「继续证明最优」还是「提前返回当前最好解」。
+
+- **激活条件（缺一不可）**：`--heuristic-mode auto`（默认）**且**给了
+  `--time-limit-secs N`。不给时间预算 = 没有表达速度优先的需求 ⇒ 契约
+  红线：auto 仍**证明最优**，绝不降级。
+- **触发判定**（`search_ctrl::AutoDegrade`，默认参数 0.5/0.25/0.01，
+  经 `SearchControl::degrade` 可注入）：预算消耗 ≥ 50% 之后，若
+  ① 已有 incumbent 且连续 ≥ 25%×预算 无改进，② 且同期对偶界的相对
+  改进 < 1%（**双停滞**：解侧与证明侧都不再前进）⇒ 判定继续证明的边际
+  收益过低，提前终止。界每有实质进展会刷新停滞基准——证明仍在收敛时
+  绝不放弃。
+- **输出契约**：触发时输出 `status = auto_degraded`、`nodes = N`、
+  `gap = <%.2f>`（触发时刻证据）、`best = <数值>`，**无 objective 行**
+  （未证明最优，绝不冒充），退出码 4（与 limit/gap 终止同级）；库层
+  `ControlledSolveReport` 以 `auto_degraded = true` 区分于 `--mipgap`
+  触发（`gap_terminated = true` 两者同置）。
+- **与 `--mipgap` 的关系**：`--mipgap` 是手动的「gap 到多少就停」；
+  自动降级是求解器自己判断「这预算内证不完了，别耗着」。两者可并用，
+  谁先满足谁终止。
+
+## 并行架构与确定性（--threads）
+
+- **threads = 1（默认）**：纯顺序路径，输出与历史版本**逐字节一致**
+  （所有并列一律按最小下标破键）。
+- **threads ≥ 2**：调用线程先完成与顺序路径同构的根阶段（根 LP → 纯 LP
+  捷径 → 根割循环（记录割清单）→ 根启发式），随后把根子节点（各自携带
+  完整 `Bounds` 快照与父节点 LP 目标 est）压入共享**节点池**，经
+  `std::thread::scope` 派生 N 个 worker 抢占式处理；worker 各持独立
+  `Simplex` 实例，按序 `add_row` 重放根阶段记录的割清单，任意界跳转由
+  snap/Phase-1 重建处理。
+- **共享状态与同步原语**：节点池 `Mutex`（互斥弹出 ⇒ 每节点恰处理一次）；
+  incumbent `RwLock`（单调改进，剪枝判定与顺序路径逐字相同 ⇒ 永不丢更优
+  解）；**双 Condvar**——`cv_workers` 供 worker 等节点、`cv_progress` 供
+  协调线程按 `--log-secs` 周期发射进度行，互不唤醒；**粘滞 stop** 原子量
+  （CAS 一次性置位：节点/时间上限与 gap 达标，镜像顺序路径 limit_hit
+  语义 ⇒ 截断绝不冒充完备）；**gap 证据**为触发时刻快照（CAS 胜者独占
+  写入，叶级短锁）。节点上限采用**预约制**（弹出后按预约序号判定，
+  与顺序路径 `nodes >= node_limit` 逐节点对齐）。
+- **借用交接（无 'static）**：`Shared` 为调用线程栈上局部结构体，worker
+  闭包在 `thread::scope` 内直接借用 `&Problem`、`&割清单`、`&Shared`
+  （问题与割的交接即经此借用传递，不装入 `Shared`、无需 `Arc<Shared>`）；
+  协调线程（进度节奏）同样在 scope 内于调用线程执行；
+  `ScopedJoinHandle::join` 的 `Err`（worker panic）映射
+  `MilpError::Internal`，不外泄 panic。
+- **锁纪律**：任一线程任一时刻**至多持一把锁**，绝不嵌套；gap 检查两段式
+  （池锁内聚合 → 释放 → incumbent 读 → 释放 → 无锁计算 + CAS）；锁中毒
+  `into_inner` 恢复并置 stop。
+- **Send/Sync 契约**：仅 std、零外部依赖、无 unsafe；纯数据类型
+  （`Problem`/`Bounds`/`Tolerances`/`BbOptions`/`Cut`/`ProgressInfo`/
+  `SearchControl` 等）自动 `Send + Sync`；`Simplex` 仅 `Send`（每 worker
+  独占，绝不共享）；进度回调为 `Arc<dyn Fn(&ProgressInfo) + Send + Sync>`。
+- **内存提示**：每 worker 一份 dense 表格 ⇒ 内存 ≈ `threads × m×(n+m+a)×8B`
+  （2000 行 × 500 变量约 72MB/线程量级），线程数请按内存预算选取。
+- **确定性**：`threads = 1` 逐字节一致；`threads > 1` 时 **status 与最优
+  objective 确定**（池互斥弹出每节点恰处理一次、子节点必入池 ⇒ 树覆盖
+  无遗漏；incumbent 单调 + 剪枝与顺序路径逐字相同 ⇒ 永不丢最优；粘滞
+  stop 保证截断绝不冒充 Optimal），而 **nodes/迭代数/耗时/取值（多最优
+  时取哪个）跨运行可变**——验收测试只断言 objective/status 与粘滞证据
+  字段。
 
 ## .milp 算例格式
 
@@ -218,9 +370,10 @@ R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 
 ## 验收算例
 
-`milp/instances/` 下 7 个算例（5 个数值型 + 2 个状态型）；期望值与状态
+`milp/instances/` 下 8 个算例（6 个数值型 + 2 个状态型）；期望值与状态
 判定均已用独立穷举脚本实跑验证。验收测试见 `milp/tests/acceptance.rs`
-（数值解析比较，容差 1e-6，不依赖具体小数位数）。
+（数值解析比较，容差 1e-6，不依赖具体小数位数；原 7 算例的 CLI 默认
+输出另以逐字节基线钉死）。
 
 | 算例 | 类型 | 期望结果 | 已知最优解 | 验证方式 |
 |------|------|----------|------------|----------|
@@ -229,6 +382,7 @@ R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 227 节点（threads=1；并行下节点数可变） | 2^12 = 4096 穷举；实测 227 节点 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 
@@ -237,7 +391,7 @@ R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 ```text
 milp/
 ├── src/
-│   ├── main.rs          # CLI 入口（WP5）
+│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode）
 │   ├── error.rs         # MilpError 与 Result 别名（WP1）
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）
@@ -245,10 +399,12 @@ milp/
 │   ├── presolve.rs      # 保守预处理与还原（WP3）
 │   ├── cuts.rs          # 根节点 GMI 割（WP3）
 │   ├── heuristics.rs    # 取整/潜水启发式（WP3）
-│   ├── branch_bound.rs  # 深度优先分支定界（WP4）
-│   └── solver.rs        # 统一编排与安全网终检（WP4）
-├── instances/           # 7 个验收算例
-└── tests/acceptance.rs  # 验收测试（WP5）
+│   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口（WP4）
+│   ├── solver.rs        # 统一编排、受控求解入口与安全网终检（WP4）
+│   ├── search_ctrl.rs   # 搜索控制层：进度快照/gap 口径/自适应控制器（纯逻辑零锁）
+│   └── parallel_bb.rs   # 并行分支定界引擎（节点池/incumbent/双 Condvar/粘滞 stop）
+├── instances/           # 8 个验收算例（7 原算例 + hard-knapsack-12）
+└── tests/acceptance.rs  # 验收测试（WP5 + 受控搜索参数扩展）
 ```
 
 单元测试 `#[cfg(test)]` 就近放在各模块内；验收统一在 `tests/acceptance.rs`。

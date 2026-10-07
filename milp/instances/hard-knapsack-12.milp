@@ -1,0 +1,20 @@
+name hard-knapsack-12
+sense max
+vars
+  x0 binary
+  x1 binary
+  x2 binary
+  x3 binary
+  x4 binary
+  x5 binary
+  x6 binary
+  x7 binary
+  x8 binary
+  x9 binary
+  x10 binary
+  x11 binary
+obj
+  11 x0 20 x1 32 x2 44 x3 55 x4 70 x5 88 x6 99 x7 111 x8 122 x9 133 x10 144 x11
+cons
+  cap: 7 x0 11 x1 13 x2 17 x3 19 x4 23 x5 29 x6 31 x7 37 x8 41 x9 43 x10 47 x11 <= 172
+end

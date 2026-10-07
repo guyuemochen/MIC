@@ -3,6 +3,11 @@
 //! 流程：`validate` →（可选）presolve → branch_and_bound(缩减问题) → postsolve
 //! → 安全网终检 → 报告。
 //!
+//! 受控入口 [`solve_controlled`] 在同一编排上注入 [`crate::branch_bound::SearchControl`]
+//!（threads/mipgap/自适应启发式/日志周期）与 [`crate::branch_bound::SearchHooks`]
+//!（进度回调），输出 [`ControlledSolveReport`]（常规报告 + gap/对偶界证据）；
+//! [`solve`] 签名不变，内部为默认受控路径的薄委托。
+//!
 //! 安全网终检：对原始 Problem 逐约束复核 violation ≤ 1e-6×(1+|rhs|+‖row‖₁)、
 //! 整数性 |x−round| ≤ 1e-5（超差的整数值已替换为 round 值）、目标以最终 values
 //! 重算（值与目标自洽）；违反即 `Err(MilpError::Numerical)` 而非输出错解。
@@ -17,10 +22,11 @@
 //! - 终检容差为契约固定安全网值（相对 1e-6、整数 1e-5），宽于 WP3 复核
 //!   阶梯，正常路径不会被误伤；超差说明数值已失真，宁可报错也不输出错解。
 
-use crate::branch_bound::{self, BbOptions, BbStats};
+use crate::branch_bound::{self, BbOptions, BbStats, SearchControl, SearchHooks};
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, SolveStatus, Tolerances, VarType};
 use crate::presolve;
+use crate::search_ctrl::gap_percent;
 
 /// 终检约束违反相对容差（契约固定：violation ≤ 1e-6×(1+|rhs|+‖row‖₁)）。
 const FINAL_VIOLATION_REL: f64 = 1e-6;
@@ -65,8 +71,34 @@ pub struct SolveReport {
     pub presolve_reductions: usize,
 }
 
-/// 统一求解入口。
-pub fn solve(problem: &Problem, opts: &SolveOptions) -> Result<SolveReport> {
+/// 受控求解报告：在既有 [`SolveReport`] 之上附加 gap/对偶界证据字段。
+#[derive(Debug, Clone)]
+pub struct ControlledSolveReport {
+    /// 常规求解报告（形状与 [`solve`] 的输出完全一致；gap 终止时
+    /// status = LimitReached，携带 incumbent 解）。
+    pub report: SolveReport,
+    /// 是否因达到 mipgap 阈值提前终止（true ⇒ report.status = LimitReached）。
+    pub gap_terminated: bool,
+    /// 是否因策略级自动降级提前终止（auto 模式 + 时间预算 + 双停滞）。
+    /// true ⇒ `gap_terminated` 必为 true——与 mipgap 同径的诚实提前终止，
+    /// 此字段区分触发原因（「继续证最优」被自动放弃，返回当前最好解）。
+    pub auto_degraded: bool,
+    /// 触发时刻的 gap 百分比（经统一 clamp ≥ 0）。gap_terminated = true 时
+    /// 必为非负有限的 Some；否则为 None。
+    pub gap_percent: Option<f64>,
+    /// 对偶界（口径见 [`crate::branch_bound::BbResult::bound`]）。
+    pub bound: Option<f64>,
+}
+
+/// 受控统一求解入口：在 [`solve`] 的编排（validate → 可选 presolve →
+/// 分支定界 → postsolve → 安全网终检）之上，经 [`SearchControl`] 与
+/// [`SearchHooks`] 注入线程数 / mipgap / 自适应启发式 / 进度回调。
+pub fn solve_controlled(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+) -> Result<ControlledSolveReport> {
     problem.validate()?;
     let num_orig_vars = problem.vars.len();
 
@@ -79,7 +111,7 @@ pub fn solve(problem: &Problem, opts: &SolveOptions) -> Result<SolveReport> {
         (problem.clone(), None, 0)
     };
 
-    let bb = branch_bound::branch_and_bound(&work, &opts.bb, opts.tol)?;
+    let bb = branch_bound::branch_and_bound_controlled(&work, &opts.bb, ctrl, opts.tol, hooks)?;
 
     // postsolve → 原始变量空间；B&B 未带回取值则不带解返回。
     let (objective, values) = match bb.best_values {
@@ -102,13 +134,41 @@ pub fn solve(problem: &Problem, opts: &SolveOptions) -> Result<SolveReport> {
         None => (None, None),
     };
 
-    Ok(SolveReport {
-        status: bb.status,
-        objective,
-        values,
-        stats: bb.stats,
-        presolve_reductions: reductions,
+    // gap 证据：以 (最终 incumbent, 证据 bound) 经统一 clamp 重算——
+    // BbResult.bound 在 gap 终止时即触发时刻证据 db（顺序路径触发即断，最终
+    // incumbent == 触发时 incumbent，重算值 == 触发值；并行路径若停机收尾期
+    // 间 incumbent 又有改进，重算值只会更小、仍非负有限）。故
+    // gap_terminated = true 时必得非负有限 Some（触发判定即同一 db 上
+    // gap_percent = Some(g ≤ P)）。
+    let gap_percent = if bb.gap_terminated {
+        gap_percent(
+            problem.sense,
+            bb.best_objective.unwrap_or(f64::NAN),
+            bb.bound.unwrap_or(f64::NAN),
+        )
+    } else {
+        None
+    };
+
+    Ok(ControlledSolveReport {
+        report: SolveReport {
+            status: bb.status,
+            objective,
+            values,
+            stats: bb.stats,
+            presolve_reductions: reductions,
+        },
+        gap_terminated: bb.gap_terminated,
+        auto_degraded: bb.auto_degraded,
+        gap_percent,
+        bound: bb.bound,
     })
+}
+
+/// 统一求解入口（签名不变；默认受控路径的薄委托——
+/// SearchControl::default + hooks=None，与原实现逐字节一致）。
+pub fn solve(problem: &Problem, opts: &SolveOptions) -> Result<SolveReport> {
+    Ok(solve_controlled(problem, opts, &SearchControl::default(), None)?.report)
 }
 
 /// 便捷入口：默认选项求解。
@@ -387,5 +447,148 @@ mod tests {
         assert!((v[1] - 6.0).abs() < 1e-9);
         assert_close(rep.objective.unwrap(), 6.0);
         assert!(rep.presolve_reductions >= 1, "固定列删除应计入化简量");
+    }
+
+    // =====================================================================
+    // 受控入口（solve_controlled / ControlledSolveReport）
+    // =====================================================================
+
+    /// solve() = solve_controlled(默认) 的薄委托：报告全等。
+    #[test]
+    fn solve_controlled_default_matches_solve() {
+        let mut p = Problem::new("m", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 2.0)], RelOp::Le, 7.0).unwrap();
+        for opts in [opts_no_presolve(), SolveOptions::default()] {
+            let a = solve(&p, &opts).unwrap();
+            let b = solve_controlled(&p, &opts, &SearchControl::default(), None).unwrap();
+            assert_eq!(a.status, b.report.status);
+            assert_eq!(a.objective, b.report.objective);
+            assert_eq!(a.values, b.report.values);
+            assert_eq!(a.stats.nodes, b.report.stats.nodes);
+            assert_eq!(a.presolve_reductions, b.report.presolve_reductions);
+            assert!(!b.gap_terminated);
+            assert_eq!(b.gap_percent, None);
+        }
+    }
+
+    /// 受控顺序 gap 用例（dive 问题，关 presolve 与根割保证确定性）：
+    /// - mipgap=Some(3.0) ⇒ report.status=LimitReached（携带 incumbent 解）、
+    ///   gap_terminated=true、gap_percent=Some(≈2.38)（非负有限）、bound≈21.5；
+    /// - mipgap=Some(2.0) ⇒ Optimal 21、gap_percent=None。
+    #[test]
+    fn solve_controlled_sequential_gap_dive_problem() {
+        let mut p = Problem::new("dive-gap", Sense::Maximize);
+        p.add_var("x1", VarType::Integer).unwrap();
+        p.add_var("x2", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 10.0).unwrap();
+        p.set_var_bounds(1, 0.0, 10.0).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
+            .unwrap();
+        let opts = SolveOptions {
+            use_presolve: false,
+            bb: crate::branch_bound::BbOptions {
+                root_cuts: false,
+                heuristics: true,
+                ..crate::branch_bound::BbOptions::default()
+            },
+            ..SolveOptions::default()
+        };
+        // Some(3.0)：gap=(21.5−21)/21×100≈2.381 ≤ 3 ⇒ LimitReached + 证据。
+        let ctrl = SearchControl {
+            mipgap_percent: Some(3.0),
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+        assert_eq!(r.report.status, SolveStatus::LimitReached);
+        assert!(r.gap_terminated);
+        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.report.values.as_ref().unwrap()[0], 2.0);
+        assert_close(r.bound.unwrap(), 21.5);
+        let g = r.gap_percent.expect("gap_terminated ⇒ gap_percent 必为 Some");
+        assert!(g.is_finite() && g >= 0.0, "gap_percent 非负有限，实际 {g}");
+        assert!((g - 2.3809523809523813).abs() < 1e-9, "实际 {g}");
+        // Some(2.0)：不触发 ⇒ Optimal。
+        let ctrl = SearchControl {
+            mipgap_percent: Some(2.0),
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+        assert_eq!(r.report.status, SolveStatus::Optimal);
+        assert!(!r.gap_terminated);
+        assert_eq!(r.gap_percent, None);
+        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.bound.unwrap(), 21.0);
+    }
+
+    /// 策略级自动降级（顺序路径；dive 问题关 presolve/根割保证确定性）：
+    /// - 激进参数（start_frac=0 / plateau_frac=0）+ auto + 时间预算 ⇒ 双停滞
+    ///   判定即时触发：LimitReached + gap_terminated + auto_degraded，携带
+    ///   incumbent 21 与 gap 证据（≈2.38%，同 mipgap 口径）；
+    /// - 同参数但**无时间预算** ⇒ 契约红线：auto 仍证明最优（Optimal 21）；
+    /// - 时间预算但**非 auto 模式** ⇒ 降级不评估：Optimal 21。
+    #[test]
+    fn solve_controlled_auto_degrade_sequential() {
+        let mut p = Problem::new("dive-gap", Sense::Maximize);
+        p.add_var("x1", VarType::Integer).unwrap();
+        p.add_var("x2", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 10.0).unwrap();
+        p.set_var_bounds(1, 0.0, 10.0).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
+            .unwrap();
+        let aggressive = crate::search_ctrl::DegradePolicy {
+            start_frac: 0.0,
+            plateau_frac: 0.0,
+            ..crate::search_ctrl::DegradePolicy::default()
+        };
+        let base = SolveOptions {
+            use_presolve: false,
+            bb: crate::branch_bound::BbOptions {
+                root_cuts: false,
+                heuristics: true,
+                ..crate::branch_bound::BbOptions::default()
+            },
+            ..SolveOptions::default()
+        };
+        // ① auto + 预算 + 激进参数 ⇒ 触发降级（诚实 LimitReached + 标记）。
+        let mut o = base;
+        o.bb.time_limit_ms = 10_000;
+        let ctrl = SearchControl {
+            adaptive_heuristics: true,
+            degrade: aggressive,
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &o, &ctrl, None).unwrap();
+        assert_eq!(r.report.status, SolveStatus::LimitReached);
+        assert!(r.gap_terminated, "降级 ⇒ gap_terminated");
+        assert!(r.auto_degraded, "降级 ⇒ auto_degraded");
+        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.report.values.as_ref().unwrap()[0], 2.0);
+        let g = r.gap_percent.expect("降级 ⇒ gap_percent 必为 Some");
+        assert!(g.is_finite() && g >= 0.0, "gap 非负有限，实际 {g}");
+        // ② 同参数但无预算 ⇒ 证明最优（契约红线：无需求表达不降级）。
+        let ctrl = SearchControl {
+            adaptive_heuristics: true,
+            degrade: aggressive,
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &base, &ctrl, None).unwrap();
+        assert_eq!(r.report.status, SolveStatus::Optimal);
+        assert!(!r.gap_terminated);
+        assert!(!r.auto_degraded);
+        assert_close(r.report.objective.unwrap(), 21.0);
+        // ③ 预算但非 auto 模式 ⇒ 降级不评估。
+        let ctrl = SearchControl {
+            adaptive_heuristics: false,
+            degrade: aggressive,
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &o, &ctrl, None).unwrap();
+        assert_eq!(r.report.status, SolveStatus::Optimal);
+        assert!(!r.gap_terminated);
+        assert!(!r.auto_degraded);
     }
 }

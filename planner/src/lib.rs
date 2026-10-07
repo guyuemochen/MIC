@@ -1,9 +1,11 @@
 //! # planner
 //!
-//! 纯标准库、单线程、零依赖、无 unsafe 的 OptaPlanner 式启发式约束求解 crate。
+//! 纯标准库、零依赖、无 unsafe 的 OptaPlanner 式启发式约束求解 crate
+//! （threads=1 时单线程求解路径保持不变；[`parallel`] 提供多起点并行编排）。
 //!
 //! ## 模块总览
-//! - [`rng`]：确定性伪随机数（SplitMix64 播种 + xoshiro256\*\*，随机流逐位钉死）
+//! - [`rng`]：确定性伪随机数（SplitMix64 播种 + xoshiro256\*\*，随机流逐位钉死；
+//!   多起点种子派生 [`rng::derive_seed`]）
 //! - [`model`]：域模型（ProblemModel / PlanningEntity / 值域 / Solution / HardSoftScore）
 //! - [`score`]：全量评分器（真值）+ 增量评分器（preview/apply 共用同一增量内核）
 //! - [`format`]：行导向文本算例解析（指令总序与数值界在解析期强制）
@@ -11,6 +13,7 @@
 //! - [`moves`]：Change/Swap 移动与随机邻域（随机数消耗顺序逐字固定、跨类回退为单一无条件规则）
 //! - [`localsearch`]：禁忌搜索 / 模拟退火 / 迟到接受 + 步数/时间终止
 //! - [`solver`]：构造 → 局部搜索编排
+//! - [`parallel`]：多起点并行编排（std scoped threads、零共享可变状态、聚合确定性）
 //!
 //! ## 求解流程与数据流
 //! 解析并校验 → 构造完整初始解（未分配变量记 [`model::UNASSIGNED`]）→ 元启发式搜索
@@ -34,6 +37,7 @@ pub mod construct;
 pub mod moves;
 pub mod localsearch;
 pub mod solver;
+pub mod parallel;
 
 pub use model::{
     EntityId, ValueId, UNASSIGNED, HardSoftScore, ProblemModel, PlanningEntity, Resource,
@@ -45,3 +49,4 @@ pub use construct::{ConstructionHeuristic, construct};
 pub use moves::{Move, MoveKind, random_move};
 pub use localsearch::{Termination, Metaheuristic, LocalSearchConfig, SearchResult, local_search};
 pub use solver::{SolverConfig, solve};
+pub use parallel::{solve_parallel, solve_parallel_detailed, ParallelReport};

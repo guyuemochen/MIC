@@ -91,6 +91,20 @@ impl Rng {
     }
 }
 
+/// 多起点种子派生（normative）：worker 0 恒用 base 原值（不派生，不调用本函数）；
+/// worker i ≥ 1 用本函数。规则（与 [`Rng::new`] 同一 SplitMix64 内核、常数不变，
+/// 即 [`splitmix`] 的两次单步）：
+///   a      = splitmix_step(i)        // x = i 单步（x 先 += 0x9E3779B97F4A7C15 再混合）
+///   y      = base ^ a
+///   seed_i = splitmix_step(y)
+/// splitmix_step 为双射 ⇒ 固定 base 时 i ↦ seed_i 单射（不同 worker 必不同种子）。
+pub fn derive_seed(base: u64, worker: u64) -> u64 {
+    let mut x = worker;
+    let a = splitmix(&mut x);
+    let mut y = base ^ a;
+    splitmix(&mut y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Rng;
@@ -115,6 +129,40 @@ mod tests {
     ];
     /// seed 7 对 [0,1,...,9] 做规范 Fisher-Yates（向后）的结果（同上离线计算）。
     const SHUFFLE_SEED7_0TO9: [usize; 10] = [1, 8, 3, 0, 4, 5, 9, 6, 2, 7];
+
+    /// derive_seed 离线参考向量（规范公式的独立 Python 3.13 转写计算，2026-10-07；
+    /// 本会话已用同公式二次独立复核，七个值全部一致）。
+    const DERIVE_REF: [(u64, u64, u64); 7] = [
+        (42, 1, 0x7eb3b394ac9efc29),
+        (42, 2, 0x1db2233eb3bcaeb3),
+        (42, 3, 0x43aa8652ad94b3a2),
+        (42, 4, 0x8e34a8db17849847),
+        (0, 1, 0x5e41ab087439611e),
+        (7, 2026, 0x968b01f447ad6d77),
+        (u64::MAX, 1, 0xa562df66c82c649a),
+    ];
+
+    #[test]
+    fn derive_seed_matches_offline_reference_vectors() {
+        for (base, worker, want) in DERIVE_REF {
+            assert_eq!(
+                super::derive_seed(base, worker),
+                want,
+                "derive_seed(base={base}, worker={worker})"
+            );
+        }
+    }
+
+    /// 固定 base 时 i ↦ seed_i 单射抽查：前 10000 个 worker 种子互异。
+    #[test]
+    fn derive_seed_is_injective_for_first_10000_workers() {
+        let mut seeds: Vec<u64> = (1..=10_000u64).map(|i| super::derive_seed(42, i)).collect();
+        seeds.sort_unstable();
+        assert!(
+            seeds.windows(2).all(|w| w[0] != w[1]),
+            "duplicate seed among first 10000 workers (fixed base=42)"
+        );
+    }
 
     #[test]
     fn same_seed_same_stream_bit_for_bit() {

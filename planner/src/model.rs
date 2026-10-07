@@ -345,6 +345,12 @@ impl Solution {
         &self.model
     }
 
+    /// 所属模型的共享句柄（与 [`Solution::model`] 同一对象，零拷贝共享；
+    /// 供多起点并行各 worker 复用同一不可变模型，替代逐线程深拷贝）。
+    pub fn model_arc(&self) -> &Arc<ProblemModel> {
+        &self.model
+    }
+
     /// 实体 `e` 的当前取值；未分配返回 [`UNASSIGNED`]。
     pub fn value(&self, e: EntityId) -> ValueId {
         self.assignment[e]
@@ -642,6 +648,9 @@ mod tests {
         assert_eq!(sol.value(0), 0);
         assert_eq!(sol.value(1), 1);
         assert!(sol.is_complete());
+
+        // model_arc 与 model() 同源（零拷贝共享同一 Arc 指向的模型）
+        assert_eq!(sol.model_arc().name, sol.model().name);
 
         // 长度不符
         match Solution::from_assignment(model.clone(), &[0]) {

@@ -7,15 +7,29 @@
 //!   不可行/无界退出码 2/3 且无 objective 行。
 //!
 //! 算例路径拼接用 `concat!(env!("CARGO_MANIFEST_DIR"), "/instances/", name, ".milp")`
-//! 的等价形式（name 非字面量处用 format!）。LimitReached 退出码 4 不做 CLI
-//! 级验收（依赖计时不稳定；由 WP4 单元测试以极小 node_limit 覆盖）。
+//! 的等价形式（name 非字面量处用 format!）。
+//!
+//! # 受控搜索参数包扩展（追加测试）
+//! - CLI 默认输出逐字节基线（原 7 算例；threads=1 与默认 auto 红线端到端
+//!   钉死）；
+//! - 库级/CLI 级 threads=4 并发一致性（含新算例 hard-knapsack-12：227 节点
+//!   真实压满节点池；CLI 级重复 ≥10 次不依赖计时）；
+//! - `--log-secs` 进度行格式（首行契约钉死 + 全行正则 + 空栈矛盾行防护）；
+//! - `--mipgap`（0≡关闭、大阈值 gap_reached 择一断言、库级确定性用例）；
+//! - 自适应启发式 auto 于原算例与新算例仍精确最优；`--heuristic-mode on`
+//!   在 227 节点算例上与升级前逐字节一致。
+//!
+//! （时间/节点上限触发的 LimitReached 仍不做 CLI 级验收——依赖计时不稳定；
+//! 由 WP4 单元测试以极小 node_limit 覆盖。gap 终止（`--mipgap`）不依赖计时，
+//! 在 acceptance_cli_mipgap 做 CLI 级验收。）
 
 use std::path::Path;
 use std::process::Command;
 
+use milp::branch_bound::{BbOptions, SearchControl};
 use milp::instance::load_instance;
-use milp::model::{RelOp, SolveStatus};
-use milp::solver::solve_default;
+use milp::model::{Problem, RelOp, Sense, SolveStatus, VarType};
+use milp::solver::{solve_controlled, solve_default, SolveOptions};
 
 /// 数值型验收算例与已知最优目标值（mustMatch，须精确达到，容差 1e-6）。
 const CASES: &[(&str, f64)] = &[
@@ -212,4 +226,621 @@ fn acceptance_cli_exit_codes() {
         !stdout.contains("objective = "),
         "无界不得输出 objective 行：{stdout}"
     );
+}
+
+// ===========================================================================
+// 受控搜索参数包扩展（既有 4 测试不动，以下全部追加；全部不依赖计时——
+// 首行进度由『根阶段结束必发』契约保证，并发断言只看 objective/status）
+// ===========================================================================
+
+/// 运行 milp CLI（args 首元素为算例路径）。
+fn cli(args: &[&str]) -> (Option<i32>, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_milp"))
+        .args(args)
+        .output()
+        .expect("启动 milp CLI 失败");
+    (output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// stdout 最后一行 strip_prefix "objective = " 后数值解析。
+fn last_objective(stdout: &str) -> f64 {
+    let last_line = stdout
+        .trim_end_matches(['\r', '\n'])
+        .lines()
+        .next_back()
+        .unwrap_or_default();
+    let value_text = last_line.strip_prefix("objective = ").unwrap_or_else(|| {
+        panic!(
+            "stdout 最后一行应为 `objective = <数值>`，得到 {last_line:?}（完整 stdout：{stdout}）"
+        )
+    });
+    value_text
+        .parse()
+        .unwrap_or_else(|_| panic!("objective 行无法数值解析：{value_text:?}"))
+}
+
+/// 数值字段校验（无正则 crate，手写等价判定）：
+/// `none` 或 `-?\d+(\.\d+)?([eE][+-]?\d+)?`。
+fn number_token_ok(token: &str) -> bool {
+    if token == "none" {
+        return true;
+    }
+    let body = token.strip_prefix('-').unwrap_or(token);
+    let mut split_exp = body.splitn(2, ['e', 'E']);
+    let mantissa = split_exp.next().unwrap_or("");
+    let exponent = split_exp.next();
+    let mut split_dot = mantissa.splitn(2, '.');
+    let int_part = split_dot.next().unwrap_or("");
+    let frac_part = split_dot.next();
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if !digits(int_part) {
+        return false;
+    }
+    if let Some(frac) = frac_part {
+        if !digits(frac) {
+            return false;
+        }
+    }
+    if let Some(exp) = exponent {
+        let exp_digits = exp.strip_prefix(['+', '-']).unwrap_or(exp);
+        if !digits(exp_digits) {
+            return false;
+        }
+    }
+    true
+}
+
+/// 进度行整行校验，等价于
+/// `^progress t=\d+\.\d+ nodes=\d+ incumbent=(none|-?\d+(\.\d+)?([eE][+-]?\d+)?) bound=(none|-?\d+(\.\d+)?([eE][+-]?\d+)?) gap=(inf|\d+\.\d+%)$`。
+fn progress_line_ok(line: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    // progress t=<\d+\.\d+>
+    let Some(rest) = line.strip_prefix("progress t=") else {
+        return false;
+    };
+    let Some((t, rest)) = rest.split_once(' ') else {
+        return false;
+    };
+    let mut t_parts = t.splitn(2, '.');
+    if !digits(t_parts.next().unwrap_or("")) || !digits(t_parts.next().unwrap_or("")) {
+        return false;
+    }
+    // nodes=<\d+>
+    let Some(rest) = rest.strip_prefix("nodes=") else {
+        return false;
+    };
+    let Some((nodes, rest)) = rest.split_once(' ') else {
+        return false;
+    };
+    if !digits(nodes) {
+        return false;
+    }
+    // incumbent=<number>
+    let Some(rest) = rest.strip_prefix("incumbent=") else {
+        return false;
+    };
+    let Some((incumbent, rest)) = rest.split_once(' ') else {
+        return false;
+    };
+    if !number_token_ok(incumbent) {
+        return false;
+    }
+    // bound=<number>
+    let Some(rest) = rest.strip_prefix("bound=") else {
+        return false;
+    };
+    let Some((bound, rest)) = rest.split_once(' ') else {
+        return false;
+    };
+    if !number_token_ok(bound) {
+        return false;
+    }
+    // gap=(inf|\d+\.\d+%)
+    let Some(gap) = rest.strip_prefix("gap=") else {
+        return false;
+    };
+    if gap == "inf" {
+        return true;
+    }
+    let Some(percent) = gap.strip_suffix('%') else {
+        return false;
+    };
+    let mut gap_parts = percent.splitn(2, '.');
+    digits(gap_parts.next().unwrap_or("")) && digits(gap_parts.next().unwrap_or(""))
+}
+
+/// 对一份 CLI stdout 的全部 progress 行做统一校验：
+/// ≥1 行、每行匹配 [`progress_line_ok`]、首 progress 行先于 status 行。
+fn assert_progress_lines_wellformed(stdout: &str) -> Vec<&str> {
+    let lines: Vec<&str> = stdout.lines().collect();
+    let progress: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| l.starts_with("progress "))
+        .collect();
+    assert!(!progress.is_empty(), "必须至少一行进度：{stdout}");
+    for line in &progress {
+        assert!(progress_line_ok(line), "进度行格式非法：{line:?}（stdout：{stdout}）");
+    }
+    let first_progress = lines
+        .iter()
+        .position(|l| l.starts_with("progress "))
+        .expect("上方已保证存在 progress 行");
+    let status_line = lines
+        .iter()
+        .position(|l| l.starts_with("status "))
+        .unwrap_or(usize::MAX);
+    assert!(
+        first_progress < status_line,
+        "首 progress 行必须先于 status 行：{stdout}"
+    );
+    progress
+}
+
+/// 首 progress 行去掉 `progress t=<数值>` 前缀后的剩余字段（逐字段精确断言用；
+/// t 为墙钟数值不钉）。
+fn first_progress_tail(stdout: &str) -> &str {
+    let first = stdout
+        .lines()
+        .find(|l| l.starts_with("progress "))
+        .unwrap_or_else(|| panic!("无 progress 行：{stdout}"));
+    let idx = first
+        .find(" nodes=")
+        .unwrap_or_else(|| panic!("progress 行缺 nodes 字段：{first:?}"));
+    assert!(
+        first.starts_with("progress t=") && {
+            let t = &first["progress t=".len()..idx];
+            !t.is_empty()
+                && t.chars().all(|c| c.is_ascii_digit() || c == '.')
+                && t.contains('.')
+        },
+        "t 字段应为 \\d+\\.\\d+：{first:?}"
+    );
+    &first[idx..]
+}
+
+/// dive 问题（与 solver/branch_bound 单元测试同构；关 presolve 与根割保证
+/// gap 触发确定性）：max 10·x1 + x2 s.t. 20·x1 + 3·x2 ≤ 43，整数 [0,10]²。
+/// 根 LP 21.5 分数，根启发式 dive 得 (2,1)=21，整数最优 21。
+fn dive_gap_problem() -> Problem {
+    let mut p = Problem::new("dive-gap", Sense::Maximize);
+    p.add_var("x1", VarType::Integer).unwrap();
+    p.add_var("x2", VarType::Integer).unwrap();
+    p.set_var_bounds(0, 0.0, 10.0).unwrap();
+    p.set_var_bounds(1, 0.0, 10.0).unwrap();
+    p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+    p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
+        .unwrap();
+    p
+}
+
+/// (1) CLI 默认参数输出逐字节基线：**仅原 7 算例**（threads=1 与默认 auto
+/// 红线端到端钉死）。hard-knapsack-12 超自适应阈值、并行节点数可变，不入
+/// 逐字节基线（见 (6)/(6b) 与 README）。
+#[test]
+fn acceptance_cli_default_output_identical() {
+    let baselines: &[(&str, &str, i32)] = &[
+        ("lp-prod-3", "status = optimal\nnodes = 1\nobjective = 13.000000\n", 0),
+        ("knapsack-10", "status = optimal\nnodes = 1\nobjective = 17.000000\n", 0),
+        ("assign-4x4", "status = optimal\nnodes = 1\nobjective = 10.000000\n", 0),
+        ("milp-wolsey-2", "status = optimal\nnodes = 7\nobjective = 40.000000\n", 0),
+        ("milp-mixed-5", "status = optimal\nnodes = 1\nobjective = 29.000000\n", 0),
+        ("infeasible-tiny", "status = infeasible\n", 2),
+        ("unbounded-tiny", "status = unbounded\n", 3),
+    ];
+    for &(name, expected_stdout, expected_code) in baselines {
+        let (code, stdout) = cli(&[&instance_path(name)]);
+        assert_eq!(
+            code,
+            Some(expected_code),
+            "算例 {name} 退出码，stdout：{stdout}"
+        );
+        assert_eq!(
+            stdout, expected_stdout,
+            "算例 {name} 默认参数输出必须与升级前逐字节一致"
+        );
+    }
+}
+
+/// (2) 库级 threads=4 与 threads=1（solve_default）一致：5 个原数值算例
+/// status 相同且 |objective 差| ≤ 1e-6；infeasible/unbounded status 相同；
+/// hard-knapsack-12（新算例文件）：Optimal 且 objective=523±1e-6
+///（227 节点 ≫ 原算例的 1/7 节点，真实压满节点池路径）。
+#[test]
+fn acceptance_threads4_matches_threads1() {
+    let ctrl4 = SearchControl {
+        threads: 4,
+        ..SearchControl::default()
+    };
+    for &(name, expected) in CASES {
+        let problem = load_instance(Path::new(&instance_path(name)))
+            .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
+        let seq = solve_default(&problem)
+            .unwrap_or_else(|error| panic!("算例 {name} 顺序求解失败：{error}"));
+        let par = solve_controlled(&problem, &SolveOptions::default(), &ctrl4, None)
+            .unwrap_or_else(|error| panic!("算例 {name} 并行求解失败：{error}"));
+        assert_eq!(
+            par.report.status, seq.status,
+            "算例 {name}：threads=4 与 threads=1 终态必须相同"
+        );
+        assert_eq!(seq.status, SolveStatus::Optimal, "算例 {name} 顺序基线");
+        let diff = (par
+            .report
+            .objective
+            .unwrap_or_else(|| panic!("算例 {name} 并行无 objective"))
+            - seq
+                .objective
+                .unwrap_or_else(|| panic!("算例 {name} 顺序无 objective")))
+        .abs();
+        assert!(diff <= 1e-6, "算例 {name}：objective 差 {diff} 超 1e-6");
+        assert!(
+            (par.report.objective.unwrap() - expected).abs() <= 1e-6,
+            "算例 {name} 并行 objective 须达期望 {expected}"
+        );
+    }
+    // 状态型算例：status 相同（Infeasible / Unbounded）。
+    for name in ["infeasible-tiny", "unbounded-tiny"] {
+        let problem = load_instance(Path::new(&instance_path(name)))
+            .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
+        let seq = solve_default(&problem)
+            .unwrap_or_else(|error| panic!("算例 {name} 顺序求解失败：{error}"));
+        let par = solve_controlled(&problem, &SolveOptions::default(), &ctrl4, None)
+            .unwrap_or_else(|error| panic!("算例 {name} 并行求解失败：{error}"));
+        assert_eq!(par.report.status, seq.status, "算例 {name}：终态必须相同");
+        assert!(par.report.objective.is_none(), "算例 {name} 不得携带 objective");
+    }
+    // hard-knapsack-12：Optimal 且 523（2^12 穷举已独立验证，见 README）。
+    let problem = load_instance(Path::new(&instance_path("hard-knapsack-12")))
+        .unwrap_or_else(|error| panic!("算例 hard-knapsack-12 加载失败：{error}"));
+    let par = solve_controlled(&problem, &SolveOptions::default(), &ctrl4, None)
+        .unwrap_or_else(|error| panic!("算例 hard-knapsack-12 并行求解失败：{error}"));
+    assert_eq!(par.report.status, SolveStatus::Optimal);
+    let objective = par
+        .report
+        .objective
+        .unwrap_or_else(|| panic!("hard-knapsack-12 报告 Optimal 但无 objective"));
+    assert!(
+        (objective - 523.0).abs() <= 1e-6,
+        "hard-knapsack-12 objective = {objective}，期望 523"
+    );
+    assert!(!par.gap_terminated);
+}
+
+/// (3) CLI 级并发：knapsack-10 --threads 4 ⇒ 退出码 0、末行 objective=17±1e-6；
+/// hard-knapsack-12 --threads 4 ⇒ 退出码 0、末行 objective=523±1e-6，重复
+/// ≥10 次同断言（227 节点压满池；丢唤醒/死锁/竞态在重复下必现，单次亚毫秒
+/// 耗时可忽略；断言不依赖计时）。
+#[test]
+fn acceptance_cli_threads4() {
+    let (code, stdout) = cli(&[&instance_path("knapsack-10"), "--threads", "4"]);
+    assert_eq!(code, Some(0), "knapsack-10 --threads 4 应报最优：{stdout}");
+    assert!(
+        (last_objective(&stdout) - 17.0).abs() <= 1e-6,
+        "knapsack-10 --threads 4 objective：{stdout}"
+    );
+
+    for run in 1..=10 {
+        let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--threads", "4"]);
+        assert_eq!(
+            code, Some(0),
+            "hard-knapsack-12 --threads 4 第 {run} 次运行应报最优：{stdout}"
+        );
+        assert!(
+            (last_objective(&stdout) - 523.0).abs() <= 1e-6,
+            "hard-knapsack-12 --threads 4 第 {run} 次运行 objective：{stdout}"
+        );
+    }
+}
+
+/// (4) `--log-secs` 进度日志格式：
+/// - lp-prod-3 --log-secs 5：首行逐字段精确
+///   ` nodes=1 incumbent=13.000000 bound=13.000000 gap=0.00%`（t 数值不钉），
+///   末行仍 objective = 13.000000；
+/// - knapsack-10：首行 nodes=1、incumbent=17.000000；
+/// - milp-wolsey-2：首行 incumbent=none、gap=inf；
+/// - infeasible-tiny / unbounded-tiny：首行 ` nodes=1 incumbent=none bound=none gap=inf`；
+/// - 全部算例：每个 progress 行匹配统一正则、≥1 行、首 progress 行先于
+///   status 行；
+/// - hard-knapsack-12 --log-secs 0.001 --threads 4 变体：周期行 ≥1（总行
+///   数 ≥2 = 首行 + ≥1 周期行）、全部匹配正则、且无 `bound=none`
+///   （空栈/空池矛盾行防护，N5）。
+#[test]
+fn acceptance_cli_progress_log_format() {
+    // lp-prod-3：首行逐字段精确 + 末行 objective 不受进度行影响。
+    let (code, stdout) = cli(&[&instance_path("lp-prod-3"), "--log-secs", "5"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(
+        first_progress_tail(&stdout),
+        " nodes=1 incumbent=13.000000 bound=13.000000 gap=0.00%",
+        "lp-prod-3 首行字段：{stdout}"
+    );
+    assert_eq!(
+        stdout.trim_end_matches(['\r', '\n']).lines().next_back(),
+        Some("objective = 13.000000"),
+        "末行必须仍是 objective 行：{stdout}"
+    );
+    assert_progress_lines_wellformed(&stdout);
+
+    // knapsack-10：首行 nodes=1、incumbent=17.000000。
+    let (code, stdout) = cli(&[&instance_path("knapsack-10"), "--log-secs", "5"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    let tail = first_progress_tail(&stdout);
+    assert!(tail.starts_with(" nodes=1 "), "knapsack-10 首行 nodes：{stdout}");
+    assert!(
+        tail.contains(" incumbent=17.000000 "),
+        "knapsack-10 首行 incumbent：{stdout}"
+    );
+    assert_progress_lines_wellformed(&stdout);
+
+    // milp-wolsey-2：首行 incumbent=none、gap=inf。
+    let (code, stdout) = cli(&[&instance_path("milp-wolsey-2"), "--log-secs", "5"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    let tail = first_progress_tail(&stdout);
+    assert!(
+        tail.contains(" incumbent=none "),
+        "milp-wolsey-2 首行 incumbent：{stdout}"
+    );
+    assert!(tail.ends_with(" gap=inf"), "milp-wolsey-2 首行 gap：{stdout}");
+    assert_progress_lines_wellformed(&stdout);
+
+    // infeasible-tiny / unbounded-tiny：首行四字段全钉。
+    for name in ["infeasible-tiny", "unbounded-tiny"] {
+        let (code, stdout) = cli(&[&instance_path(name), "--log-secs", "5"]);
+        assert!(code == Some(2) || code == Some(3), "算例 {name} 退出码：{stdout}");
+        assert_eq!(
+            first_progress_tail(&stdout),
+            " nodes=1 incumbent=none bound=none gap=inf",
+            "算例 {name} 首行字段：{stdout}"
+        );
+        assert_progress_lines_wellformed(&stdout);
+    }
+
+    // hard-knapsack-12 变体：--log-secs 0.001 --threads 4（并行协调线程）。
+    let (code, stdout) = cli(&[
+        &instance_path("hard-knapsack-12"),
+        "--log-secs",
+        "0.001",
+        "--threads",
+        "4",
+    ]);
+    assert_eq!(code, Some(0), "{stdout}");
+    let progress = assert_progress_lines_wellformed(&stdout);
+    assert!(
+        progress.len() >= 2,
+        "极小周期下首行之后至少一行周期行，实际 {} 行：{stdout}",
+        progress.len()
+    );
+    for line in &progress {
+        assert!(
+            !line.contains("bound=none"),
+            "周期行不得出现 bound=none（空栈/空池矛盾行，N5）：{line:?}"
+        );
+    }
+    assert!(
+        (last_objective(&stdout) - 523.0).abs() <= 1e-6,
+        "hard-knapsack-12 变体末行 objective：{stdout}"
+    );
+}
+
+/// (5) `--mipgap`：
+/// - `--mipgap 0` 于 5 个原数值算例 ⇒ 退出码 0 + objective==期望（≡关闭）；
+/// - `--mipgap 100` 于 milp-wolsey-2 ⇒ 退出码 ∈ {0,4} 择一断言：0 ⇒ 末行
+///   objective=40±1e-6；4 ⇒ 含 status = gap_reached、gap 行匹配
+///   `gap=\d+\.\d+%`（非 inf、非负——clamp+证据双保证，捕获 -0.00%/inf 矛盾）、
+///   best 行可解析且 ≤ 40+1e-6、无 objective 行；
+/// - 库级确定性补充（dive 问题，关 presolve 与根割）：mipgap=Some(3.0) ⇒
+///   LimitReached + gap_terminated + objective=21 + gap_percent≈2.38；
+///   Some(2.0) ⇒ Optimal 21。
+#[test]
+fn acceptance_cli_mipgap() {
+    // --mipgap 0 ≡ 关闭。
+    for &(name, expected) in CASES {
+        let (code, stdout) = cli(&[&instance_path(name), "--mipgap", "0"]);
+        assert_eq!(code, Some(0), "算例 {name} --mipgap 0 应报最优：{stdout}");
+        let objective = last_objective(&stdout);
+        assert!(
+            (objective - expected).abs() <= 1e-6,
+            "算例 {name} --mipgap 0 objective = {objective}，期望 {expected}"
+        );
+    }
+
+    // --mipgap 100 于 milp-wolsey-2：择一断言。
+    let (code, stdout) = cli(&[&instance_path("milp-wolsey-2"), "--mipgap", "100"]);
+    match code {
+        Some(0) => {
+            assert!(
+                (last_objective(&stdout) - 40.0).abs() <= 1e-6,
+                "退出码 0 分支：objective 须为 40：{stdout}"
+            );
+        }
+        Some(4) => {
+            assert!(
+                stdout.contains("status = gap_reached"),
+                "退出码 4 分支须含 gap_reached 状态行：{stdout}"
+            );
+            let gap_line = stdout
+                .lines()
+                .find(|l| l.starts_with("gap = "))
+                .unwrap_or_else(|| panic!("退出码 4 分支须含 gap 行：{stdout}"));
+            let gap_text = gap_line
+                .strip_prefix("gap = ")
+                .and_then(|v| v.strip_suffix('%'))
+                .unwrap_or_else(|| panic!("gap 行格式非法：{gap_line:?}"));
+            // 匹配 \d+\.\d+%：无 '-'、非 inf、恰一小数点、其余全数字。
+            assert!(
+                !gap_text.starts_with('-')
+                    && gap_text.contains('.')
+                    && gap_text
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.')
+                    && gap_text.matches('.').count() == 1,
+                "gap 值须为非负有限百分比（如 9.12%），得到 {gap_line:?}"
+            );
+            let gap: f64 = gap_text
+                .parse()
+                .unwrap_or_else(|_| panic!("gap 无法数值解析：{gap_line:?}"));
+            assert!(
+                gap.is_finite() && gap >= 0.0,
+                "gap 须非负有限（clamp+证据双保证）：{gap_line:?}"
+            );
+            let best_line = stdout
+                .lines()
+                .find(|l| l.starts_with("best = "))
+                .unwrap_or_else(|| panic!("退出码 4 分支须含 best 行：{stdout}"));
+            let best: f64 = best_line
+                .strip_prefix("best = ")
+                .unwrap_or_else(|| panic!("best 行格式非法：{best_line:?}"))
+                .parse()
+                .unwrap_or_else(|_| panic!("best 无法数值解析：{best_line:?}"));
+            assert!(
+                best <= 40.0 + 1e-6,
+                "gap 终止的 incumbent 不得超过真最优 40：{best_line:?}"
+            );
+            assert!(
+                !stdout.contains("objective = "),
+                "gap 终止不得输出 objective 行：{stdout}"
+            );
+        }
+        other => panic!("--mipgap 100 退出码应为 0 或 4，得到 {other:?}：{stdout}"),
+    }
+
+    // 库级确定性：dive 问题（gap=(21.5−21)/21×100≈2.381）。
+    let problem = dive_gap_problem();
+    let opts = SolveOptions {
+        use_presolve: false,
+        bb: BbOptions {
+            root_cuts: false,
+            heuristics: true,
+            ..BbOptions::default()
+        },
+        ..SolveOptions::default()
+    };
+    let ctrl = SearchControl {
+        mipgap_percent: Some(3.0),
+        ..SearchControl::default()
+    };
+    let r = solve_controlled(&problem, &opts, &ctrl, None)
+        .unwrap_or_else(|error| panic!("mipgap=3.0 求解失败：{error}"));
+    assert_eq!(r.report.status, SolveStatus::LimitReached, "gap 终止诚实标注截断");
+    assert!(r.gap_terminated);
+    let objective = r
+        .report
+        .objective
+        .expect("gap 终止须携带 incumbent 解的目标值");
+    assert!(
+        (objective - 21.0).abs() <= 1e-9,
+        "mipgap=3.0 触发时 incumbent = {objective}，期望 21"
+    );
+    let gap = r.gap_percent.expect("gap_terminated ⇒ gap_percent 必为 Some");
+    assert!(gap.is_finite() && gap >= 0.0, "gap 须非负有限：{gap}");
+    assert!(
+        (gap - 100.0 * 0.5 / 21.0).abs() < 1e-9,
+        "gap_percent = {gap}，期望 ≈2.38"
+    );
+    // Some(2.0)：2.381 > 2 不触发 ⇒ Optimal 21。
+    let ctrl = SearchControl {
+        mipgap_percent: Some(2.0),
+        ..SearchControl::default()
+    };
+    let r = solve_controlled(&problem, &opts, &ctrl, None)
+        .unwrap_or_else(|error| panic!("mipgap=2.0 求解失败：{error}"));
+    assert_eq!(r.report.status, SolveStatus::Optimal);
+    assert!(!r.gap_terminated);
+    assert_eq!(r.gap_percent, None);
+    assert!((r.report.objective.unwrap() - 21.0).abs() <= 1e-9);
+}
+
+/// (6) 库层 adaptive_heuristics=true（auto 模式）：5 个原数值算例
+/// **及 hard-knapsack-12** ⇒ Optimal + 期望目标（auto 于超阈值算例仍精确
+/// 最优——dive 只供应 incumbent，不改剪枝/分支语义；nodes 不钉）。
+#[test]
+fn acceptance_heuristic_auto_optimal() {
+    let ctrl = SearchControl {
+        adaptive_heuristics: true,
+        ..SearchControl::default()
+    };
+    for &(name, expected) in CASES {
+        let problem = load_instance(Path::new(&instance_path(name)))
+            .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
+        let r = solve_controlled(&problem, &SolveOptions::default(), &ctrl, None)
+            .unwrap_or_else(|error| panic!("算例 {name} auto 求解失败：{error}"));
+        assert_eq!(r.report.status, SolveStatus::Optimal, "算例 {name}");
+        assert!(!r.gap_terminated, "算例 {name} 不得 gap 终止");
+        let objective = r
+            .report
+            .objective
+            .unwrap_or_else(|| panic!("算例 {name} auto 无 objective"));
+        assert!(
+            (objective - expected).abs() <= 1e-6,
+            "算例 {name} auto objective = {objective}，期望 {expected}"
+        );
+    }
+    // hard-knapsack-12：227 节点超自适应阈值（32/50），auto 仍精确最优。
+    let problem = load_instance(Path::new(&instance_path("hard-knapsack-12")))
+        .unwrap_or_else(|error| panic!("算例 hard-knapsack-12 加载失败：{error}"));
+    let r = solve_controlled(&problem, &SolveOptions::default(), &ctrl, None)
+        .unwrap_or_else(|error| panic!("算例 hard-knapsack-12 auto 求解失败：{error}"));
+    assert_eq!(r.report.status, SolveStatus::Optimal);
+    assert!(!r.gap_terminated);
+    let objective = r
+        .report
+        .objective
+        .expect("hard-knapsack-12 auto 无 objective");
+    assert!(
+        (objective - 523.0).abs() <= 1e-6,
+        "hard-knapsack-12 auto objective = {objective}，期望 523"
+    );
+}
+
+/// (6b) CLI `--heuristic-mode on` 在 hard-knapsack-12 上与升级前逐字节一致
+///（on ≡ 升级前行为：heuristics=true 且不自适应；227 节点算例上钉死自适应
+/// 开关不改变 on 路径）。默认 auto 的 nodes 不钉（见 README：阈值超限后
+/// 控制器可补跑 dive；目标不变）。
+#[test]
+fn acceptance_cli_heuristic_on_identical() {
+    let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(
+        stdout,
+        "status = optimal\nnodes = 227\nobjective = 523.000000\n",
+        "hard-knapsack-12 --heuristic-mode on 输出必须与升级前逐字节一致"
+    );
+}
+
+/// 契约：auto 模式 + 充足时间预算（默认降级参数 0.5/0.25/0.01）在全部
+/// 验收算例上仍证明最优——默认策略不会在秒级完成的算例上误触发降级
+/// （资格预检要求预算过半 + 双停滞窗口）；降级只应在真实长停滞时放弃
+/// 证明。同时顺序（threads=1）与并行（threads=4）口径一致。
+#[test]
+fn acceptance_auto_with_budget_still_optimal() {
+    for threads in [1usize, 4] {
+        let ctrl = SearchControl {
+            threads,
+            adaptive_heuristics: true,
+            ..SearchControl::default()
+        };
+        for &(name, expected) in CASES {
+            let path = instance_path(name);
+            let problem = load_instance(std::path::Path::new(&path))
+                .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
+            let mut opts = SolveOptions::default();
+            opts.bb.time_limit_ms = 60_000;
+            let r = solve_controlled(&problem, &opts, &ctrl, None)
+                .unwrap_or_else(|error| panic!("算例 {name}（threads={threads}）求解失败：{error}"));
+            assert_eq!(
+                r.report.status,
+                SolveStatus::Optimal,
+                "算例 {name}（threads={threads}）：默认降级参数不得误触发"
+            );
+            assert!(!r.auto_degraded, "算例 {name}（threads={threads}）不应降级");
+            let objective = r
+                .report
+                .objective
+                .unwrap_or_else(|| panic!("算例 {name} 报告 Optimal 但无 objective"));
+            assert!(
+                (objective - expected).abs() <= 1e-6,
+                "算例 {name}（threads={threads}）：objective = {objective}，期望 {expected}"
+            );
+        }
+    }
 }

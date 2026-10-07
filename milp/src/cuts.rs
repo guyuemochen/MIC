@@ -335,12 +335,33 @@ pub fn cut_loop(
     opts: CutOptions,
     tol: &Tolerances,
 ) -> Result<(u64, LpStatus)> {
+    cut_loop_recorded(s, bounds, problem, int_vars, opts, tol).map(|(applied, status, _)| {
+        (applied, status)
+    })
+}
+
+/// 与 [`cut_loop`] 完全相同的割循环，额外把施加的割按施加顺序原样返回
+/// （terms/rhs 即 add_row 时传入的原尺度值）。行为与 cut_loop 逐字节一致。
+///
+/// 用途：并行引擎在各 worker 的 Simplex 副本上按相同顺序 `add_row` 这些割
+/// 即可复现根割表格（行序一致 ⇒ 表格一致）。[`cut_loop`] 即本函数丢弃割
+/// 清单后的委托；既有语义逐项保持：入口防御性 `resolve(bounds)`、
+/// `max_cuts_per_round` 截断、Infeasible → `Err(Numerical)`。
+pub fn cut_loop_recorded(
+    s: &mut Simplex,
+    bounds: &Bounds,
+    problem: &Problem,
+    int_vars: &[usize],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Result<(u64, LpStatus, Vec<Cut>)> {
     let mut applied: u64 = 0;
     let mut ledger: Vec<CutRecord> = Vec::new();
+    let mut recorded: Vec<Cut> = Vec::new();
     // 防御性同步：确保表格与 bounds 一致且为 Optimal。
     let mut status = s.resolve(bounds).status;
     if status != LpStatus::Optimal {
-        return Ok((0, status));
+        return Ok((0, status, recorded));
     }
     for _round in 0..opts.max_rounds {
         let mut batch = gomory_cuts_inner(s, problem, bounds, int_vars, opts, tol, &ledger);
@@ -353,10 +374,11 @@ pub fn cut_loop(
         for cut in batch {
             let index = s.add_row(&cut.terms, RelOp::Le, cut.rhs)?;
             ledger.push(CutRecord {
-                terms: cut.terms,
+                terms: cut.terms.clone(),
                 rhs: cut.rhs,
                 index,
             });
+            recorded.push(cut);
             applied = applied.saturating_add(1);
         }
         status = s.resolve(bounds).status;
@@ -370,7 +392,7 @@ pub fn cut_loop(
             break; // Unbounded/IterationLimit：如实返回终态
         }
     }
-    Ok((applied, status))
+    Ok((applied, status, recorded))
 }
 
 #[cfg(test)]
@@ -559,5 +581,76 @@ mod tests {
             cut_loop(&mut s, &b, &p, &p.integer_vars(), CutOptions::default(), &t).unwrap();
         assert_eq!(applied, 0);
         assert_eq!(status, LpStatus::Optimal);
+    }
+
+    /// cut_loop 与 cut_loop_recorded 在 wolsey 上返回相同的 (applied, status)，
+    /// 且 recorded 清单长度恰为施加割数。
+    #[test]
+    fn cut_loop_and_recorded_agree_on_wolsey() {
+        let p = wolsey();
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+
+        let mut s1 = Simplex::new(&p, t).unwrap();
+        assert_eq!(s1.solve(&b).status, LpStatus::Optimal);
+        let (applied1, status1) =
+            cut_loop(&mut s1, &b, &p, &p.integer_vars(), CutOptions::default(), &t).unwrap();
+
+        let mut s2 = Simplex::new(&p, t).unwrap();
+        assert_eq!(s2.solve(&b).status, LpStatus::Optimal);
+        let (applied2, status2, cuts2) = cut_loop_recorded(
+            &mut s2,
+            &b,
+            &p,
+            &p.integer_vars(),
+            CutOptions::default(),
+            &t,
+        )
+        .unwrap();
+
+        assert_eq!((applied1, status1), (applied2, status2));
+        assert_eq!(cuts2.len(), applied2 as usize, "记录条数须等于施加割数");
+    }
+
+    /// recorded 割非空时：全新 Simplex::new + 按序 add_row + resolve 复现与根
+    /// 相同的根 LP 目标值（并行正确性前提：worker 行序一致 ⇒ 表格一致）。
+    #[test]
+    fn cut_loop_recorded_replays_on_fresh_simplex() {
+        let p = wolsey();
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+        let mut root = Simplex::new(&p, t).unwrap();
+        assert_eq!(root.solve(&b).status, LpStatus::Optimal);
+        let (applied, status, cuts) = cut_loop_recorded(
+            &mut root,
+            &b,
+            &p,
+            &p.integer_vars(),
+            CutOptions::default(),
+            &t,
+        )
+        .unwrap();
+        assert!(applied >= 1, "wolsey 根 LP 41.25 处必产割");
+        assert_eq!(status, LpStatus::Optimal);
+        // 根侧终态读数：记账性 resolve（与 branch_bound 根阶段同口径）。
+        let root_sol = root.resolve(&b);
+        assert_eq!(root_sol.status, LpStatus::Optimal);
+
+        // worker 复现路径：全新 Simplex + 按序 add_row + resolve。
+        let mut worker = Simplex::new(&p, t).unwrap();
+        for cut in &cuts {
+            worker.add_row(&cut.terms, cut.op, cut.rhs).unwrap();
+        }
+        let w = worker.resolve(&b);
+        assert_eq!(w.status, LpStatus::Optimal);
+        assert!(
+            (w.objective - root_sol.objective).abs() < 1e-9,
+            "worker 表格须复现根 LP 目标：root = {}，worker = {}",
+            root_sol.objective,
+            w.objective
+        );
+        // 与既有割后根界契约一致：不切掉整数最优 40，且严格改进根 LP 41.25。
+        assert!(w.objective >= 40.0 - 1e-6);
+        assert!(w.objective <= 41.25 - 1e-6);
     }
 }

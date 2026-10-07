@@ -16,7 +16,9 @@ use planner::construct::{construct, ConstructionHeuristic};
 use planner::format::parse_file;
 use planner::localsearch::{local_search, LocalSearchConfig, Metaheuristic, Termination};
 use planner::moves::MoveKind;
+use planner::parallel::solve_parallel;
 use planner::score::ScoreCalculator;
+use planner::solver::SolverConfig;
 
 const INSTANCES: &[&str] = &[
     "roster-small",
@@ -86,5 +88,49 @@ fn bench_construct_and_tabu_300k() {
             bf_ms,
             search_ms
         );
+    }
+}
+
+/// 多起点并行扩展性基准：roster-medium / cloud-medium 以 Steps(300_000)、seed 42、
+/// tabu（与验收同配置）分别计时 threads ∈ {1,2,4} 的 `solve_parallel` 墙钟与
+/// best_score，打印表格。数值仅性能/质量参考，不断言（threads=1 经库内委托路径
+/// 与 `solve` 等价）。
+#[test]
+#[ignore]
+fn bench_parallel_threads_scaling() {
+    println!(
+        "=== planner parallel threads scaling（release；TabuSearch{{tabu_size:8}} \
+Steps(300_000) seed 42 Mixed{{0.5}} samples 32 FF）==="
+    );
+    println!("{:<16} {:>10} {:>12} {:>10}", "instance", "threads", "best (h,s)", "wall ms");
+    for &name in &["roster-medium", "cloud-medium"] {
+        let path = instance_path(name);
+        let model = Arc::new(
+            parse_file(&path).unwrap_or_else(|e| panic!("{name}: parse failed: {e}")),
+        );
+        let cfg = SolverConfig {
+            construction: ConstructionHeuristic::FirstFit,
+            local_search: LocalSearchConfig {
+                metaheuristic: Metaheuristic::TabuSearch { tabu_size: 8 },
+                seed: 42,
+                termination: Termination::Steps(300_000),
+                move_kind: MoveKind::Mixed { change_ratio: 0.5 },
+                samples_per_step: 32,
+            },
+            run_local_search: true,
+        };
+        for threads in [1usize, 2, 4] {
+            let t0 = Instant::now();
+            let r = solve_parallel(model.clone(), &cfg, threads)
+                .unwrap_or_else(|e| panic!("{name}: solve_parallel({threads}) failed: {e}"));
+            let wall_ms = t0.elapsed().as_millis();
+            println!(
+                "{:<16} {:>10} {:>12} {:>10}",
+                name,
+                threads,
+                format!("({},{})", r.best_score.hard, r.best_score.soft),
+                wall_ms
+            );
+        }
     }
 }

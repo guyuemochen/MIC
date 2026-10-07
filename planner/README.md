@@ -1,7 +1,8 @@
 # planner
 
-OptaPlanner 式启发式约束求解器：纯 Rust、**仅标准库、零依赖、无 `unsafe`、单线程**
-（性能来自增量评分，而非并行）。求解流程：
+OptaPlanner 式启发式约束求解器：纯 Rust、**仅标准库、零依赖、无 `unsafe`**——
+threads=1 时单线程路径不变（性能来自增量评分）；`--threads N` 多起点并行（仅标准库
+scoped threads、零共享可变状态、无 unsafe）。求解流程：
 
 ```
 文本算例 ──parse──> ProblemModel ──construct（FF/BF）──> 完整初始解
@@ -34,7 +35,7 @@ OptaPlanner 式启发式约束求解器：纯 Rust、**仅标准库、零依赖�
 
 ## 快速开始
 
-CLI（默认 `tabu`、`steps=50000`、`seed=42`、`ff`、`samples=32`）：
+CLI（默认 `tabu`、`steps=50000`、`seed=42`、`ff`、`samples=32`、`threads=1`）：
 
 ```text
 cargo run --manifest-path planner/Cargo.toml --release -- planner/instances/roster-small.txt
@@ -87,18 +88,20 @@ println!("{} {}", r.best_score.hard, r.best_score.soft);
 
 ```text
 planner <算例路径> [--steps N] [--time-secs F] [--seed S]
-         [--algo tabu|sa|la] [--construct ff|bf] [--samples K] [--verbose]
+         [--algo tabu|sa|la] [--construct ff|bf] [--samples K]
+         [--threads N] [--verbose]
 ```
 
 | 旗标 | 默认 | 语义 |
 | --- | --- | --- |
 | `--steps N` | 50000 | 恰好执行 N 步（比特级可复现）；与 `--time-secs` 互斥，同给 exit 1；N ≤ 10^9 |
 | `--time-secs F` | —（用 steps） | 每步开始前检查已耗时；F 解析为 f64 后先 `is_finite() && 0 ≤ F ≤ 36000` 再 `Duration::try_from_secs_f64`，任一不过 → `error: invalid --time-secs` + exit 1（**禁用** `from_secs_f64`，其对 NaN/负/溢出直接 panic） |
-| `--seed S` | 42 | u64 种子（SplitMix64 扩展 + xoshiro256\*\*） |
+| `--seed S` | 42 | u64 种子（SplitMix64 扩展 + xoshiro256\*\*）；多起点下为 worker 0 的种子，其余 worker 由它派生（见下「多线程与确定性」） |
 | `--algo tabu\|sa\|la` | tabu | `tabu` → `TabuSearch { tabu_size: 8 }`；`sa` **固定** `SimulatedAnnealing { start_temp: 1000.0, end_temp: 1.0 }`；`la` **固定** `LateAcceptance { history_len: 30 }`（参数取自 `localsearch` 契约的唯一定义，无调参旗标） |
 | `--construct ff\|bf` | ff | 构造启发式（FirstFit / BestFit，确定性、不耗随机数） |
 | `--samples K` | 32 | 每步采样数，**仅 tabu 读取**；sa/la 下接受但无效果（不耗随机数）；K ≤ 10^6 |
-| `--verbose` | 关 | 进度走 stderr：构造分、搜索后的初始分 / 实际步数。步级进度（每 5000 步当前最优）因 lib 公共 API 无逐步回调而不提供（见下「可复现性与 verbose」） |
+| `--threads N` | 1 | 多起点并行 worker 数，`1 ≤ N ≤ 1024`（u64 字面量；非法/越界/重复 → `error:` + exit 1，消息风格同 `--steps`）；语义 = N 个独立 worker 从**同一初始解**各自完整 construct+local_search（种子不同），结束取最优；threads=1 走与旧版**完全相同**的 `solve()` 调用路径——行为与输出逐字节一致（结构性保证，非重新实现）；与 `--steps`/`--time-secs`/`--seed` 等任意组合（`--steps` 与 `--time-secs` 互斥规则不变）；stdout 恰两行与 exit code 契约不变。确定性见下「多线程与确定性」 |
+| `--verbose` | 关 | 进度走 stderr：构造分、threads 数、搜索后的初始分 / 实际步数；threads>1 时另追加 winner 与各 worker 的 `best = (h, s)`。步级进度（每 5000 步当前最优）因 lib 公共 API 无逐步回调而不提供（见下「可复现性与 verbose」） |
 
 输出契约：成功时 stdout **恰两行**且在结束时输出——`hard = <i64>` 与最后一行
 `objective = <i64>`（均取 `SearchResult.best_score`，`objective` 后无内容）；`hard` 与
@@ -110,12 +113,90 @@ planner <算例路径> [--steps N] [--time-secs F] [--seed S]
 - **同二进制 + 同种子 + Steps 终止 ⇒ 结果逐位一致**（`tests/acceptance.rs::feasible_and_reproducible`
   断言之）；随机流（SplitMix64 播种 + xoshiro256\*\* + Lemire `gen_range` + 53 位 `gen_ratio`）
   与移动生成的随机数消耗顺序均在 `src/rng.rs` / `src/moves.rs` 契约逐字钉死。
+- **多起点（`--threads N` > 1）**：复现条件为**固定 seed + 固定 threads + Steps 终止**
+  ⇒ 聚合结果（best_score / assignment / winner）逐位可复现；跨 threads 数值不承诺一致
+  （`tests/acceptance.rs::parallel_reproducible_fixed_seed_and_threads` 断言之，
+  规则全文见下「多线程与确定性」）。
 - **TimeLimit 终止**：结果是"已完成步"的确定函数，但墙钟截断点随机器速度不同，跨机器不保证相同。
 - **SA**：`exp` 依赖平台 libm，跨平台比特级一致不作承诺——默认与全部验收使用 tabu/la（纯整数路径）。
 - **跨实现**：不承诺轨迹一致；必达算例验收用"种子表 `[42, 7, 2026]` 任一命中最优"消除该依赖。
 - **--verbose 的进度粒度**：`solver::solve` / `localsearch::local_search` 不提供逐步回调，
-  故 CLI 在搜索进行中无法报告"每 5000 步当前最优"；verbose 输出构造分（求解前）与
-  初始分 / 实际步数 / 历史最优（求解后）。
+  故 CLI 在搜索进行中无法报告"每 5000 步当前最优"；verbose 输出构造分与 threads 数
+  （求解前）与初始分 / 实际步数 / 历史最优（求解后），threads>1 时另追加
+  `[verbose] winner : worker <i> of <N>` 与各 worker 的 `best = (h, s)` 一行。
+
+## 多线程与确定性
+
+`--threads N`（lib 侧 `parallel::solve_parallel` / `solve_parallel_detailed`）是
+**多起点并行**：并发模型仅用标准库 scoped threads（`std::thread::scope` /
+`Builder::spawn_scoped`，rustc 1.63 稳定），线程间**零共享可变状态**——无
+Mutex/RwLock/Atomic/channel，唯一共享对象是只读 `Arc<ProblemModel>` 与只读
+`&SolverConfig`；每 worker 私有持有 Solution 克隆、`IncrementalScorer` 与 `Rng`：
+
+```text
+父线程  parse → validate → construct（恰好一次，得同一初始解）
+          │
+          ├── worker 0  （主 seed 原值）──┐   各 worker 私有状态、互不通信，
+          ├── worker 1  （seed_1）      ──┤   完整 construct+local_search
+          ├── …                            ├─→ 按下标 join（0, 1, …, N−1）
+          └── worker N−1（seed_{N−1}）   ──┘              │
+                                                          ▼
+                               聚合 = min(best_score)，并列取最小 worker 下标
+```
+
+worker panic 不吞不锁死：按下标序 join 完**全部**线程后，在 scope 外
+`std::panic::resume_unwind` 最小下标 payload；`spawn_scoped` 的 io 失败（如资源不足）
+映射 `PlannerError::Io`。入口先校验 threads ∈ [1, 1024]（越界 `Err(PlannerError::Invalid)`，
+不 panic）；父线程先行 `validate` + `construct`，Err 在派生任何线程之前返回。
+
+**种子派生（normative，`src/rng.rs::derive_seed`）**：worker 0 恒用主 seed 原值
+（`--seed S`）；worker i ≥ 1 用 `rng::derive_seed(base, i)`，公式 = 与 `Rng::new` 同一
+SplitMix64 内核同常数的两次单步：
+
+```text
+a      = splitmix_step(i)          // x = i：x += 0x9E3779B97F4A7C15 后混合
+seed_i = splitmix_step(base ^ a)
+```
+
+splitmix_step 是双射 ⇒ 固定 base 时 i ↦ seed_i **单射**（不同 worker 必不同种子；
+前 10000 个已用独立 Python 转写抽查互异）。参考向量（`derive_seed(42, i)`，十六进制）：
+
+| i | seed_i |
+| --- | --- |
+| 1 | `0x7eb3b394ac9efc29` |
+| 2 | `0x1db2233eb3bcaeb3` |
+| 3 | `0x43aa8652ad94b3a2` |
+
+**聚合**：min(best_score)（`HardSoftScore` 字典序），**严格小于才替换** ⇒ 并列取最小
+worker 下标；聚合在全部线程按下标 join 完成后进行 ⇒ 与线程完成顺序无关。返回胜出
+worker 的 `SearchResult` 原样（best / best_score / initial_score / steps 不变式随胜者保持）。
+
+**三条承诺**：
+1. 固定 seed + 固定 threads + Steps 终止 ⇒ 聚合结果**逐位可复现**：worker 种子集合
+   确定、`local_search` 是 (initial, cfg) 的纯函数、聚合与完成顺序无关。
+2. worker 0 = 主 seed ⇒ 任何 threads=N 的运行**完整包含** threads=1 的那次搜索，
+   聚合取 min ⇒ Steps 终止下 **threads=N 结果恒 ≤ threads=1**（字典序）——"不劣于"
+   由结构保证而非概率；TimeLimit 下为尽力（见下）。
+3. **跨 threads 数值不承诺一致**（threads=1 与 threads=N 的结果可以不同；仅第 2 条的
+   "不劣于"方向在 Steps 下恒成立）。
+
+**TimeLimit**：每 worker 收到**同一 Duration**（零共享状态方案，不设共享 deadline），
+各自从进入搜索时计时；墙钟截断本就不承诺跨机一致，此时"不劣于"为尽力而非结构保证。
+
+**不做步内并行邻域评估**（决策）：std 无工作窃取线程池，逐步 scoped spawn 的同步开销
+远超单次 preview 成本（设计域数百实体/数千值、samples=32）；且 `src/moves.rs` 的随机数
+消耗顺序契约逐字钉死，并行采样等于重写确定性契约。多起点已提供近线性加速且保住全部
+既有位级契约。
+
+lib 用法（`ParallelReport` 含胜者与各 worker 分数）：
+
+```rust
+let report = planner::solve_parallel_detailed(model, &cfg, 4)?;
+println!("winner = worker {}", report.winner); // 并列取最小下标
+for (i, s) in report.worker_scores.iter().enumerate() {
+    println!("worker {i}: ({}, {})", s.hard, s.soft);
+}
+```
 
 ## 规模硬界（解析期 + 建模期双层强制，违例返回 `PlannerError` 而非 panic）
 
@@ -135,15 +216,27 @@ planner <算例路径> [--steps N] [--time-secs F] [--seed S]
 
 ## 测试与基准
 
-验收测试（`tests/acceptance.rs`；**务必 `--release`**——`must_match_known_optima` 的
-200k 步在 debug 下过慢）：
+验收测试（`tests/acceptance.rs`，11 个；**务必 `--release`**——`must_match_known_optima`
+与 `parallel_matches_known_optima` 的 200k 步在 debug 下过慢）：
+
+- 单线程既有六项：`incremental_consistency` / `construction_deterministic` /
+  `search_no_worse_than_construction` / `feasible_and_reproducible` /
+  `must_match_known_optima` / `cli_smoke`；
+- 并行新增五项：`parallel_matches_known_optima`（必达算例 × threads=4）、
+  `parallel_no_worse_than_single_thread`（含 worker-0 = 主 seed 的端到端钉死）、
+  `parallel_reproducible_fixed_seed_and_threads`（固定 seed+threads 逐位复现）、
+  `parallel_repeated_runs_no_crash`（threads=4 连跑 5 轮冒烟）、
+  `cli_threads_smoke`（CLI `--threads` 进程级断言）。
 
 ```text
 cargo test --manifest-path planner/Cargo.toml --release
 ```
 
-基准（`tests/bench.rs`，全部 `#[ignore]`，手动运行；不断言数值，仅性能参考——对 6 算例计时
-`construct(FF/BF)` 与 `local_search(TabuSearch{tabu_size:8}, Steps(300_000))` 并打印表格）：
+基准（`tests/bench.rs`，全部 `#[ignore]`，手动运行；不断言数值，仅性能参考）：
+`bench_construct_and_tabu_300k` 对 6 算例计时 `construct(FF/BF)` 与
+`local_search(TabuSearch{tabu_size:8}, Steps(300_000))`；
+`bench_parallel_threads_scaling` 对 roster-medium / cloud-medium 以 Steps(300_000)、
+seed 42 计时 threads ∈ {1, 2, 4} 的 `solve_parallel` 墙钟与 best_score 并打印表格：
 
 ```text
 cargo test --release --manifest-path planner/Cargo.toml --test bench -- --ignored --nocapture
