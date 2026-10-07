@@ -6,3 +6,7 @@ target/
 
 # Windows 设备名重定向残留（子代理实验命令偶发产生）
 nul
+
+# Python 字节码缓存
+__pycache__/
+*.pyc
