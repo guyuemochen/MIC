@@ -1,0 +1,9 @@
+name unbounded-tiny
+sense max
+vars
+  x continuous
+obj
+  1 x
+cons
+  g1: 1 x >= 3
+end

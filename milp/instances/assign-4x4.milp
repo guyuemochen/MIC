@@ -1,0 +1,34 @@
+name assign-4x4
+sense min
+vars
+  x11 binary
+  x12 binary
+  x13 binary
+  x14 binary
+  x21 binary
+  x22 binary
+  x23 binary
+  x24 binary
+  x31 binary
+  x32 binary
+  x33 binary
+  x34 binary
+  x41 binary
+  x42 binary
+  x43 binary
+  x44 binary
+obj
+  9 x11 8 x12 1 x13 9 x14
+  2 x21 8 x22 8 x23 9 x24
+  9 x31 8 x32 9 x33 3 x34
+  8 x41 4 x42 8 x43 9 x44
+cons
+  row1: 1 x11 1 x12 1 x13 1 x14 = 1
+  row2: 1 x21 1 x22 1 x23 1 x24 = 1
+  row3: 1 x31 1 x32 1 x33 1 x34 = 1
+  row4: 1 x41 1 x42 1 x43 1 x44 = 1
+  col1: 1 x11 1 x21 1 x31 1 x41 = 1
+  col2: 1 x12 1 x22 1 x32 1 x42 = 1
+  col3: 1 x13 1 x23 1 x33 1 x43 = 1
+  col4: 1 x14 1 x24 1 x34 1 x44 = 1
+end

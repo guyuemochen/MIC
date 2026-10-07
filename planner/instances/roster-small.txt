@@ -1,0 +1,13 @@
+# 员工排班（必达）：6 个班次 -> 3 名员工，每人至多 2 个班次（容量恰好绑定）
+NAME roster-small
+VALUES 3
+ENTITIES 6
+CAP 0 2
+CAP 1 2
+CAP 2 2
+COSTROW 0 5 8 6
+COSTROW 1 7 4 9
+COSTROW 2 9 6 5
+COSTROW 3 4 7 8
+COSTROW 4 6 5 7
+COSTROW 5 8 9 4

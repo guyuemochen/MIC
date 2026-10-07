@@ -1,0 +1,11 @@
+name milp-wolsey-2
+sense max
+vars
+  x1 integer
+  x2 integer
+obj
+  5 x1 8 x2
+cons
+  c1: 1 x1 1 x2 <= 6
+  c2: 5 x1 9 x2 <= 45
+end

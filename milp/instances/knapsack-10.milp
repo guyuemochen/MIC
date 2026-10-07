@@ -1,0 +1,13 @@
+name knapsack-10
+sense max
+vars
+  x1 binary
+  x2 binary
+  x3 binary
+  x4 binary
+  x5 binary
+obj
+  7 x1 5 x2 9 x3 6 x4 3 x5
+cons
+  cap: 4 x1 3 x2 5 x3 6 x4 2 x5 <= 10
+end

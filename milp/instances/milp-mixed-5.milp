@@ -1,0 +1,18 @@
+name milp-mixed-5
+sense max
+vars
+  y1 binary
+  y2 binary
+  z integer
+  c continuous
+obj
+  10 y1 8 y2 4 z 1 c
+cons
+  cap: 6 y1 5 y2 3 z 1 c <= 20
+  count: 1 y1 1 y2 1 z <= 4
+  linkc: 1 c -6 y1 <= 0
+  linkz: 1 z -2 y2 >= 0
+bounds
+  z <= 10
+  c <= 10
+end

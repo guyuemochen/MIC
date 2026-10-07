@@ -1,0 +1,10 @@
+name infeasible-tiny
+sense min
+vars
+  x integer
+obj
+  1 x
+cons
+  g1: 1 x >= 3
+  g2: 1 x <= 1
+end
