@@ -1,0 +1,967 @@
+//! C ABI 入口：22 个 `#[no_mangle] pub extern "C"` 符号（总表见 README.md）。
+//!
+//! 统一纪律：
+//! - 全部入口经 [`guard`]（`catch_unwind(AssertUnwindSafe(..))`）兜底，panic
+//!   永不跨 FFI 边界：捕获后置粘滞错误（码 7，`Rust panic: <消息>`）并将该
+//!   句柄 `poisoned = true`（其后除 destroy 外一律返回 7）；
+//! - 带句柄入口先做 NULL（→1）/ 中毒（→7）检查；`destroy` 例外——中毒句柄
+//!   仍可销毁，NULL 入参安全幂等；
+//! - 入参 `const char*` 一律 `CStr`→UTF-8 校验（失败→8）；C 契约要求 NUL 结尾；
+//! - 枚举 i32 未知值→9（消息列合法值）；u32 计数先转 usize 再建 Vec 防 OOM；
+//! - 入参数组仅在 count>0 时解引用（count=0 允许 NULL，空表达式/空目标合法）。
+//!
+//! CLI 映射纪律照搬 milp/src/main.rs:294-327：TimeLimit 秒→ms 用
+//! `saturating_mul(1000)`（0=不限，BbOptions.time_limit_ms 语义，
+//! branch_bound.rs:97-98）；HeuristicMode off ⇒ bb.heuristics=false、
+//! on/auto ⇒ true、auto 另置 adaptive_heuristics=true。
+
+use std::any::Any;
+use std::io::Write;
+use std::os::raw::{c_char, c_void};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::slice;
+use std::sync::Arc;
+
+use milp::branch_bound::{BbOptions, SearchControl, SearchHooks};
+use milp::error::MilpError;
+use milp::model::{RelOp, Sense, SolveStatus, Tolerances, VarType};
+use milp::search_ctrl::{format_number, format_progress_line, ProgressInfo};
+use milp::solver::{solve_controlled, SolveOptions};
+
+use crate::error::{
+    copy_last_error, copy_out, set_error, MILP_FFI_OK, ERR_ARG, ERR_INTERNAL, ERR_INVALID_MODEL,
+    ERR_IO, ERR_NO_SOLUTION, ERR_NULL, ERR_NUMERICAL, ERR_PANIC, ERR_PARSE, ERR_UNKNOWN_PARAM,
+    ERR_UTF8,
+};
+use crate::handle::{HMode, ModelBox};
+
+/// 消费面全部来自 milp 公开 API（`milp/` 零改动红线）：
+/// Problem 建模（model.rs:186-301）、solve_controlled（solver.rs:96-166）、
+/// SearchControl/BbOptions（branch_bound.rs:88-169）、format_number
+/// （search_ctrl.rs:87）、进度钩子范式（main.rs:334-341）。
+
+// ===========================================================================
+// panic 兜底与公共校验
+// ===========================================================================
+
+/// 从 panic 载荷提取消息（`&str`/`String` 两类，其余给占位说明）。
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "（无消息的 panic 载荷）".to_string()
+    }
+}
+
+/// 统一 panic 兜底包装：body 捕获 panic 后转错误码 7 并中毒句柄（若有）。
+///
+/// `model` 为 `Some(裸指针)` 时（各带句柄入口），panic 后置
+/// `(*ptr).poisoned = true`；`None` 用于无句柄入口。milp 并行引擎的
+/// worker panic 已在库内映射 `Internal`（parallel_bb.rs:1144 先例），
+/// 本函数是最后兜底。
+pub(crate) fn guard(model: Option<*mut ModelBox>, body: impl FnOnce() -> i32) -> i32 {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(rc) => rc,
+        Err(payload) => {
+            if let Some(ptr) = model {
+                unsafe {
+                    (*ptr).poisoned = true;
+                }
+            }
+            set_error(ERR_PANIC, &format!("Rust panic: {}", panic_message(payload)))
+        }
+    }
+}
+
+/// 句柄检查：NULL→1，中毒→7；通过返回 `*mut ModelBox`。
+fn check_handle(model: *mut c_void) -> Result<*mut ModelBox, i32> {
+    if model.is_null() {
+        return Err(set_error(ERR_NULL, "句柄为 NULL"));
+    }
+    let m = model as *mut ModelBox;
+    if unsafe { (*m).poisoned } {
+        return Err(set_error(
+            ERR_PANIC,
+            "句柄已因 Rust panic 中毒，除 destroy 外的所有操作均被拒绝",
+        ));
+    }
+    Ok(m)
+}
+
+/// 入参字符串 CStr→UTF-8 校验（NULL→1，非 UTF-8→8）。
+/// 返回引用的生命周期由调用方语境约束（C 内存跨界即刻使用）。
+fn utf8<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
+    if ptr.is_null() {
+        return Err(set_error(ERR_NULL, "字符串入参为 NULL"));
+    }
+    let bytes = unsafe { std::ffi::CStr::from_ptr(ptr).to_bytes() };
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Ok(s),
+        Err(_) => Err(set_error(ERR_UTF8, "字符串入参不是合法 UTF-8")),
+    }
+}
+
+/// 读 `count` 个元素的入参数组：count=0 允许 NULL（返回空切片），
+/// count>0 且指针 NULL→1。
+fn read_array<T>(ptr: *const T, count: usize) -> Result<&'static [T], i32> {
+    if count == 0 {
+        return Ok(&[]);
+    }
+    if ptr.is_null() {
+        return Err(set_error(ERR_NULL, "数组入参指针为 NULL 但 count > 0"));
+    }
+    Ok(unsafe { slice::from_raw_parts(ptr, count) })
+}
+
+/// `MilpError` 变体→错误码（2-6），消息进粘滞存储。
+fn map_milp_error(err: MilpError) -> i32 {
+    let code = match &err {
+        MilpError::Io(_) => ERR_IO,
+        MilpError::Parse { .. } => ERR_PARSE,
+        MilpError::InvalidModel(_) => ERR_INVALID_MODEL,
+        MilpError::Numerical(_) => ERR_NUMERICAL,
+        MilpError::Internal(_) => ERR_INTERNAL,
+    };
+    set_error(code, &err.to_string())
+}
+
+/// SolveStatus→FFI 紧凑状态码（0=NOT_SOLVED 由『未求解』另行给出）。
+fn status_code(status: SolveStatus) -> i32 {
+    match status {
+        SolveStatus::Optimal => 1,
+        SolveStatus::Infeasible => 2,
+        SolveStatus::Unbounded => 3,
+        SolveStatus::LimitReached => 4,
+    }
+}
+
+// ===========================================================================
+// 基础符号（1-3）
+// ===========================================================================
+
+/// ABI 版本；恒 1。
+#[no_mangle]
+pub extern "C" fn milp_ffi_abi_version() -> u32 {
+    1
+}
+
+/// 粘滞错误消息拷出（缓冲契约：返回所需字节数不含 NUL；
+/// buf=NULL/cap=0 只报长度；否则写 min(cap-1,len) 字节并补 NUL）。
+#[no_mangle]
+pub extern "C" fn milp_ffi_last_error(buf: *mut c_char, cap: u64) -> i64 {
+    match catch_unwind(AssertUnwindSafe(|| copy_last_error(buf, cap))) {
+        Ok(n) => n,
+        Err(payload) => {
+            set_error(ERR_PANIC, &format!("Rust panic: {}", panic_message(payload)));
+            -1
+        }
+    }
+}
+
+/// 数值格式化 = `milp::search_ctrl::format_number`（与 CLI objective 行
+/// 逐字节一致，含 1e-6/1e15 科学记数分支，search_ctrl.rs:87-97）。
+/// 同一缓冲契约；panic（理论不可达）返回 -1 并置 last_error。
+#[no_mangle]
+pub extern "C" fn milp_ffi_format_number(v: f64, buf: *mut c_char, cap: u64) -> i64 {
+    match catch_unwind(AssertUnwindSafe(|| format_number(v))) {
+        Ok(s) => copy_out(&s, buf, cap),
+        Err(payload) => {
+            set_error(ERR_PANIC, &format!("Rust panic: {}", panic_message(payload)));
+            -1
+        }
+    }
+}
+
+// ===========================================================================
+// 句柄生命周期与建模（4-11）
+// ===========================================================================
+
+/// 创建模型句柄。sense：1=MINIMIZE，2=MAXIMIZE（非法→NULL+last_error）；
+/// name 可 NULL（= 空名），非 UTF-8→NULL。成功返回 `Box::into_raw` 的非空指针。
+#[no_mangle]
+pub extern "C" fn milp_ffi_model_create(name: *const c_char, sense: i32) -> *mut c_void {
+    let sense_val = match sense {
+        1 => Sense::Minimize,
+        2 => Sense::Maximize,
+        _ => {
+            set_error(ERR_ARG, "sense 非法（合法值：1=MINIMIZE, 2=MAXIMIZE）");
+            return std::ptr::null_mut();
+        }
+    };
+    let name_str: &str = if name.is_null() {
+        ""
+    } else {
+        match utf8(name) {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(), // utf8 已置 last_error
+        }
+    };
+    // 创建本体只做堆分配，理论不 panic；仍包 catch_unwind 统一纪律。
+    match catch_unwind(AssertUnwindSafe(|| {
+        Box::into_raw(Box::new(ModelBox::new(name_str, sense_val))) as *mut c_void
+    })) {
+        Ok(ptr) => ptr,
+        Err(payload) => {
+            set_error(ERR_PANIC, &format!("Rust panic: {}", panic_message(payload)));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// 销毁句柄（Box drop）。NULL 安全幂等；中毒句柄仍可销毁；无返回值。
+#[no_mangle]
+pub extern "C" fn milp_ffi_model_destroy(model: *mut c_void) {
+    if model.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // drop 不可 panic（纯数据），catch_unwind 仅防御性兜底。
+        drop(unsafe { Box::from_raw(model as *mut ModelBox) });
+    }));
+}
+
+/// 变量数。
+#[no_mangle]
+pub extern "C" fn milp_ffi_model_num_vars(model: *mut c_void, out: *mut u32) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let n = unsafe { (*m).problem.num_vars() };
+        unsafe { *out = n as u32 };
+        MILP_FFI_OK
+    })
+}
+
+/// 约束数。
+#[no_mangle]
+pub extern "C" fn milp_ffi_model_num_constraints(model: *mut c_void, out: *mut u32) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let n = unsafe { (*m).problem.num_constraints() };
+        unsafe { *out = n as u32 };
+        MILP_FFI_OK
+    })
+}
+
+/// 添加变量：vtype 1=CONTINUOUS,2=INTEGER,3=BINARY；lb/ub 恒传入
+/// （Python 层已填类型默认界）。`Problem::add_var`（默认界）+
+/// `set_var_bounds(lb,ub)`；后者失败时回滚（弹出刚加的列）保持原子性。
+/// lb 非有限→9（本库不支持 -∞ 下界）；ub 须为有限数或 +∞；重名/保留字→2。
+#[no_mangle]
+pub extern "C" fn milp_ffi_add_var(
+    model: *mut c_void,
+    name: *const c_char,
+    vtype: i32,
+    lb: f64,
+    ub: f64,
+    index_out: *mut u32,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if index_out.is_null() {
+        return set_error(ERR_NULL, "输出指针 index_out 为 NULL");
+    }
+    let name_str = match utf8(name) {
+        Ok(s) => s,
+        Err(rc) => return rc, // 变量名为必填：NULL→1，非 UTF-8→8
+    };
+    let var_type = match vtype {
+        1 => VarType::Continuous,
+        2 => VarType::Integer,
+        3 => VarType::Binary,
+        _ => {
+            return set_error(
+                ERR_ARG,
+                "vtype 非法（合法值：1=CONTINUOUS, 2=INTEGER, 3=BINARY）",
+            )
+        }
+    };
+    if !lb.is_finite() {
+        return set_error(ERR_ARG, "变量下界 lb 必须为有限数（本库不支持 -∞ 下界）");
+    }
+    if !(ub.is_finite() || ub == f64::INFINITY) {
+        return set_error(ERR_ARG, "变量上界 ub 必须为有限数或 +∞");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match mb.problem.add_var(name_str, var_type) {
+            Ok(index) => match mb.problem.set_var_bounds(index, lb, ub) {
+                Ok(()) => {
+                    unsafe { *index_out = index as u32 };
+                    MILP_FFI_OK
+                }
+                Err(err) => {
+                    // 回滚：vars 为 pub 字段，弹出刚压入的列，模型恢复原状。
+                    mb.problem.vars.pop();
+                    map_milp_error(err)
+                }
+            },
+            Err(err) => map_milp_error(err),
+        }
+    })
+}
+
+/// 设置变量上下界：lb 非有限→9、ub 须有限或 +∞、下标越界→9；
+/// lb>ub / Binary 越出 [0,1] 等模型语义错误→2（Problem::set_var_bounds）。
+#[no_mangle]
+pub extern "C" fn milp_ffi_set_var_bounds(
+    model: *mut c_void,
+    index: u32,
+    lb: f64,
+    ub: f64,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if !lb.is_finite() {
+        return set_error(ERR_ARG, "变量下界 lb 必须为有限数（本库不支持 -∞ 下界）");
+    }
+    if !(ub.is_finite() || ub == f64::INFINITY) {
+        return set_error(ERR_ARG, "变量上界 ub 必须为有限数或 +∞");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let var = index as usize;
+        if var >= mb.problem.vars.len() {
+            return set_error(
+                ERR_ARG,
+                &format!(
+                    "变量下标 {var} 越界（当前变量数 {}）",
+                    mb.problem.vars.len()
+                ),
+            );
+        }
+        match mb.problem.set_var_bounds(var, lb, ub) {
+            Ok(()) => MILP_FFI_OK,
+            Err(err) => map_milp_error(err),
+        }
+    })
+}
+
+/// 添加约束：relop 1=LE,2=GE,3=EQ；rhs 须有限；name 可 NULL（未命名）；
+/// count=0 允许两个数组指针为 NULL（空行照常入模型，model.rs:592-619 先例）；
+/// 系数非有限→9；下标越界→2（Problem::add_constraint）。
+#[no_mangle]
+pub extern "C" fn milp_ffi_add_constraint(
+    model: *mut c_void,
+    name_or_null: *const c_char,
+    var_idx: *const u32,
+    coeffs: *const f64,
+    count: u32,
+    relop: i32,
+    rhs: f64,
+    index_out: *mut u32,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if index_out.is_null() {
+        return set_error(ERR_NULL, "输出指针 index_out 为 NULL");
+    }
+    let cname: Option<&str> = if name_or_null.is_null() {
+        None
+    } else {
+        match utf8(name_or_null) {
+            Ok(s) => Some(s),
+            Err(rc) => return rc,
+        }
+    };
+    let op = match relop {
+        1 => RelOp::Le,
+        2 => RelOp::Ge,
+        3 => RelOp::Eq,
+        _ => {
+            return set_error(
+                ERR_ARG,
+                "relop 非法（合法值：1=LE, 2=GE, 3=EQ）",
+            )
+        }
+    };
+    if !rhs.is_finite() {
+        return set_error(ERR_ARG, "约束右端 rhs 必须为有限数");
+    }
+    let n = count as usize; // u32 计数前置 usize 转换
+    let idx = match read_array(var_idx, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let coef = match read_array(coeffs, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    for (i, &c) in coef.iter().enumerate() {
+        if !c.is_finite() {
+            return set_error(ERR_ARG, &format!("第 {i} 项系数非有限数"));
+        }
+    }
+    guard(Some(m), || {
+        let terms: Vec<(usize, f64)> = idx
+            .iter()
+            .zip(coef.iter())
+            .map(|(&v, &c)| (v as usize, c))
+            .collect();
+        let mb = unsafe { &mut *m };
+        match mb.problem.add_constraint(cname, terms, op, rhs) {
+            Ok(index) => {
+                unsafe { *index_out = index as u32 };
+                MILP_FFI_OK
+            }
+            Err(err) => map_milp_error(err),
+        }
+    })
+}
+
+/// 设置目标：sense 0=保持现状,1=MINIMIZE,2=MAXIMIZE（写 problem.sense）；
+/// offset 即 obj_offset（model.rs:252）；count=0（空目标）合法；
+/// offset/系数非有限→9；下标越界→2（Problem::set_objective）。
+#[no_mangle]
+pub extern "C" fn milp_ffi_set_objective(
+    model: *mut c_void,
+    var_idx: *const u32,
+    coeffs: *const f64,
+    count: u32,
+    sense: i32,
+    offset: f64,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let new_sense = match sense {
+        0 => None,
+        1 => Some(Sense::Minimize),
+        2 => Some(Sense::Maximize),
+        _ => {
+            return set_error(
+                ERR_ARG,
+                "sense 非法（合法值：0=保持, 1=MINIMIZE, 2=MAXIMIZE）",
+            )
+        }
+    };
+    if !offset.is_finite() {
+        return set_error(ERR_ARG, "目标常数 offset 必须为有限数");
+    }
+    let n = count as usize;
+    let idx = match read_array(var_idx, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let coef = match read_array(coeffs, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    for (i, &c) in coef.iter().enumerate() {
+        if !c.is_finite() {
+            return set_error(ERR_ARG, &format!("目标第 {i} 项系数非有限数"));
+        }
+    }
+    guard(Some(m), || {
+        let terms: Vec<(usize, f64)> = idx
+            .iter()
+            .zip(coef.iter())
+            .map(|(&v, &c)| (v as usize, c))
+            .collect();
+        let mb = unsafe { &mut *m };
+        if let Some(s) = new_sense {
+            mb.problem.sense = s;
+        }
+        match mb.problem.set_objective(terms, offset) {
+            Ok(()) => MILP_FFI_OK,
+            Err(err) => map_milp_error(err),
+        }
+    })
+}
+
+// ===========================================================================
+// 参数（12-14）
+// ===========================================================================
+
+/// real 型参数：TimeLimit（秒，≥0，0=不限→None）/ MIPGap（百分比，≥0，
+/// 0=关→None）/ LogPeriodSecs（≥0，0=关→None，>0→Some）。
+/// 非有限或负→9；名字存在但类型不符→9；名字不存在→10。
+#[no_mangle]
+pub extern "C" fn milp_ffi_set_param_real(model: *mut c_void, name: *const c_char, value: f64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let name_str = match utf8(name) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match name_str {
+            "TimeLimit" => {
+                if !value.is_finite() || value < 0.0 {
+                    return set_error(ERR_ARG, "TimeLimit 须为 ≥0 的有限秒数（0=不限）");
+                }
+                // 0.0 是规范关断编码（-0.0 == 0.0 一并归 None）。
+                mb.params.time_limit_secs = if value == 0.0 { None } else { Some(value) };
+                MILP_FFI_OK
+            }
+            "MIPGap" => {
+                if !value.is_finite() || value < 0.0 {
+                    return set_error(ERR_ARG, "MIPGap 须为 ≥0 的有限百分比（0=关闭）");
+                }
+                mb.params.mipgap_percent = if value == 0.0 { None } else { Some(value) };
+                MILP_FFI_OK
+            }
+            "LogPeriodSecs" => {
+                if !value.is_finite() || value < 0.0 {
+                    return set_error(ERR_ARG, "LogPeriodSecs 须为 ≥0 的有限秒数（0=关闭）");
+                }
+                mb.params.log_period_secs = if value == 0.0 { None } else { Some(value) };
+                MILP_FFI_OK
+            }
+            "Threads" | "HeuristicMode" => set_error(
+                ERR_ARG,
+                &format!("参数 `{name_str}` 不是 real 类型入口（请用对应类型的 setter）"),
+            ),
+            _ => set_error(
+                ERR_UNKNOWN_PARAM,
+                &format!(
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                ),
+            ),
+        }
+    })
+}
+
+/// int 型参数：Threads（1..=1024）；越界→9；类型不符→9；名字不存在→10。
+#[no_mangle]
+pub extern "C" fn milp_ffi_set_param_int(model: *mut c_void, name: *const c_char, value: i64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let name_str = match utf8(name) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match name_str {
+            "Threads" => {
+                if !(1..=1024).contains(&value) {
+                    return set_error(ERR_ARG, "Threads 须在 1..=1024 内（1=纯顺序路径）");
+                }
+                mb.params.threads = value as usize;
+                MILP_FFI_OK
+            }
+            "TimeLimit" | "MIPGap" | "LogPeriodSecs" | "HeuristicMode" => set_error(
+                ERR_ARG,
+                &format!("参数 `{name_str}` 不是 int 类型入口（请用对应类型的 setter）"),
+            ),
+            _ => set_error(
+                ERR_UNKNOWN_PARAM,
+                &format!(
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                ),
+            ),
+        }
+    })
+}
+
+/// str 型参数：HeuristicMode（auto|on|off，大小写敏感）；未知值→9；
+/// 类型不符→9；名字不存在→10。
+#[no_mangle]
+pub extern "C" fn milp_ffi_set_param_str(
+    model: *mut c_void,
+    name: *const c_char,
+    value: *const c_char,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let name_str = match utf8(name) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let value_str = match utf8(value) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match name_str {
+            "HeuristicMode" => match value_str {
+                "auto" => mb.params.heuristic_mode = HMode::Auto,
+                "on" => mb.params.heuristic_mode = HMode::On,
+                "off" => mb.params.heuristic_mode = HMode::Off,
+                _ => {
+                    return set_error(
+                        ERR_ARG,
+                        "HeuristicMode 非法（合法值：auto|on|off，大小写敏感）",
+                    )
+                }
+            },
+            "TimeLimit" | "Threads" | "MIPGap" | "LogPeriodSecs" => {
+                return set_error(
+                    ERR_ARG,
+                    &format!("参数 `{name_str}` 不是 str 类型入口（请用对应类型的 setter）"),
+                )
+            }
+            _ => {
+                return set_error(
+                    ERR_UNKNOWN_PARAM,
+                    &format!(
+                        "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                    ),
+                )
+            }
+        }
+        MILP_FFI_OK
+    })
+}
+
+// ===========================================================================
+// 求解与结果读取（15-22）
+// ===========================================================================
+
+/// 求解。选项组装纪律（镜像 main.rs:294-327）：
+/// - `SolveOptions`：Tolerances::default + BbOptions::default（FFI 固定
+///   root_cuts=true、use_presolve=true，无关闭入口），仅按 HeuristicMode
+///   覆盖 `heuristics`、按 TimeLimit 覆盖 `time_limit_ms`（秒×1000
+///   饱和取整，0=不限）；
+/// - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=
+///   (mode==Auto) / log_period_secs / degrade=default；
+/// - LogPeriodSecs 开启时注入 hooks（stdout 进度行，镜像 main.rs:334-341，
+///   写失败静默）。
+///
+/// Err 按 MilpError 变体映射 2-6 且**不覆盖**旧 StoredSolve；
+/// Ok（含 Infeasible/Unbounded/LimitReached）存 StoredSolve 并返回 0，
+/// 状态经 getter 读取。
+#[no_mangle]
+pub extern "C" fn milp_ffi_solve(model: *mut c_void) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let params = mb.params; // Copy
+        let time_limit_ms = params
+            .time_limit_secs
+            .map_or(0u64, |secs| (secs.max(0.0) as u64).saturating_mul(1000));
+        let opts = SolveOptions {
+            tol: Tolerances::default(),
+            bb: BbOptions {
+                heuristics: !matches!(params.heuristic_mode, HMode::Off),
+                time_limit_ms,
+                ..BbOptions::default()
+            },
+            use_presolve: true,
+        };
+        let ctrl = SearchControl {
+            threads: params.threads,
+            mipgap_percent: params.mipgap_percent,
+            adaptive_heuristics: matches!(params.heuristic_mode, HMode::Auto),
+            log_period_secs: params.log_period_secs,
+            ..SearchControl::default() // degrade: default
+        };
+        // 进度钩子仅在 LogPeriodSecs 开启时注入（与 CLI --log-secs 同门控）。
+        let hooks = params.log_period_secs.map(|_| SearchHooks {
+            progress: Arc::new(|info: &ProgressInfo| {
+                let mut stdout = std::io::stdout().lock();
+                let _ = writeln!(stdout, "{}", format_progress_line(info));
+            }),
+        });
+        match solve_controlled(&mb.problem, &opts, &ctrl, hooks.as_ref()) {
+            Ok(rep) => {
+                mb.result = Some(crate::handle::StoredSolve {
+                    status: rep.report.status,
+                    objective: rep.report.objective,
+                    bound: rep.bound,
+                    gap_percent: rep.gap_percent,
+                    values: rep.report.values,
+                    stats: rep.report.stats,
+                    presolve_reductions: rep.report.presolve_reductions,
+                    gap_terminated: rep.gap_terminated,
+                    auto_degraded: rep.auto_degraded,
+                });
+                MILP_FFI_OK
+            }
+            Err(err) => map_milp_error(err), // 失败不覆盖旧 StoredSolve
+        }
+    })
+}
+
+/// 求解终态：0=NOT_SOLVED,1=OPTIMAL,2=INFEASIBLE,3=UNBOUNDED,4=LIMIT_REACHED。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_status(model: *mut c_void, out: *mut i32) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let code = match &mb.result {
+            None => 0, // NOT_SOLVED
+            Some(stored) => status_code(stored.status),
+        };
+        unsafe { *out = code };
+        MILP_FFI_OK
+    })
+}
+
+/// 目标值；未求解或本次求解无解→11。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_objective(model: *mut c_void, out: *mut f64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match mb.result.as_ref().and_then(|stored| stored.objective) {
+            Some(v) => {
+                unsafe { *out = v };
+                MILP_FFI_OK
+            }
+            None => set_error(ERR_NO_SOLUTION, "无可用目标值（未求解，或本次求解无可行解）"),
+        }
+    })
+}
+
+/// 对偶界；未求解或无证据→11。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_bound(model: *mut c_void, out: *mut f64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match mb.result.as_ref().and_then(|stored| stored.bound) {
+            Some(v) => {
+                unsafe { *out = v };
+                MILP_FFI_OK
+            }
+            None => set_error(ERR_NO_SOLUTION, "无可用对偶界证据（未求解，或本次求解无证据）"),
+        }
+    })
+}
+
+/// gap 百分比；未求解或 gap 未触发→11。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_gap_percent(model: *mut c_void, out: *mut f64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        match mb.result.as_ref().and_then(|stored| stored.gap_percent) {
+            Some(v) => {
+                unsafe { *out = v };
+                MILP_FFI_OK
+            }
+            None => set_error(ERR_NO_SOLUTION, "无可用 gap（未求解，或本次求解未因 gap 终止）"),
+        }
+    })
+}
+
+/// 解向量拷出，维数锚定 StoredSolve.values.len()==n_solved（而非当前
+/// problem.vars.len()）：未求解/无解→11；cap<n_solved→9 且
+/// `*written_or_null`（可 NULL）写 n_solved；否则恰拷贝 n_solved 个 f64
+/// 并写 written_or_null。n_solved>0 时 out 为 NULL→1。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_solution(
+    model: *mut c_void,
+    out: *mut f64,
+    cap: u32,
+    written_or_null: *mut u32,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let values = match mb.result.as_ref().and_then(|stored| stored.values.as_ref()) {
+            Some(v) => v,
+            None => {
+                return set_error(
+                    ERR_NO_SOLUTION,
+                    "无可用解向量（未求解，或本次求解无可行解）",
+                )
+            }
+        };
+        let n_solved = values.len();
+        if (cap as usize) < n_solved {
+            if !written_or_null.is_null() {
+                unsafe { *written_or_null = n_solved as u32 };
+            }
+            return set_error(
+                ERR_ARG,
+                &format!("缓冲区容量 {cap} 小于解维数 {n_solved}"),
+            );
+        }
+        if n_solved > 0 && out.is_null() {
+            return set_error(ERR_NULL, "输出指针 out 为 NULL");
+        }
+        if n_solved > 0 {
+            unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), out, n_solved) };
+        }
+        if !written_or_null.is_null() {
+            unsafe { *written_or_null = n_solved as u32 };
+        }
+        MILP_FFI_OK
+    })
+}
+
+/// 单变量取值：index ≥ 当前 problem.vars.len()→9；否则 index ≥ n_solved→11
+/// （覆盖『solve 后又 add_var 再取新变量值』）；否则写回取值。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_var_value(model: *mut c_void, index: u32, out: *mut f64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let var = index as usize;
+        if var >= mb.problem.vars.len() {
+            return set_error(
+                ERR_ARG,
+                &format!(
+                    "变量下标 {var} 越界（当前变量数 {}）",
+                    mb.problem.vars.len()
+                ),
+            );
+        }
+        let values = match mb.result.as_ref().and_then(|stored| stored.values.as_ref()) {
+            Some(v) => v,
+            None => {
+                return set_error(ERR_NO_SOLUTION, "无可用解（未求解，或本次求解无可行解）")
+            }
+        };
+        if var >= values.len() {
+            return set_error(ERR_NO_SOLUTION, "该变量不在最近一次求解的解向量内（解维数锚定为 n_solved）");
+        }
+        unsafe { *out = values[var] };
+        MILP_FFI_OK
+    })
+}
+
+/// 求解统计。stat_id：1=nodes,2=lp_iterations,3=cuts,4=time_ms,
+/// 5=presolve_reductions,6=gap_terminated(0/1),7=auto_degraded(0/1)。
+/// 未知 id→9；未求解→11。
+#[no_mangle]
+pub extern "C" fn milp_ffi_get_stat(model: *mut c_void, stat_id: i32, out: *mut i64) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out.is_null() {
+        return set_error(ERR_NULL, "输出指针 out 为 NULL");
+    }
+    if !(1..=7).contains(&stat_id) {
+        return set_error(ERR_ARG, "stat_id 非法（合法值：1-7）");
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        let stored = match mb.result.as_ref() {
+            Some(s) => s,
+            None => return set_error(ERR_NO_SOLUTION, "尚未求解（无统计可读）"),
+        };
+        let value: i64 = match stat_id {
+            1 => stored.stats.nodes as i64,
+            2 => stored.stats.lp_iterations as i64,
+            3 => stored.stats.cuts as i64,
+            4 => stored.stats.time_ms as i64,
+            5 => stored.presolve_reductions as i64,
+            6 => stored.gap_terminated as i64,
+            7 => stored.auto_degraded as i64,
+            _ => unreachable!("stat_id 已在 1..=7 校验"),
+        };
+        unsafe { *out = value };
+        MILP_FFI_OK
+    })
+}
+
+// ===========================================================================
+// 单元测试：guard 兜底（guard 为 pub(crate)，同 crate 可直接访问，
+// 不新增导出符号；集成测试见 tests/abi.rs，不触碰 guard）。
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::copy_last_error;
+
+    /// guard 捕获 panic 并返回 7（要求：panic 永不跨边界外泄）。
+    #[test]
+    fn guard_catches_panic_returns_7() {
+        let rc = guard(None, || panic!("boom"));
+        assert_eq!(rc, ERR_PANIC);
+    }
+
+    /// panic 消息进粘滞 last_error 且带 "Rust panic:" 前缀。
+    #[test]
+    fn guard_panic_sets_sticky_error_message() {
+        let _ = guard(None, || panic!("带消息的崩溃"));
+        let mut buf = [0 as c_char; 512];
+        let need = copy_last_error(buf.as_mut_ptr(), 512);
+        assert!(need > 0, "粘滞消息应非空");
+        let bytes = unsafe {
+            std::slice::from_raw_parts(buf.as_ptr() as *const u8, need as usize)
+        };
+        let text = std::str::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("Rust panic:"), "实际：{text}");
+        assert!(text.contains("带消息的崩溃"), "实际：{text}");
+    }
+
+    /// 带句柄的 panic 会中毒句柄；中毒句柄经 check_handle 返回 7。
+    #[test]
+    fn guard_poisons_model_handle() {
+        let boxed = Box::new(ModelBox::new("t", Sense::Minimize));
+        let ptr = Box::into_raw(boxed);
+        let rc = guard(Some(ptr), || panic!("poison test"));
+        assert_eq!(rc, ERR_PANIC);
+        assert!(unsafe { (*ptr).poisoned }, "句柄应已中毒");
+        assert_eq!(check_handle(ptr as *mut c_void), Err(ERR_PANIC));
+        // 中毒句柄仍可销毁（drop 不因 poisoned 失败）。
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    /// guard 正常路径透传返回值。
+    #[test]
+    fn guard_passes_through_ok() {
+        assert_eq!(guard(None, || MILP_FFI_OK), MILP_FFI_OK);
+    }
+}

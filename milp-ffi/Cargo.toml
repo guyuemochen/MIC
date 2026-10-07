@@ -1,0 +1,16 @@
+[package]
+# milp 求解器的 C ABI 绑定层：milp/ 零改动前提下暴露 panic 安全的 FFI。
+name = "milp-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# cdylib：产出 Python ctypes 可装载的 milp_ffi.dll / libmilp_ffi.so / libmilp_ffi.dylib；
+# rlib：供 tests/abi.rs 集成测试与下游 Rust 消费者链接。
+name = "milp_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# 独立 crate（工作区根无 Cargo.toml），path 指向同级 milp/。
+milp = { path = "../milp" }

@@ -4,7 +4,7 @@ MIC 是一组完全独立的 Rust 求解器 crate：**M**ixed-**I**nteger 精确
 
 | 目录 | 求解器 | 核心算法 | 验证状态 |
 |---|---|---|---|
-| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛 + 分支定界 + Gomory 混合整数割 + 预处理/潜水启发式 | 5 个已知最优解算例全部精确命中；CLI 端到端一致 |
+| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛 + 分支定界 + Gomory 混合整数割 + 预处理/潜水启发式；多线程、Gurobi 式进度日志、自适应启发式与策略级自动降级 | 6 个已知最优解算例全部精确命中；CLI 端到端一致 |
 | [`planner/`](planner/README.md) | OptaPlanner 式**启发式**约束求解器 | HardSoftScore 硬软评分 + First/Best Fit 构造启发式 + 禁忌/模拟退火/迟到接受局部搜索 | 6 个算例的可行性（hard=0）、搜索改进、固定种子可复现全部满足 |
 
 ## 目录结构
@@ -21,8 +21,13 @@ MIC/
 │   ├── instances/      6 个算例（排班 / 云分配 / 课程表 / 指派）
 │   ├── tests/          验收测试 + 基准测试
 │   └── README.md       算例格式、CLI、编程 API
+├── milp-ffi/           milp 的 C ABI 绑定 crate（cdylib，std-only）
+├── micpython/          gurobipy 风格 Python 包（ctypes，零第三方依赖）
+│   ├── examples/       knapsack.py 端到端示例
+│   ├── tests/          Python unittest 套件（已知最优/状态/参数/句柄）
+│   └── README.md       安装前置与完整 API 参考
 ├── docs/
-│   └── 交付报告.md      验证结果、8 项评审发现（含证据与状态）、未覆盖范围
+│   └── 交付报告.md      验证结果、评审发现（含证据与状态）、未覆盖范围
 └── README.md           本文件
 ```
 
@@ -71,6 +76,28 @@ cargo doc --manifest-path planner/Cargo.toml --no-deps --open
 ```
 
 编程 API 的详细说明见各自的 `src/lib.rs` 文档注释与 README。
+
+## 从 Python 调用（gurobipy 风格）
+
+```bash
+cargo build --release --manifest-path milp-ffi/Cargo.toml   # 先产出 DLL
+python micpython/examples/knapsack.py                        # 端到端示例
+python -m unittest discover -s micpython/tests -t .          # Python 测试套件
+```
+
+```python
+from micpython import Model, GRB
+m = Model("knapsack")
+x = m.addVars(range(10), vtype=GRB.BINARY)
+m.setObjective(quicksum(v[i] * x[i] for i in range(10)), GRB.MAXIMIZE)
+m.addConstr(quicksum(w[i] * x[i] for i in range(10)) <= capacity)
+m.setParam("Threads", 4)
+m.optimize()
+if m.Status == GRB.OPTIMAL:
+    print(m.ObjVal)
+```
+
+完整 API（TimeLimit/MIPGap/HeuristicMode 参数、状态映射、句柄管理）见 [micpython/README.md](micpython/README.md)。
 
 ## 验证状态与已知问题
 
