@@ -3,6 +3,19 @@
 //! # 算法结构
 //! - 显式 dense 表格 + 有界变量机制（非基变量位于 lb 或 ub，记 `at_upper`），
 //!   分支定界只改 [`Bounds`] 不改约束矩阵，热启动代价最低。
+//! - 稀疏混合表格（轴1，**规模阈值后置**）：表格单元数 m×ncols 超过
+//!   [`RC_SPARSE_CELL_THRESHOLD`]（2^18）才启用每行非零列索引 `row_nz`
+//!   簿记（与 dense 表格并存）——主元消元归并游标同步、检验数按行索引
+//!   散射、add_row 消基稀疏迭代、割分离走
+//!   [`Simplex::tableau_row_terms`] 稀疏读取。阈内**完整走旧路径**
+//!   （do_pivot_legacy：O(ncols) 计数扫描 + 纯索引消元；稠密行主序 axpy；
+//!   κ 稠密消基）——小算例热路径零新增指令、成本与行为逐字节回基线。
+//!   行密度阈值沿用 nnz*4 ≥ ncols：超阈行标记稠密（空索引，恒走 zip
+//!   向量化循环、零簿记成本），稀疏行走索引表；fill-in 归并插入、恰零
+//!   墓碑惰性删除（每 64 主元压缩）、每行密度回退。启用态语义为值级/
+//!   决策级 == 等价（跳零是精确无操作）。回归门：debug 构建周期性全量
+//!   重建比对。binv 保持稠密——诚实边界：这是混合表格不是修正单纯形，
+//!   目标域是 1e3–1e4 行入场券，不是百万变量。
 //! - 内部统一 min（Maximize 目标系数取负，报告时还原并加 `obj_offset`）；
 //!   构建期每行除以 max|a_ij| 归一（割行例外，不缩放）。**行永不翻转**，
 //!   因此 [`SlackCol::sign`] 只有两个合法来源（Le=+1、Ge=−1、割行恒 +1），
@@ -87,6 +100,29 @@ const BLAND_TOTAL_FACTOR: u64 = 3;
 /// 数量级以上，真并列不被拆散）；收窄并列集合只会让选择更贴近最小比值，
 /// 真 t_min 候选恒在集合内，不引入误剪。
 const RATIO_BAND_CAP: f64 = 1e3;
+
+// —— 稀疏混合表格（轴1：行级非零索引簿记，规模阈值后置）——
+
+/// 行非零索引表项的墓碑位（最高位）：置位 = 该列曾非零、现已**恰为 0.0**，
+/// 惰性待压缩（迭代跳过、不计存活数）；置位/复活只动高 1 位，低 31 位仍为
+/// 列下标、保持升序。
+const NZ_TOMB: u32 = 1 << 31;
+/// 行非零索引表项的列下标掩码（低 31 位）。列数 ≥ 2^31 时禁用稀疏簿记
+///（单行 dense 表即需 16 GiB，实际不可达；防御性回退全稠密）。
+const NZ_MASK: u32 = !NZ_TOMB;
+/// 行索引簿记维护间隔（主元数，仅启用态）：压缩墓碑 + debug 全量重建比对。
+const NZ_COMPACT_INTERVAL: u64 = 64;
+/// 轴1 整体启用阈值（表格单元数 m×ncols）：**≤ 阈值时 do_pivot / add_row /
+/// compute_rc_batch 完整走旧路径**（O(ncols) 计数扫描、纯索引消元、稠密
+/// 行主序 axpy、κ 稠密消基——热路径零新增指令，小算例成本与行为逐字节回
+/// 基线）；超阈才启用 row_nz 簿记 / 归并游标消元 / 检验数散射 / 稀疏读表。
+/// 取 2^18 = 262144：bench 13 算例中表格单元最多的 lp-wide-200x300 为
+/// 300×500 = 150000（次大 setcover-100x150 含根割 ≈1.07e5、mknap-5x300
+/// 含根割 ≤9e4），全部留驻旧路径；lp-sparse-4000x800（≈3.8e6）、
+/// setcover-400x800（≈4.8e5）与拉伸算例 lp-wide-1000x2000（≈6e6）、
+/// setcover-300x600（≈7.2e5）超阈启用。启用态的语义契约是值级/决策级
+/// == 等价（跳零是精确无操作，至多翻转个别 ±0.0 符号位），不再承诺逐字节。
+const RC_SPARSE_CELL_THRESHOLD: u64 = 262_144;
 
 /// LP 求解状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,6 +268,25 @@ pub struct Simplex {
     num_art: usize,
     /// dense 表格：matrix[i][j] = (B⁻¹A)_{ij}，行 = 基位置，列 = 全列空间。
     matrix: Vec<Vec<f64>>,
+    /// 行级非零列索引簿记（轴1 稀疏混合表格），与 `matrix` 并存，**仅在
+    /// [`Self::nz_enabled`]（表格单元数超 [`RC_SPARSE_CELL_THRESHOLD`]）时
+    /// 维护**：`row_nz[i]` = 第 i 行非零列下标的升序 u32 表。**空表 = 稠密
+    /// 标记**：该行恒走稠密 zip 循环、不承担簿记义务（割/GMI 行在大 LP 上
+    /// 近乎全稠密——空标记使其零簿记成本、零索引内存，密度回退是保底）。
+    /// 稀疏标记行满足不变量：存活项集合 == 该行精确非零集（值 != 0.0，墓碑
+    /// 项不算）且存活数低于密度阈（nnz*4 < ncols，与 do_pivot 判据同源）。
+    /// 墓碑项（最高位置位）= 已恰为零的列：惰性删除，每
+    /// [`NZ_COMPACT_INTERVAL`] 主元压缩一次（控制删除 memmove 成本）。
+    /// 禁用态恒为全空（整基重建时跨阈翻转会全量重建/清空）。
+    row_nz: Vec<Vec<u32>>,
+    /// 各行索引内的墓碑数（存活数 = len − dead，O(1) 密度判定用）。
+    nz_dead: Vec<u32>,
+    /// 距上次行索引压缩/debug 比对的主元数（仅启用态计数）。
+    pivots_since_nz: u64,
+    /// 轴1 启用位：m×ncols > [`RC_SPARSE_CELL_THRESHOLD`] 时为真（在
+    /// rebuild_initial_basis / add_row 收口处重判——这两处是行数/列数唯一
+    /// 变化点）。假 = 全旧路径（do_pivot_legacy 等），真 = 簿记路径。
+    nz_enabled: bool,
     /// 显式基逆：binv[i][k] = (B⁻¹)_{ik}。
     binv: Vec<Vec<f64>>,
     /// rhs[i] = 第 i 行基变量当前值（非基变量贴界时的取值口径）。
@@ -408,6 +463,10 @@ impl Simplex {
             },
             num_art: 0,
             matrix: Vec::new(),
+            row_nz: Vec::new(),
+            nz_dead: Vec::new(),
+            pivots_since_nz: 0,
+            nz_enabled: false,
             binv: Vec::new(),
             rhs: Vec::new(),
             basis: Vec::new(),
@@ -488,6 +547,10 @@ impl Simplex {
         // （默认界），保证 add_row 可在 solve 之前调用。
         let m = s.row_terms.len();
         s.matrix = vec![Vec::new(); m];
+        // 行索引先置空（禁用态稠密标记），紧随其后的 rebuild_initial_basis
+        // 按表格规模判定启用并重建（见 nz_update_enabled/nz_rebuild_all）。
+        s.row_nz = vec![Vec::new(); m];
+        s.nz_dead = vec![0; m];
         s.rhs = vec![0.0; m];
         s.basis = vec![usize::MAX; m];
         s.binv = vec![vec![0.0; m]; m];
@@ -643,7 +706,10 @@ impl Simplex {
                 w[p] = c;
             }
         }
-        // κ_j = ν_j − Σ_i w_i·M[i][j]（对新行的全旧列消基）。
+        // κ_j = ν_j − Σ_i w_i·M[i][j]（对新行的全旧列消基；轴1 启用态对
+        // 稀疏标记行按行索引迭代——跳过 M[i][j]==0 的格是精确无操作减法，
+        // 逐列减法序列与稠密循环同序；κ 零元为 +0.0，减 ±0 仍得 +0，
+        // 逐字节一致。禁用态走旧稠密循环）。
         let mut kappa = vec![0.0; ncols_old];
         for &(j, c) in &merged {
             kappa[j] = c;
@@ -652,8 +718,18 @@ impl Simplex {
             if w[i] != 0.0 {
                 let wi = w[i];
                 let mrow = &self.matrix[i];
-                for j in 0..ncols_old {
-                    kappa[j] -= wi * mrow[j];
+                if self.nz_enabled && !self.row_nz[i].is_empty() {
+                    for &e in self.row_nz[i].iter() {
+                        if e & NZ_TOMB != 0 {
+                            continue;
+                        }
+                        let j = (e & NZ_MASK) as usize;
+                        kappa[j] -= wi * mrow[j];
+                    }
+                } else {
+                    for j in 0..ncols_old {
+                        kappa[j] -= wi * mrow[j];
+                    }
                 }
             }
         }
@@ -719,6 +795,18 @@ impl Simplex {
             let c = ncs_old;
             for row in self.matrix.iter_mut() {
                 row.insert(c, 0.0);
+            }
+            // 轴1（启用态）：既有行索引同步右移一位（列 ≥ c 的存活/墓碑项
+            // +1；新松弛列对旧行恒 0，不入索引。墓碑在高 1 位，+1 不进位）。
+            // 禁用态索引恒空，跳过（旧路径零新增指令）。
+            if self.nz_enabled {
+                for idx in self.row_nz.iter_mut() {
+                    for e in idx.iter_mut() {
+                        if (*e & NZ_MASK) as usize >= c {
+                            *e += 1;
+                        }
+                    }
+                }
             }
             self.in_basis.insert(c, false);
             self.at_upper.insert(c, false);
@@ -788,7 +876,22 @@ impl Simplex {
 
         // 追加表格行与记账。
         let row = self.matrix.len();
+        // 轴1（启用态）：新行索引（GMI 割行在大 LP 上近乎全稠密 → 多直接
+        // 落稠密标记）。禁用态推空表（稠密标记语义）。
+        let mut newidx: Vec<u32> = Vec::new();
+        if self.nz_enabled && ncols_new < NZ_MASK as usize {
+            for (j, &v) in newrow.iter().enumerate() {
+                if v != 0.0 {
+                    newidx.push(j as u32);
+                }
+            }
+            if newidx.len() * 4 >= ncols_new {
+                newidx.clear();
+            }
+        }
         self.matrix.push(newrow);
+        self.row_nz.push(newidx);
+        self.nz_dead.push(0);
         self.rhs.push(r_new / sigma_basic);
         self.basis.push(basic_col);
         self.in_basis[basic_col] = true;
@@ -806,6 +909,17 @@ impl Simplex {
         self.row_slack.push(slack_col);
         self.row_scale.push(1.0); // 割行不缩放（契约例外）
         self.cut_row.push(Some(row));
+        // 轴1 规模门收口：行/列刚增长，重判启用位；跨阈翻转（禁用→启用）时
+        // 一次性全量重建索引（含新行；此前推入的是空表）。add_row 只增维度，
+        // 启用态不会翻回禁用。
+        if !self.nz_enabled {
+            let m_now = self.basis.len();
+            let ncols_now = self.ncols_static() + self.num_art;
+            if (m_now as u64) * (ncols_now as u64) > RC_SPARSE_CELL_THRESHOLD {
+                self.nz_enabled = true;
+                self.nz_rebuild_all();
+            }
+        }
         Ok(k)
     }
 
@@ -817,6 +931,40 @@ impl Simplex {
         }
         let ncols = self.num_structural + self.layout.slack.len();
         (self.matrix[row][..ncols].to_vec(), self.rhs[row])
+    }
+
+    /// 第 `row` 行的稀疏读取接口（轴1）：(非零 `(列下标, 值)` 项列表
+    /// [结构+松弛列段、按列升序]，该行基变量当前值)。
+    ///
+    /// 与 [`Simplex::tableau_row`] 的语义关系：稠密接口中系数恰为 0.0 的列
+    /// 在此省略——消费方（GMI 分离）对 α==0 的列产出的 π 恒为 0、无任何
+    /// 系数/常数贡献，行为等价；NaN/Inf 非零必入表，异常行检测不受影响。
+    /// 启用态稀疏标记行直接走行索引（跳过墓碑），禁用态/稠密标记行按行值
+    /// 扫描收集。越界行返回 `(空, NaN)`（与稠密接口同口径）。
+    pub fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64) {
+        if row >= self.matrix.len() {
+            return (Vec::new(), f64::NAN);
+        }
+        let ncols = self.num_structural + self.layout.slack.len();
+        let mut terms: Vec<(usize, f64)> = Vec::new();
+        if self.nz_enabled && !self.row_nz[row].is_empty() {
+            for &e in self.row_nz[row].iter() {
+                if e & NZ_TOMB != 0 {
+                    continue;
+                }
+                let j = (e & NZ_MASK) as usize;
+                if j < ncols {
+                    terms.push((j, self.matrix[row][j]));
+                }
+            }
+        } else {
+            for (j, &v) in self.matrix[row][..ncols].iter().enumerate() {
+                if v != 0.0 {
+                    terms.push((j, v));
+                }
+            }
+        }
+        (terms, self.rhs[row])
     }
 
     /// 原始约束下标 → 表格行下标；被剔除的近零行返回 `None`。
@@ -928,6 +1076,14 @@ impl Simplex {
     /// 计算完全同序，f64 结果逐值相等（跳过 c_b==0 行是精确无操作：减 0
     /// 不改变任何数值，含 ±0 符号位）。
     ///
+    /// 轴1（稀疏散射，规模门后置）：禁用态（m×ncols ≤
+    /// [`RC_SPARSE_CELL_THRESHOLD`]）走下方纯稠密旧路径不动——小算例行为
+    /// 逐字节不变；启用态稀疏标记行改按行非零索引散射 `rc[j] -= cb·row[i][j]`
+    /// （跳过该行 matrix[i][j]==0 的格）：每列的减法序列仍与稠密路径同序
+    /// （行 i 升序），跳过项是精确无操作（减 ±0 至多把 −0.0 翻成 +0.0，
+    /// f64 == 不可分辨），结果保持 == 相等；稠密标记行（空索引）回退 zip
+    /// 循环（与旧稠密路径逐字节同序）。
+    ///
     /// # 新鲜度契约（三入口各自在入口无条件重算）
     /// 禁止只由 price 刷新后他处复用——do_pivot、phase 切换、add_row、
     /// 整基重建都会使缓存陈旧。三入口：
@@ -949,12 +1105,50 @@ impl Simplex {
         for j in 0..ncols {
             self.rc_scratch[j] = self.cost_of(j, phase);
         }
+        if self.nz_enabled {
+            // 启用态走外置散射路径（轴1）：稀疏标记行按行索引散射，稠密标记
+            // 行回退 zip。独立函数 + inline(never)：两路共存于同一函数体会
+            // 扰动旧路径的代码生成（寄存器分配/内联预算，实测 knapsack-2000
+            // +11% 墙钟），外置后阈内代码生成与原实现一致。
+            self.compute_rc_batch_scatter();
+            return;
+        }
         for i in 0..m {
             let cb = self.cb_scratch[i];
             if cb != 0.0 {
                 let row = &self.matrix[i];
                 let rc = &mut self.rc_scratch;
                 for j in 0..ncols {
+                    rc[j] -= cb * row[j];
+                }
+            }
+        }
+    }
+
+    /// compute_rc_batch 的启用态散射路径（轴1）：稀疏标记行按 row_nz 散射
+    /// `rc[j] -= cb·row[i][j]`（跳过墓碑与零格——精确无操作，== 等价），
+    /// 稠密标记行（空索引）回退 zip（与旧稠密路径逐字节同序）。
+    #[inline(never)]
+    fn compute_rc_batch_scatter(&mut self) {
+        let m = self.basis.len();
+        let ncols = self.ncols_static() + self.num_art;
+        for i in 0..m {
+            let cb = self.cb_scratch[i];
+            if cb == 0.0 {
+                continue;
+            }
+            let row = &self.matrix[i];
+            let rc = &mut self.rc_scratch;
+            if self.row_nz[i].is_empty() {
+                for j in 0..ncols {
+                    rc[j] -= cb * row[j];
+                }
+            } else {
+                for &e in self.row_nz[i].iter() {
+                    if e & NZ_TOMB != 0 {
+                        continue;
+                    }
+                    let j = (e & NZ_MASK) as usize;
                     rc[j] -= cb * row[j];
                 }
             }
@@ -1064,6 +1258,142 @@ impl Simplex {
                 self.binv[i][k] = 0.0;
             }
             self.binv[i][i] = sigma[i];
+        }
+        // 轴1（④）规模门 + 索引重建：超阈（m×ncols > RC_SPARSE_CELL_THRESHOLD）
+        // 启用时从填表结果一次性重建全部行非零索引（含人工列段）；阈内禁用
+        // （行索引清空 = 稠密标记语义，旧路径零簿记——大表缩回阈内时同步
+        // 释放索引内存）。整基重建是行数/列数变化点之一，启用位在此重判。
+        self.nz_update_enabled();
+        if self.nz_enabled {
+            self.nz_rebuild_all();
+        } else {
+            for idx in self.row_nz.iter_mut() {
+                idx.clear();
+            }
+            for d in self.nz_dead.iter_mut() {
+                *d = 0;
+            }
+        }
+    }
+
+    // ===================== 内部：稀疏索引簿记（轴1，规模门后置） =====================
+
+    /// 重判轴1 启用位：m×ncols > [`RC_SPARSE_CELL_THRESHOLD`] 为真。
+    /// 只在维度变化点调用（rebuild_initial_basis / add_row 收口）。
+    fn nz_update_enabled(&mut self) {
+        let m = self.basis.len();
+        let ncols = self.ncols_static() + self.num_art;
+        self.nz_enabled = (m as u64) * (ncols as u64) > RC_SPARSE_CELL_THRESHOLD;
+    }
+
+    /// 行 i 索引的存活（非墓碑）项数 = 该行精确非零数（稀疏标记行不变量）。
+    fn nz_alive(&self, i: usize) -> usize {
+        self.row_nz[i].len() - self.nz_dead[i] as usize
+    }
+
+    /// 就地重建第 i 行索引：按 matrix[i] 现值收集非零列（写指针恒 ≤ 扫描
+    /// 位置，无 memmove），存活数超密度阈（nnz*4 ≥ ncols）转稠密标记。
+    /// 调用方保证 row_nz[i]/nz_dead[i] 已分配。
+    fn nz_rebuild_row(&mut self, i: usize) {
+        if self.matrix[i].len() >= NZ_MASK as usize {
+            // 列数超出 31 位索引上限（实际不可达）：防御性禁用稀疏簿记。
+            self.row_nz[i].clear();
+            self.nz_dead[i] = 0;
+            return;
+        }
+        let ncols = self.matrix[i].len();
+        let sparse;
+        {
+            let idx = &mut self.row_nz[i];
+            let row = &self.matrix[i];
+            let mut w = 0;
+            for (j, &v) in row.iter().enumerate() {
+                if v != 0.0 {
+                    if w < idx.len() {
+                        idx[w] = j as u32;
+                    } else {
+                        idx.push(j as u32);
+                    }
+                    w += 1;
+                }
+            }
+            idx.truncate(w);
+            sparse = idx.len() * 4 < ncols;
+        }
+        self.nz_dead[i] = 0;
+        if !sparse {
+            self.row_nz[i].clear(); // 密度回退：稠密标记
+        }
+    }
+
+    /// 全表索引重建：所有行按现值重扫。O(m×ncols)，与 rebuild_initial_basis
+    /// 的填表同阶；仅在启用态（构建收口 / add_row 跨阈翻转）调用。
+    fn nz_rebuild_all(&mut self) {
+        for i in 0..self.matrix.len() {
+            self.nz_rebuild_row(i);
+        }
+    }
+
+    /// 压缩全部行索引的墓碑（每 NZ_COMPACT_INTERVAL 主元一次，控制删除
+    /// memmove 成本的惰性回收）。
+    fn nz_compact(&mut self) {
+        for i in 0..self.row_nz.len() {
+            if self.nz_dead[i] > 0 {
+                self.row_nz[i].retain(|&e| e & NZ_TOMB == 0);
+                self.nz_dead[i] = 0;
+            }
+        }
+    }
+
+    /// 行 k 索引中列 j 若为存活项则置墓碑（do_pivot 的 matrix[k][q]=0.0
+    /// 卫生写同步删 q 用；二分定位，正常路径下 q 已被消元的恰零簿记处理，
+    /// 此处纯防御）。
+    fn nz_tomb_alive(&mut self, k: usize, j: usize) {
+        let idx = &mut self.row_nz[k];
+        let mut lo = 0usize;
+        let mut hi = idx.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if ((idx[mid] & NZ_MASK) as usize) < j {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo < idx.len() && ((idx[lo] & NZ_MASK) as usize) == j && idx[lo] & NZ_TOMB == 0 {
+            idx[lo] |= NZ_TOMB;
+            self.nz_dead[k] += 1;
+        }
+    }
+
+    /// debug 回归门：全量重建索引表与簿记结果比对相等。稀疏标记行断言
+    /// ① 存活项集合 == 该行精确非零集（索引漂移会静默污染表格——值错但
+    /// 无 NaN，这是兜底断言）；② 存活数低于密度阈（密度回退义务）。
+    /// 稠密标记行（空索引）不承担簿记义务，跳过；禁用态全空，天然空转。
+    #[cfg(debug_assertions)]
+    fn nz_debug_verify(&self) {
+        for i in 0..self.matrix.len() {
+            let idx = &self.row_nz[i];
+            if idx.is_empty() {
+                continue;
+            }
+            let expect: Vec<u32> = self.matrix[i]
+                .iter()
+                .enumerate()
+                .filter(|&(_, &v)| v != 0.0)
+                .map(|(j, _)| j as u32)
+                .collect();
+            let alive: Vec<u32> = idx.iter().copied().filter(|&e| e & NZ_TOMB == 0).collect();
+            assert_eq!(
+                alive, expect,
+                "行 {i} 非零索引簿记与全量重建不符（索引漂移会静默污染表格）"
+            );
+            assert!(
+                alive.len() * 4 < self.matrix[i].len(),
+                "行 {i} 非零数 {} 未低于密度阈（ncols = {}），应回退稠密标记",
+                alive.len(),
+                self.matrix[i].len()
+            );
         }
     }
 
@@ -1221,7 +1551,220 @@ impl Simplex {
     /// 行为不变，值级/决策级等价）。matrix/binv 消元内循环经 split_at_mut
     /// 同时取得可变行 k 与只读行 r（别名安全写法，可向量化）；
     /// matrix[k][q]=0 卫生写在消元循环外保留。
+    /// 执行主元：入基列 q（方向 delta、步长 t），出基行 r。
+    /// rhs 采用“基变量值”口径：非出基行按 −δt·f_k 更新，出基行 = 入基变量
+    /// 新值；系数与 binv 做标准表格行变换。
+    ///
+    /// 轴1 规模门（[`Self::nz_enabled`]）：阈内（m×ncols ≤
+    /// [`RC_SPARSE_CELL_THRESHOLD`]）整体走 [`Simplex::do_pivot_legacy`]
+    /// ——**逐字保留的旧实现**（O(ncols) 计数扫描 + zip/纯索引消元），热路径
+    /// 零新增指令，小算例成本与行为逐字节回基线；超阈走本体的簿记路径：
+    /// 密度判据沿用 nnz*4 ≥ ncols 但非零数改读行索引（O(1)），空索引 = 稠密
+    /// 标记（恒走 zip、零簿记成本）。消元同时同步维护行 k 的索引：旧 0 变
+    /// 非零（fill-in）在归并游标处插入（同位墓碑则复活，免 memmove）；减法
+    /// 结果恰为 0.0 置墓碑（惰性删除，每 [`NZ_COMPACT_INTERVAL`] 主元压缩
+    /// 一次）；存活数超密度阈即转稠密标记（每行密度回退，fill-in 吞掉收益
+    /// 时的保底）。启用态语义为值级/决策级 == 等价（跳零是精确无操作，至多
+    /// 翻转个别 ±0.0 符号位）。binv 保持稠密 zip 消元——诚实边界：这是混合
+    /// 表格不是修正单纯形，目标域是 1e3–1e4 行入场券，不是百万变量。
     fn do_pivot(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
+        if self.nz_enabled {
+            self.do_pivot_nz(q, r, delta, t, hit_upper);
+            return;
+        }
+        self.do_pivot_legacy_inner(q, r, delta, t, hit_upper);
+    }
+
+    /// 启用态主元（轴1 簿记路径）：密度判据读行索引、归并游标消元簿记。
+    fn do_pivot_nz(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
+        let m = self.basis.len();
+        let ncols = self.matrix[r].len();
+        let p = self.matrix[r][q];
+        // 密度自适应：非零数读行索引（稀疏标记行的存活数 = 精确非零数），
+        // 空索引 = 稠密标记。割行/GMI 行在大 LP 上近乎全稠密，索引式内循环
+        // （间接寻址）阻碍 SIMD——实测 mknap-5x300 t1 do_pivot 占墙钟 ~70%。
+        let dense_elim = self.row_nz[r].is_empty() || self.nz_alive(r) * 4 >= ncols;
+        if !dense_elim {
+            // 主元行非零下标直接读索引（跳过墓碑），替代旧全列扫描。
+            self.pivot_nz.clear();
+            for &e in self.row_nz[r].iter() {
+                if e & NZ_TOMB == 0 {
+                    self.pivot_nz.push((e & NZ_MASK) as usize);
+                }
+            }
+        }
+        // 行 r 缩放（稠密：连续除；稀疏：只遍历非零列，除法下溢到恰 0.0 的
+        // 同步转墓碑——维持「存活项 == 精确非零集」不变量）。
+        if dense_elim {
+            for v in self.matrix[r].iter_mut() {
+                *v /= p;
+            }
+        } else {
+            let row = &mut self.matrix[r];
+            for e in self.row_nz[r].iter_mut() {
+                if *e & NZ_TOMB != 0 {
+                    continue;
+                }
+                let j = (*e & NZ_MASK) as usize;
+                row[j] /= p;
+                if row[j] == 0.0 {
+                    *e |= NZ_TOMB;
+                    self.nz_dead[r] += 1;
+                }
+            }
+        }
+        self.matrix[r][q] = 1.0;
+        for v in self.binv[r].iter_mut() {
+            *v /= p;
+        }
+        // 出基列与入基旧值。
+        let leaving = self.basis[r];
+        let entering_old = if delta > 0.0 {
+            self.col_bounds(q).0
+        } else {
+            self.col_bounds(q).1
+        };
+        // 消元系数 f（用未更新的 matrix[k][q]）：覆盖写暂存，无分配。
+        self.pivot_f.clear();
+        self.pivot_f.resize(m, 0.0);
+        for k in 0..m {
+            if k != r {
+                self.pivot_f[k] = self.matrix[k][q];
+            }
+        }
+        // 消元（k ≠ r；f_k 用未更新的 matrix[k][q]）。
+        for k in 0..m {
+            if k == r {
+                continue;
+            }
+            let fk = self.pivot_f[k];
+            if fk != 0.0 {
+                // matrix 行 k（可变）与行 r（只读）：k≠r，经 split_at_mut
+                // 取得不相交切片。
+                let (row_k, row_r): (&mut Vec<f64>, &Vec<f64>) = if r < k {
+                    let (left, right) = self.matrix.split_at_mut(k);
+                    (&mut right[0], &left[r])
+                } else {
+                    let (left, right) = self.matrix.split_at_mut(k + 1);
+                    (&mut left[k], &right[r - k - 1])
+                };
+                if dense_elim {
+                    for (x, y) in row_k.iter_mut().zip(row_r.iter()) {
+                        *x -= fk * *y;
+                    }
+                    // —— 行 k 索引簿记（稀疏标记行才承担；matrix 与 row_nz
+                    //    为不相交字段，可与上面的行切片同时持有可变借用）。
+                    //    主元行稠密：行 k 全列被触，就地重建索引（写指针恒 ≤
+                    //    扫描位置，无 memmove）。
+                    if !self.row_nz[k].is_empty() {
+                        let idx = &mut self.row_nz[k];
+                        let mut w = 0;
+                        for (j, &v) in row_k.iter().enumerate() {
+                            if v != 0.0 {
+                                if w < idx.len() {
+                                    idx[w] = j as u32;
+                                } else {
+                                    idx.push(j as u32);
+                                }
+                                w += 1;
+                            }
+                        }
+                        idx.truncate(w);
+                        self.nz_dead[k] = 0;
+                    }
+                } else if self.row_nz[k].is_empty() {
+                    // 主元行稀疏 + 行 k 稠密标记：无簿记义务，纯索引消元。
+                    for &j in self.pivot_nz.iter() {
+                        row_k[j] -= fk * row_r[j];
+                    }
+                } else {
+                    // 主元行稀疏 + 行 k 稀疏标记：归并游标同步消元——算术与
+                    // 索引簿记单遍完成（双方升序）：存活项减法（结果恰零转
+                    // 墓碑）、墓碑位复活（旧值精确 0.0，非零结果免插入
+                    // memmove）、fill-in 游标处插入（旧 0 变非零）。
+                    let idx = &mut self.row_nz[k];
+                    let mut pos = 0;
+                    for &j in self.pivot_nz.iter() {
+                        let y = row_r[j];
+                        while pos < idx.len() && ((idx[pos] & NZ_MASK) as usize) < j {
+                            pos += 1;
+                        }
+                        if pos < idx.len() && ((idx[pos] & NZ_MASK) as usize) == j {
+                            if idx[pos] & NZ_TOMB == 0 {
+                                // 存活：减法 + 结果恰零转墓碑。
+                                let x = row_k[j] - fk * y;
+                                row_k[j] = x;
+                                if x == 0.0 {
+                                    idx[pos] |= NZ_TOMB;
+                                    self.nz_dead[k] += 1;
+                                }
+                            } else {
+                                // 墓碑位（旧值精确 0.0）：非零结果复活。
+                                let nv = -fk * y;
+                                if nv != 0.0 {
+                                    idx[pos] &= !NZ_TOMB;
+                                    self.nz_dead[k] -= 1;
+                                    row_k[j] = nv;
+                                }
+                            }
+                        } else {
+                            // fill-in：旧 0 变非零，游标处插入（0 − fk·y ≡
+                            // −fk·y，== 相等，至多 ±0 符号位差异）。
+                            let nv = -fk * y;
+                            if nv != 0.0 {
+                                idx.insert(pos, j as u32);
+                                row_k[j] = nv;
+                            }
+                        }
+                    }
+                }
+                // 密度回退：行 k 稀疏标记且存活数超阈（nnz*4 ≥ ncols）转稠密
+                // 标记（fill-in 吞掉收益时的保底）。
+                if !self.row_nz[k].is_empty() && self.nz_alive(k) * 4 >= ncols {
+                    self.row_nz[k].clear();
+                    self.nz_dead[k] = 0;
+                }
+                let (bk, br): (&mut Vec<f64>, &Vec<f64>) = if r < k {
+                    let (left, right) = self.binv.split_at_mut(k);
+                    (&mut right[0], &left[r])
+                } else {
+                    let (left, right) = self.binv.split_at_mut(k + 1);
+                    (&mut left[k], &right[r - k - 1])
+                };
+                for (x, y) in bk.iter_mut().zip(br.iter()) {
+                    *x -= fk * *y;
+                }
+                self.rhs[k] -= delta * t * fk;
+            }
+            self.matrix[k][q] = 0.0; // 数值卫生（保留在非零列循环之外）
+            // 卫生写同步删 q（轴1）：正常路径下消元已把 q 精确归零
+            // （fk − fk·1 = +0.0）并墓碑；此处防御性同步（稀疏标记行）。
+            if !self.row_nz[k].is_empty() {
+                self.nz_tomb_alive(k, q);
+            }
+        }
+        self.rhs[r] = entering_old + delta * t;
+        self.basis[r] = q;
+        self.in_basis[leaving] = false;
+        self.in_basis[q] = true;
+        self.at_upper[leaving] = hit_upper;
+        // —— 簿记维护：每 NZ_COMPACT_INTERVAL 主元压缩墓碑；debug 构建
+        //    同时做全量重建比对（索引漂移会静默污染表格——值错但无 NaN，
+        //    周期断言是回归门）。
+        self.pivots_since_nz = self.pivots_since_nz.saturating_add(1);
+        if self.pivots_since_nz >= NZ_COMPACT_INTERVAL {
+            self.pivots_since_nz = 0;
+            self.nz_compact();
+            #[cfg(debug_assertions)]
+            self.nz_debug_verify();
+        }
+    }
+
+    /// do_pivot 的阈内旧路径（轴1 规模门前置前的逐字原实现）：O(ncols) 计数
+    /// 扫描 + zip/纯索引消元，无任何索引簿记。保留为独立函数以保证小算例
+    /// 热路径零新增指令、行为逐字节不变（bench 13 算例回基线的锚点）。
+    #[inline]
+    fn do_pivot_legacy_inner(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
         let m = self.basis.len();
         let ncols = self.matrix[r].len();
         let p = self.matrix[r][q];
@@ -1838,6 +2381,11 @@ impl Simplex {
     /// 构造 LpSolution：提取 x（基本值在容差内夹回界）、按 x 重算目标
     /// （值与目标自洽）、Optimal 时做最终原始可行性/人工变量校验并计算对偶。
     fn build_solution(&mut self, mut status: LpStatus) -> LpSolution {
+        // 轴1 回归门：每次 solve/resolve 收口做一次索引全量比对（与每 64
+        // 主元的周期断言互补——短调用（< 64 主元）也能捕获簿记漂移；禁用态
+        // 索引全空，天然空转）。
+        #[cfg(debug_assertions)]
+        self.nz_debug_verify();
         let n = self.num_structural;
         let m = self.basis.len();
         let ncs = self.ncols_static();
@@ -3083,6 +3631,417 @@ mod tests {
         assert!(picked, "应存在可用主元");
         assert_rc_batch_matches(&mut s, 2, "do_pivot 后");
         assert_rc_batch_matches(&mut s, 1, "do_pivot 后");
+    }
+
+    // ---- 轴1：稀疏混合表格行索引簿记（规模门后置） ----
+
+    /// 索引簿记一致性内联校验（debug/release 双口径）：稀疏标记行的存活项
+    /// 集合 == 该行精确非零集，且低于密度阈；稠密标记行（空索引）无义务。
+    fn assert_row_nz_consistent(s: &Simplex) {
+        for i in 0..s.matrix.len() {
+            let idx = &s.row_nz[i];
+            if idx.is_empty() {
+                continue;
+            }
+            let expect: Vec<u32> = s.matrix[i]
+                .iter()
+                .enumerate()
+                .filter(|&(_, &v)| v != 0.0)
+                .map(|(j, _)| j as u32)
+                .collect();
+            let alive: Vec<u32> = idx.iter().copied().filter(|&e| e & NZ_TOMB == 0).collect();
+            assert_eq!(alive, expect, "行 {i} 索引簿记与矩阵非零集不符");
+            assert!(
+                alive.len() * 4 < s.matrix[i].len(),
+                "行 {i} 非零数 {} 未低于密度阈（ncols = {}）",
+                alive.len(),
+                s.matrix[i].len()
+            );
+        }
+    }
+
+    /// 白盒启用轴1簿记（小模型天然低于规模阈；测试直接置位 + 全量重建，
+    /// 模拟大表启用态以快速确定性地覆盖簿记路径）。
+    fn force_nz_enabled(s: &mut Simplex) {
+        s.nz_enabled = true;
+        s.nz_rebuild_all();
+        assert_row_nz_consistent(s);
+    }
+
+    /// （轴1）规模门：小模型天然禁用（旧路径零簿记、row_nz 全空）；大模型
+    /// 构建即启用并完成索引重建。
+    #[test]
+    fn test_nz_scale_gate_disabled_small_enabled_large() {
+        // 小模型（34 单元）：禁用 + 全空。
+        let p_small = prob(
+            Sense::Minimize,
+            (0..5).map(|j| var(&format!("x{j}"), 0.0, 8.0)).collect(),
+            vec![(0, -1.0)],
+            vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 10.0)],
+        );
+        let mut s = Simplex::new(&p_small, tol()).unwrap();
+        assert!(!s.nz_enabled, "阈内模型须禁用轴1（旧路径）");
+        assert!(s.row_nz.iter().all(|idx| idx.is_empty()));
+        assert_eq!(s.solve(&Bounds::from_problem(&p_small)).status, LpStatus::Optimal);
+        assert!(!s.nz_enabled, "求解/加割不跨阈时保持禁用");
+        assert!(s.row_nz.iter().all(|idx| idx.is_empty()));
+
+        // 大模型（500 变量 × 700 等式行 = 840000 单元 > 262144）：构建即启用。
+        let n = 500;
+        let mut vars = Vec::new();
+        for j in 0..n {
+            vars.push(var(&format!("u{j}"), 0.0, 3.0));
+        }
+        let mut cons = Vec::new();
+        for i in 0..700 {
+            let j0 = (i * 13 + 1) % (n - 2);
+            cons.push((
+                vec![(j0, 1.0), (j0 + 1, 2.0), ((j0 + 37) % n, 1.0)],
+                RelOp::Eq,
+                4.0,
+            ));
+        }
+        let p_big = prob(Sense::Minimize, vars, (0..n).map(|j| (j, 1.0)).collect(), cons);
+        let sb = Simplex::new(&p_big, tol()).unwrap();
+        let mb = sb.basis.len();
+        let ncolb = sb.ncols_static() + sb.num_art;
+        assert!((mb as u64) * (ncolb as u64) > RC_SPARSE_CELL_THRESHOLD);
+        assert!(sb.nz_enabled, "超阈模型须启用轴1");
+        assert_row_nz_consistent(&sb);
+        // 全稀疏行 + 全部行索引非空（3 项结构 + 1 人工列 = 4 nnz ≪ ncols/4）。
+        assert!(sb.row_nz.iter().all(|idx| !idx.is_empty()));
+    }
+
+    /// （轴1）do_pivot 索引簿记的手算钉（白盒启用态）：fill-in 插入、消元
+    /// 恰零惰性墓碑、墓碑复活（nz_dead 同步减）、密度不变量。4 行 30 列模型
+    /// （行 nnz=6，6×4=24 < 34 ⇒ 全部稀疏标记），三连手工主元覆盖全部
+    /// 簿记分支。
+    #[test]
+    fn test_row_nz_fill_in_and_tombstone() {
+        // min Σ 0（任意目标即可，只手驱 do_pivot）。行 0/2 同支撑同系数
+        // （消元恰零），行 1/3 独立支撑（fill-in 目标）。
+        let mut cons = Vec::new();
+        cons.push((
+            (0..5).map(|j| (j, 1.0)).collect::<Vec<_>>(),
+            RelOp::Le,
+            50.0,
+        ));
+        cons.push((
+            (5..10).map(|j| (j, 1.0)).collect::<Vec<_>>(),
+            RelOp::Le,
+            50.0,
+        ));
+        cons.push((
+            (0..5).map(|j| (j, 1.0)).collect::<Vec<_>>(),
+            RelOp::Le,
+            40.0,
+        ));
+        cons.push((vec![(15, 1.0), (16, 2.0)], RelOp::Le, 30.0));
+        let p = prob(
+            Sense::Minimize,
+            (0..30).map(|j| var(&format!("x{j}"), 0.0, 10.0)).collect(),
+            vec![],
+            cons,
+        );
+        let mut s = Simplex::new(&p, tol()).unwrap();
+        force_nz_enabled(&mut s);
+        // 前置：全部行稀疏标记（nnz=6、ncols=34），松弛列 = 30..33。
+        assert_eq!(s.matrix.len(), 4);
+        assert!(s.row_nz.iter().all(|idx| !idx.is_empty()), "4 行均应稀疏标记");
+        assert_eq!(s.basis, vec![30, 31, 32, 33]);
+
+        // 主元 1：q=0（x0），r=0。行 0 不变（p=1）；f[2]=1 ⇒ 行 2 消元：
+        // j∈{0..4} 恰零（1−1）→ 墓碑；j=30（行 0 松弛列）fill-in（0−1=−1）
+        // → 插入。行 2 终态存活 = {30, 32}。
+        s.do_pivot(0, 0, 1.0, 0.0, false);
+        assert_row_nz_consistent(&s);
+        let alive2: Vec<usize> = s.row_nz[2]
+            .iter()
+            .filter(|e| **e & NZ_TOMB == 0)
+            .map(|e| (*e & NZ_MASK) as usize)
+            .collect();
+        assert_eq!(alive2, vec![30, 32], "行 2 消元后存活集");
+        assert_eq!(s.matrix[2][30], -1.0);
+        assert_eq!(s.matrix[2][32], 1.0);
+        for j in 0..5 {
+            assert_eq!(s.matrix[2][j], 0.0, "行 2 列 {j} 应恰零");
+        }
+        assert_eq!(s.nz_dead[2], 5, "行 2 应有 5 个墓碑（j=0..4）");
+
+        // 主元 2：q=30（s0，主元 1 后已离基），r=2（p=−1）。行 2 缩放取反：
+        // [30]→+1、[32]→−1（墓碑位 0..4 跳过、值保持 0）；f[0]=1 ⇒ 行 0
+        // 消元：j=30 恰零（1−1）→ 墓碑；j=32 fill-in（0−(−1)=+1）→ 插入。
+        s.do_pivot(30, 2, 1.0, 0.0, false);
+        assert_row_nz_consistent(&s);
+        assert_eq!(s.matrix[0][30], 0.0);
+        assert_eq!(s.matrix[0][32], 1.0);
+        let alive0: Vec<usize> = s.row_nz[0]
+            .iter()
+            .filter(|e| **e & NZ_TOMB == 0)
+            .map(|e| (*e & NZ_MASK) as usize)
+            .collect();
+        assert_eq!(alive0, vec![0, 1, 2, 3, 4, 32], "行 0 消元后存活集");
+
+        // 主元 3：q=32（s2），r=0（p=1）。f[2]=−1 ⇒ 行 2 消元：
+        // j∈{0..4}（行 2 墓碑位、值 0）复活（−(−1)·1=+1，墓碑计数同步减）；
+        // j=32 恰零（−1−(−1)·1）→ 墓碑。行 2 终态存活 = {0,1,2,3,4,30}。
+        s.do_pivot(32, 0, 1.0, 0.0, false);
+        assert_row_nz_consistent(&s);
+        let alive2: Vec<usize> = s.row_nz[2]
+            .iter()
+            .filter(|e| **e & NZ_TOMB == 0)
+            .map(|e| (*e & NZ_MASK) as usize)
+            .collect();
+        assert_eq!(alive2, vec![0, 1, 2, 3, 4, 30], "行 2 复活+墓碑后存活集");
+        for j in 0..5 {
+            assert_eq!(s.matrix[2][j], 1.0, "行 2 列 {j} 复活值");
+        }
+        assert_eq!(s.matrix[2][30], 1.0);
+        assert_eq!(s.matrix[2][32], 0.0, "行 2 列 32 应恰零（墓碑）");
+        assert_eq!(
+            s.row_nz[2].iter().filter(|e| **e & NZ_TOMB != 0).count(),
+            1,
+            "行 2 此时应只有 j=32 一个墓碑"
+        );
+        // 压缩：墓碑清除后索引即精确非零集（压缩前复活分支已被上方真实
+        // 触达——若把压缩提前到主元 3 之前，墓碑已清空、复活变插入，
+        // 覆盖就漏了）。
+        s.nz_compact();
+        assert_eq!(s.row_nz[2], vec![0, 1, 2, 3, 4, 30]);
+        assert_eq!(s.nz_dead[2], 0);
+        assert_row_nz_consistent(&s);
+    }
+
+    /// （轴1，白盒启用态）求解/热启动/加割全流程的索引不变量（累计 > 64
+    /// 主元触发周期压缩，add_row 的列插入右移 + 新行索引也被覆盖）。
+    #[test]
+    fn test_row_nz_invariant_across_solve_cycles() {
+        // 50 变量 × 30 行随机稀疏 LP（LCG 确定性），行 nnz≈5+1 松弛 ≪ ncols/4。
+        let n = 50;
+        let mut lcg = 12345u64;
+        let mut rnd = || {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((lcg >> 33) % 9 + 2) as f64
+        };
+        let mut vars = Vec::new();
+        for j in 0..n {
+            vars.push(var(&format!("x{j}"), 0.0, 8.0));
+        }
+        let obj: Vec<(usize, f64)> = (0..n).map(|j| (j, -rnd())).collect();
+        let mut cons = Vec::new();
+        for i in 0..30 {
+            // 每行 5 个伪随机列（跨行覆盖全部变量空间，保证 fill-in 活跃）。
+            let terms: Vec<(usize, f64)> = (0..5)
+                .map(|k| (((i * 7 + k * 11) % n), rnd()))
+                .collect();
+            let rhs: f64 = terms.iter().map(|&(_, a)| a).sum::<f64>() * 0.5;
+            cons.push((terms, RelOp::Le, rhs));
+        }
+        let p = prob(Sense::Minimize, vars, obj, cons);
+        let mut s = Simplex::new(&p, tol()).unwrap();
+        force_nz_enabled(&mut s);
+        let mut b = Bounds::from_problem(&p);
+        let sol = s.solve(&b);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert_row_nz_consistent(&s);
+        // 注意：solve 内部 rebuild_initial_basis 会按真实规模重判启用位
+        // （小模型翻回禁用），此处重新白盒启用以继续覆盖启用态路径。
+        force_nz_enabled(&mut s);
+
+        // 热启动序列（界收紧/放松交替，触发 snap + 对偶修复/重建路径）；
+        // 中途穿插两次整基重解（冷路径），每次重解后重新启用。
+        for step in 0..6 {
+            let j = (step * 5) % n;
+            if step % 2 == 0 {
+                b.ub[j] = 3.0;
+            } else {
+                b.ub[j] = 8.0;
+                b.lb[j] = 1.0;
+            }
+            assert_eq!(s.resolve(&b).status, LpStatus::Optimal);
+            assert_row_nz_consistent(&s);
+            if step == 2 || step == 4 {
+                assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+                force_nz_enabled(&mut s);
+            }
+        }
+
+        // 加割（Le 违反割 + Ge 割）：割松弛列插入静态段 ⇒ 既有行索引右移，
+        // Ge 割再建人工列；resolve 修复后核对。
+        let sol = s.resolve(&b);
+        let cut0 = sol
+            .x
+            .iter()
+            .enumerate()
+            .max_by(|a, c| a.1.partial_cmp(c.1).unwrap())
+            .unwrap()
+            .0;
+        s.add_row(&[(cut0, 1.0)], RelOp::Le, 2.5).unwrap();
+        assert_row_nz_consistent(&s);
+        assert_eq!(s.resolve(&b).status, LpStatus::Optimal);
+        assert_row_nz_consistent(&s);
+        s.add_row(&[(cut0, 1.0)], RelOp::Ge, 0.5).unwrap();
+        assert_row_nz_consistent(&s);
+        assert_eq!(s.resolve(&b).status, LpStatus::Optimal);
+        assert_row_nz_consistent(&s);
+        assert!(
+            s.iterations() > NZ_COMPACT_INTERVAL as u64,
+            "累计主元数须超压缩间隔（实际 {}），否则周期压缩路径未被触达",
+            s.iterations()
+        );
+    }
+
+    /// （轴1）tableau_row_terms 与稠密 tableau_row 语义一致：项集 = 稠密行
+    /// 非零子集、值逐项相等、升序；越界行同口径 (空, NaN)。禁用态（值扫描
+    /// 分支）与白盒启用态（索引分支）双覆盖。
+    #[test]
+    fn test_tableau_row_terms_matches_dense() {
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)],
+            vec![(0, 1.0), (1, 1.0)],
+            vec![
+                (vec![(0, 1.0), (1, 1.0)], RelOp::Ge, 2.0),
+                (vec![(0, 1.0)], RelOp::Le, 6.0),
+            ],
+        );
+        let mut s = Simplex::new(&p, tol()).unwrap();
+        let b = Bounds::from_problem(&p);
+        assert!(!s.nz_enabled);
+        assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+        s.add_row(&[(0, 1.0)], RelOp::Le, 4.0).unwrap();
+        assert_eq!(s.resolve(&b).status, LpStatus::Optimal);
+        for phase in 0..2 {
+            if phase == 1 {
+                force_nz_enabled(&mut s);
+            }
+            for row in 0..s.num_rows() {
+                let (dense, dv) = s.tableau_row(row);
+                let (terms, tv) = s.tableau_row_terms(row);
+                assert_eq!(dv, tv, "行 {row} 基变量值两口接口不一致（phase {phase}）");
+                let expect: Vec<(usize, f64)> = dense
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &v)| v != 0.0)
+                    .map(|(j, &v)| (j, v))
+                    .collect();
+                assert_eq!(terms, expect, "行 {row} 稀疏项集与稠密非零集不符（phase {phase}）");
+            }
+        }
+        // 越界行：两口接口同口径。
+        let (d, dv) = s.tableau_row(999);
+        let (t, tv) = s.tableau_row_terms(999);
+        assert!(d.is_empty() && t.is_empty());
+        assert!(dv.is_nan() && tv.is_nan());
+    }
+
+    /// （轴1，自然启用）compute_rc_batch 稀疏散射路径（m×ncols >
+    /// RC_SPARSE_CELL_THRESHOLD）与逐列参考 == 相等。状态 A：大等式模型
+    /// 初始基（phase-1，人工列 cb=1，全部行稀疏标记）；状态 B：中号 Le
+    /// 模型解毕（phase-2，结构基行 cb≠0 + 稠密标记行回退 zip 分支）。
+    #[test]
+    fn test_rc_sparse_scatter_matches_per_column_large() {
+        // —— 状态 A：500 变量 × 700 等式行，m×ncols = 700×1200 = 840000 ——
+        let n_a = 500;
+        let mut vars = Vec::new();
+        for j in 0..n_a {
+            vars.push(var(&format!("u{j}"), 0.0, 3.0));
+        }
+        let mut cons = Vec::new();
+        for i in 0..700 {
+            let j0 = (i * 13 + 1) % (n_a - 2);
+            cons.push((
+                vec![(j0, 1.0), (j0 + 1, 2.0), ((j0 + 37) % n_a, 1.0)],
+                RelOp::Eq,
+                4.0,
+            ));
+        }
+        let pa = prob(
+            Sense::Minimize,
+            vars,
+            (0..n_a).map(|j| (j, 1.0)).collect(),
+            cons,
+        );
+        let mut sa = Simplex::new(&pa, tol()).unwrap();
+        let ma = sa.basis.len();
+        let ncola = sa.ncols_static() + sa.num_art;
+        assert!(
+            (ma as u64) * (ncola as u64) > RC_SPARSE_CELL_THRESHOLD,
+            "前置：状态 A 须超稀疏散射阈值（{ma}×{ncola}）"
+        );
+        assert!(sa.nz_enabled, "前置：状态 A 须自然启用轴1");
+        assert!(sa.row_nz.iter().all(|idx| !idx.is_empty()));
+        assert_rc_batch_matches(&mut sa, 1, "大表初始 phase-1（稀疏散射）");
+        assert_rc_batch_matches(&mut sa, 2, "大表初始 phase-2（稀疏散射）");
+
+        // —— 状态 B：600 变量 × 320 行（含 2 条全支撑稠密行），短目标解毕后
+        //    phase-2（结构基行 cb≠0：稀疏散射 + 稠密标记行回退 zip 双分支）——
+        let n_b = 600;
+        let mut vars = Vec::new();
+        for j in 0..n_b {
+            vars.push(var(&format!("v{j}"), 0.0, 2.0));
+        }
+        let mut cons = Vec::new();
+        for i in 0..320 {
+            let terms: Vec<(usize, f64)> = (0..4)
+                .map(|k| (((i * 17 + k * 29) % n_b), 1.0 + (k as f64)))
+                .collect();
+            let rhs: f64 = terms.iter().map(|&(_, a)| a).sum::<f64>() * 3.0;
+            cons.push((terms, RelOp::Le, rhs));
+        }
+        // 2 条全支撑行（nnz = 601 ≥ ncols/4 ⇒ 稠密标记，散射路径回退 zip）。
+        for _ in 0..2 {
+            cons.push((
+                (0..n_b).map(|j| (j, 1.0)).collect::<Vec<_>>(),
+                RelOp::Le,
+                (n_b as f64) * 1.5,
+            ));
+        }
+        let pb = prob(
+            Sense::Minimize,
+            vars,
+            vec![(0, -1.0), (1, -1.0), (2, -1.0)], // 短目标：少量主元即最优
+            cons,
+        );
+        let mut sb = Simplex::new(&pb, tol()).unwrap();
+        assert!(
+            sb.row_nz.iter().filter(|idx| idx.is_empty()).count() >= 2,
+            "前置：全支撑行须落稠密标记"
+        );
+        let sol = sb.solve(&Bounds::from_problem(&pb));
+        assert_eq!(sol.status, LpStatus::Optimal);
+        let mb = sb.basis.len();
+        let ncolb = sb.ncols_static() + sb.num_art;
+        assert!(
+            (mb as u64) * (ncolb as u64) > RC_SPARSE_CELL_THRESHOLD,
+            "前置：状态 B 须超稀疏散射阈值（{mb}×{ncolb}）"
+        );
+        assert!(sb.nz_enabled, "前置：状态 B 须自然启用轴1");
+        // 短目标下最优可由非基界翻转达成（全松弛基、cb 全 0）；手工把一个
+        // 带成本的结构列主元入基，制造 phase-2 cb≠0 行（与既有
+        // test_compute_rc_batch_matches_per_column_multi_state 的状态 5 同法）。
+        if !sb.basis.iter().any(|&c| c < sb.num_structural) {
+            let mut picked = false;
+            'outer: for q in 0..3 {
+                if sb.in_basis[q] {
+                    continue;
+                }
+                for i in 0..mb {
+                    if !sb.row_nz[i].is_empty() && sb.matrix[i][q].abs() >= 1e-6 {
+                        sb.do_pivot(q, i, 1.0, 0.0, false);
+                        picked = true;
+                        break 'outer;
+                    }
+                }
+            }
+            assert!(picked, "应存在含 v0..v2 的稀疏行可供主元");
+        }
+        assert!(
+            sb.basis.iter().any(|&c| c < sb.num_structural),
+            "前置：基中须有结构列（phase-2 cb≠0 行存在）"
+        );
+        assert_row_nz_consistent(&sb);
+        assert_rc_batch_matches(&mut sb, 2, "大表解毕 phase-2（稀疏散射+稠密回退）");
     }
 
     #[test]

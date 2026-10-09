@@ -218,7 +218,6 @@ fn gomory_cuts_inner(
     }
     let layout = s.column_layout();
     let num_struct = layout.num_structural;
-    let num_slack = layout.slack.len();
     if num_struct != n {
         return Vec::new(); // 表格与问题维度不符（防御）
     }
@@ -243,12 +242,12 @@ fn gomory_cuts_inner(
         if bcol >= num_struct || !is_int[bcol] {
             continue; // 基变量须为整数类型结构列
         }
-        let (table, value) = s.tableau_row(row);
-        if table.len() < num_struct + num_slack || !value.is_finite() {
-            continue;
+        let (terms, value) = s.tableau_row_terms(row);
+        if !value.is_finite() {
+            continue; // 越界行（空表 + NaN）或数值异常
         }
-        if table.iter().any(|v| !v.is_finite()) {
-            continue; // 数值异常行整行跳过
+        if terms.iter().any(|&(_, v)| !v.is_finite()) {
+            continue; // 数值异常行整行跳过（NaN/Inf 非零必入稀疏表）
         }
         let f0 = value - value.floor();
         if !(f0 >= opts.away && f0 <= 1.0 - opts.away) {
@@ -259,16 +258,28 @@ fn gomory_cuts_inner(
         let mut coef = vec![0.0; n];
         let mut const_term = 0.0f64;
         let mut any = false;
+        // 轴1：稀疏读表（terms 按列升序）与 nonbasic（按列升序）归并游标
+        // 推进——系数恰为 0 的列在稀疏接口中省略，等价于稠密读取的
+        // α == 0 ⇒ π == 0 ⇒ 无贡献（逐项行为与旧稠密路径一致）。
+        let mut tcur = 0usize;
         for nb in &nonbasic {
             let j = nb.col;
+            while tcur < terms.len() && terms[tcur].0 < j {
+                tcur += 1;
+            }
+            let alpha0 = if tcur < terms.len() && terms[tcur].0 == j {
+                terms[tcur].1
+            } else {
+                0.0
+            };
             let alpha = if j < n {
                 if nb.at_upper {
-                    -table[j]
+                    -alpha0
                 } else {
-                    table[j]
+                    alpha0
                 }
             } else {
-                table[j] // 松弛/剩余列恒贴下界 0
+                alpha0 // 松弛/剩余列恒贴下界 0
             };
             let pi = if j < n && is_int[j] {
                 let bound = if nb.at_upper {
@@ -396,7 +407,8 @@ fn gomory_cuts_inner(
     cuts
 }
 
-/// 重建当前 LP 解 x̄（结构变量空间）：基列取表格 rhs（[`Simplex::tableau_row`]），
+/// 重建当前 LP 解 x̄（结构变量空间）：基列取表格 rhs（值经
+/// [`Simplex::tableau_row_terms`] 稀疏接口读取——只需值，免整行稠密拷贝），
 /// 非基列取所贴界（[`Bounds`]）；全部经公开访问器，不依赖 Simplex 内部状态。
 ///
 /// 返回 `None`（调用方按防御处理）：表格结构列数 ≠ `n`，或重建出现非有限值
@@ -413,7 +425,7 @@ fn rebuild_x_bar(s: &Simplex, bounds: &Bounds, n: usize) -> Option<Vec<f64>> {
     let mut x_bar = vec![f64::NAN; n];
     for (row, &bcol) in basis.iter().enumerate() {
         if bcol < n {
-            let (_, value) = s.tableau_row(row);
+            let (_, value) = s.tableau_row_terms(row);
             x_bar[bcol] = value;
         }
     }
