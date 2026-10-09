@@ -142,11 +142,14 @@ pub struct BbOptions {
 }
 
 impl Default for BbOptions {
-    /// 默认值：Pseudocost / DepthFirst / 2_000_000 / 0 / true / true / 4096 /
-    /// 1e-9 / 1e-9 / 8。
+    /// 默认值：MostFractional / DepthFirst / 2_000_000 / 0 / true / true / 4096 /
+    /// 1e-9 / 1e-9 / 8。（2026-10 复核后回退：第三轮曾默认 Pseudocost，
+    /// 但 market-split/mknap-5x300 等类实测大幅倒退且无实测收益——全部
+    /// 已验证性能数字均在 MostFractional 口径下取得；Pseudocost 经
+    /// `BbOptions::branch_rule` / CLI `--branch-rule pseudocost` 可选。）
     fn default() -> Self {
         BbOptions {
-            branch_rule: BranchRule::Pseudocost,
+            branch_rule: BranchRule::MostFractional,
             node_rule: NodeRule::DepthFirst,
             node_limit: 2_000_000,
             time_limit_ms: 0,
@@ -1555,7 +1558,7 @@ mod tests {
     #[test]
     fn bb_options_default_contract() {
         let o = BbOptions::default();
-        assert_eq!(o.branch_rule, BranchRule::Pseudocost);
+        assert_eq!(o.branch_rule, BranchRule::MostFractional);
         assert_eq!(o.node_rule, NodeRule::DepthFirst);
         assert_eq!(o.node_limit, 2_000_000);
         assert_eq!(o.time_limit_ms, 0);
@@ -2245,12 +2248,11 @@ mod tests {
     /// 有限 Some（触发即有 incumbent + 证据 bound，统一 clamp 保证不 inf/负）。
     #[test]
     fn sequential_gap_trigger_yields_nonnegative_finite_gap() {
-        // binary_knapsack 两层问题：root LP 15 分数。默认 Pseudocost +
-        // 可靠性探测 + best-estimate 压栈序下：根探测 a 双向（down 增益
-        // 8/0.8=10、up 增益 (1/3)/0.2 ⇒ up 估计更优）⇒ 上行（a≥1，LP
-        // 14.667）先探索，其下行子节点（b≤0）记 incumbent=10；触发时刻
-        // 剩余栈 = [根下行 a≤0，est=15] ⇒ gap=(15−10)/10×100=50% ≤ 50
-        // 触发（旧 MostFractional 固定下行先探索路径下为 46.67%）。
+        // binary_knapsack 两层问题：root LP 15 分数。默认（2026-10 复核后
+        // 回退）MostFractional 固定下行先探索：根下行（a≤0，LP 14）先探索
+        // 记 incumbent=7 后其 est 14 留栈；上行子树继续至 b≤0 记 incumbent
+        // 提升；触发时刻证据口径 ⇒ gap=46.67% ≤ 50 触发。（Pseudocost +
+        // best-estimate 序下为 50%，见 --branch-rule pseudocost。）
         let mut p = Problem::new("k2", Sense::Maximize);
         p.add_var("a", VarType::Binary).unwrap();
         p.add_var("b", VarType::Binary).unwrap();
@@ -2271,7 +2273,7 @@ mod tests {
         )
         .expect("gap_terminated ⇒ Some");
         assert!(g.is_finite() && g >= 0.0, "gap 必须非负有限，实际 {g}");
-        assert!((g - 50.0).abs() < 1e-6, "实际 {g}");
+        assert!((g - 140.0 / 3.0).abs() < 1e-6, "实际 {g}");
     }
 
     /// mipgap=Some(0.0) ≡ None（结果全等；Some(0.0)=关闭）。

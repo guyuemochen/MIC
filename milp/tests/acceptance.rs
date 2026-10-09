@@ -826,10 +826,11 @@ fn acceptance_cli_heuristic_on_identical() {
     // （2026-10 根预割启发式轮：割后顶点中面化使根 incumbent 453 质量塌
     // 缩，割前顶点补跑一轮 round_and_check + dive 后根 incumbent 511 ⇒
     // 剪枝提前，201→184（目标不变）。）
+    // （2026-10 复核后默认规则回退 MostFractional：184→159。）
     assert_eq!(
         stdout,
-        "status = optimal\nnodes = 184\nobjective = 523.000000\n",
-        "hard-knapsack-12 --heuristic-mode on 输出（默认 Pseudocost + 可靠性冷启动后确定性基线）"
+        "status = optimal\nnodes = 159\nobjective = 523.000000\n",
+        "hard-knapsack-12 --heuristic-mode on 输出（默认 MostFractional 确定性基线）"
     );
 }
 

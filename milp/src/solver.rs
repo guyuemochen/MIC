@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(o.tol.pivot, t.pivot);
         assert_eq!(o.tol.integrality, t.integrality);
         assert_eq!(o.tol.zero, t.zero);
-        assert_eq!(o.bb.branch_rule, BranchRule::Pseudocost);
+        assert_eq!(o.bb.branch_rule, BranchRule::MostFractional);
         assert_eq!(o.bb.node_rule, NodeRule::DepthFirst);
         assert_eq!(o.bb.node_limit, 2_000_000);
         assert_eq!(o.bb.time_limit_ms, 0);

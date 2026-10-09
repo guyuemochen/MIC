@@ -1,7 +1,8 @@
 //! milp CLI 入口（WP5 契约实现 + 受控搜索参数包）。
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
-//! [--mipgap P] [--heuristic-mode auto|on|off] [--verbose]`。
+//! [--mipgap P] [--heuristic-mode auto|on|off] `
+//! [--branch-rule most_fractional|pseudocost] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -77,6 +78,10 @@ struct Config {
     mipgap_percent: Option<f64>,
     /// 启发式模式；默认 Auto。
     heuristic_mode: HeuristicModeCli,
+    /// 分支规则（`--branch-rule`）；默认 MostFractional（与 BbOptions::default
+    /// 同源——复核表明该口径在全部已验证基准上最优）；pseudocost 含可靠性
+    /// 冷启动（`--pc-probes` 仅 bench 探针暴露）。
+    branch_rule: BranchRule,
 }
 
 fn main() -> ExitCode {
@@ -140,6 +145,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut log_secs: Option<f64> = None;
     let mut mipgap_percent: Option<f64> = None;
     let mut heuristic_mode: Option<HeuristicModeCli> = None;
+    let mut branch_rule: Option<BranchRule> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -259,6 +265,26 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             heuristic_mode = Some(mode);
             index += 1; // 额外消费模式 token
+        } else if arg == "--branch-rule" {
+            if branch_rule.is_some() {
+                return Err(format!("`--branch-rule` 重复出现（{USAGE}）"));
+            }
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!(
+                    "`--branch-rule` 缺少参数 most_fractional|pseudocost（{USAGE}）"
+                ));
+            };
+            let rule = match value.as_str() {
+                "most_fractional" => BranchRule::MostFractional,
+                "pseudocost" => BranchRule::Pseudocost,
+                other => {
+                    return Err(format!(
+                        "未知 --branch-rule `{other}`（期望 most_fractional|pseudocost，{USAGE}）"
+                    ))
+                }
+            };
+            branch_rule = Some(rule);
+            index += 1; // 额外消费规则 token
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -282,6 +308,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
         // 节点数 ⇒ 原算例 auto ≡ on，见 README）。
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
+        branch_rule: branch_rule.unwrap_or(BranchRule::MostFractional),
     })
 }
 
@@ -298,7 +325,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
     SolveOptions {
         tol: Tolerances::default(),
         bb: BbOptions {
-            branch_rule: BranchRule::Pseudocost,
+            branch_rule: config.branch_rule,
             node_rule: NodeRule::DepthFirst,
             node_limit: 2_000_000,
             time_limit_ms: config
@@ -520,6 +547,7 @@ mod tests {
             log_secs: None,
             mipgap_percent: None,
             heuristic_mode: HeuristicModeCli::Auto,
+            branch_rule: BranchRule::MostFractional,
         }
     }
 
@@ -810,9 +838,9 @@ mod tests {
         assert_eq!(opts.bb.dive_max_fixes, 4096);
         assert_eq!(opts.bb.prune_abs, 1e-9);
         assert_eq!(opts.bb.prune_rel, 1e-9);
-        // 默认分支规则 Pseudocost + 可靠性冷启动预算 8（CLI 不设旗标，
-        // 默认路径即启用；纯被动复现走 bench 探针 --pc-probes 0）。
-        assert_eq!(opts.bb.branch_rule, BranchRule::Pseudocost);
+        // 默认分支规则 MostFractional（2026-10 复核后回退；Pseudocost 经
+        // --branch-rule pseudocost 显式启用，含可靠性冷启动预算 8）。
+        assert_eq!(opts.bb.branch_rule, BranchRule::MostFractional);
         assert_eq!(opts.bb.pc_reliability_probes, 8);
         assert!(opts.use_presolve);
     }

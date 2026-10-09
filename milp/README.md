@@ -33,7 +33,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -48,6 +48,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
+| `--branch-rule most_fractional\|pseudocost` | 分支规则（默认 `most_fractional`；`pseudocost` 含可靠性冷启动，个别问题类可能更优/更差，可切换对比） | `most_fractional` | 未知 token / 重复出现报错 |
 | `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
 
 ### 输出格式
