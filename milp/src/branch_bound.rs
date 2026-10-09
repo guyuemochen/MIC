@@ -94,9 +94,12 @@ pub enum BranchRule {
     MostFractional,
     /// 伪代价分支（[`crate::search_ctrl::Pseudocosts`] 打分：历史增益 ×
     /// 分数度乘积；无观测时退化为 f⁻·f⁺ 乘积规则——对强退化 LP 的顶点
-    /// 漂移比 most-fractional 鲁棒，大规模树形显著更小）。**默认规则**
-    ///（实测依据：mknap-5x300 t1 纯被动 Pseudocost 证最优 4762 vs
-    /// MostFractional 90s 上限未证；marketsplit-4x30 t1 树形显著缩小）。
+    /// 漂移比 most-fractional 鲁棒，大规模树形显著更小）。**可选规则**
+    ///（2026-10-09 复测：mknap-5x300 t1 纯被动 Pseudocost 99605 节点
+    /// 14-34s 证最优 4762 vs MostFractional 591752 节点 ~52s——第三轮
+    /// 「A 包 22.8s」实为 Pseudocost 口径的同一棵 99605 节点树；但作默认
+    /// 规则时 marketsplit-4x30 t1 倒退 ~11×，故默认仍 MostFractional，
+    /// 背包/多维背包类可显式 `--branch-rule pseudocost` 受益）。
     /// 可靠性冷启动见 [`BbOptions::pc_reliability_probes`]。
     Pseudocost,
 }
@@ -407,8 +410,34 @@ fn sequential_bb(
         ) {
             maybe_update(sense, &mut incumbent, inc);
         }
-        // dive 扰动了 Simplex 内部基：割循环入口自带防御性 resolve(bounds)
-        // 恢复 Optimal 表格（cut_loop_recorded 首步），此处无需重复恢复。
+        // dive 扰动了 Simplex 内部基：割循环入口的防御性 resolve(bounds) 只
+        // 恢复 Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
+        // 的备择最优基上 GMI 分离结果不同，割集会系统性偏离无预割路径
+        // （实测 knapsack-2000：12→4 割、594→1628 节点；knapsack-500：
+        // 360→1614 节点）。此处重建冷 Simplex + 重解根 LP（确定性求解器 ⇒
+        // 与无预割路径逐字节一致的表格），使割循环恒在冷基上分离；incumbent
+        // 已由 maybe_update 收取，不受重建影响。迭代记账先累计再重建
+        // （与下方 PruneLimit 重建路径同款），不丢数。
+        base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
+        simplex = Simplex::new(problem, tol)?;
+        sol = simplex.solve(&bounds);
+        if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+            // 首行进度：根阶段终局汇合点（先发射再返回）。
+            if let Some(h) = hooks {
+                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+            }
+            return Ok(finish(
+                status,
+                None,
+                &mut stats,
+                &simplex,
+                start,
+                base_lp_iterations,
+                None,
+                false,
+                false,
+            ));
+        }
     }
 
     // —— 根割循环（可选；割行全局保留至树结束）——
@@ -1568,6 +1597,74 @@ mod tests {
         assert_eq!(o.prune_abs, 1e-9);
         assert_eq!(o.prune_rel, 1e-9);
         assert_eq!(o.pc_reliability_probes, 8);
+    }
+
+    /// 根预割启发式轮对割循环**基透明**（2026-10-09 O1 修复的回归钉）：
+    /// 预割 dive 扰动 Simplex 基后，修复前割循环在备择最优基上分离 GMI，
+    /// 割集偏离无预割路径（knapsack-2000 实测 12→4 割、594→1628 节点）；
+    /// 修复后预割轮以冷 Simplex 重建收尾 ⇒ `heuristics` 开关不再改变
+    /// 根割施加数（incumbent 可能更优、节点数只减不增，但割集恒冷基）。
+    /// knapsack 类重退化 LP（多备择最优基）对该扰动最敏感，选作钉子。
+    #[test]
+    fn precut_round_is_basis_transparent_to_cut_loop() {
+        // 11 变量单行背包（随机族搜索定位的分离算例：修复前预割 dive 扰动
+        // 基使割集 5→4——dive 恰好落在备择最优基上、GMI 分离随之改变）。
+        let obj = [22.0, 33.0, 29.0, 13.0, 18.0, 33.0, 10.0, 12.0, 15.0, 27.0, 9.0];
+        let weights = [21.0, 41.0, 35.0, 25.0, 39.0, 11.0, 42.0, 28.0, 20.0, 36.0, 12.0];
+        let cap = 145.07999999999998_f64;
+        let mut p = crate::model::Problem::new("knapsack-degen", crate::model::Sense::Maximize);
+        let vars: Vec<usize> = (0..obj.len())
+            .map(|i| p.add_var(&format!("x{i}"), VarType::Binary).unwrap())
+            .collect();
+        p.set_objective(
+            vars.iter().zip(obj.iter()).map(|(&j, &c)| (j, c)).collect(),
+            0.0,
+        )
+        .unwrap();
+        p.add_constraint(
+            None,
+            vars.iter().zip(weights.iter()).map(|(&j, &w)| (j, w)).collect(),
+            RelOp::Le,
+            cap,
+        )
+        .unwrap();
+        let with_heur = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_cuts: true,
+                heuristics: true,
+                ..BbOptions::default()
+            },
+            tol(),
+        )
+        .unwrap();
+        let without_heur = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_cuts: true,
+                heuristics: false,
+                ..BbOptions::default()
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(
+            with_heur.stats.cuts, without_heur.stats.cuts,
+            "预割轮不得改变根割施加数（基透明）"
+        );
+        assert_eq!(with_heur.status, crate::model::SolveStatus::Optimal);
+        assert_eq!(without_heur.status, crate::model::SolveStatus::Optimal);
+        assert_close(
+            with_heur.best_objective.unwrap(),
+            without_heur.best_objective.unwrap(),
+        );
+        // 预割 incumbent 只增不减 ⇒ 节点数不高于无预割路径。
+        assert!(
+            with_heur.stats.nodes <= without_heur.stats.nodes,
+            "预割 incumbent 只应增强剪枝: {} > {}",
+            with_heur.stats.nodes,
+            without_heur.stats.nodes
+        );
     }
 
     /// 节点分类纯函数：(Unbounded, is_root=false) → FailUnbounded（整树终止

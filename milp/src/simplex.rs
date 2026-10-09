@@ -77,6 +77,16 @@ const DEGENERATE_STREAK_LIMIT: u32 = 50;
 const REFRESH_INTERVAL: u64 = 200;
 /// Bland 触发的总迭代因子：本次调用总迭代 > BLAND_TOTAL_FACTOR×(m+n) 触发。
 const BLAND_TOTAL_FACTOR: u64 = 3;
+/// 比值测试并列带宽的绝对上限系数：band = min(feas·(1+|t_min|), feas·CAP)。
+/// 相对项在 |t_min| ≈ 1e6 时膨胀到 ≈1e-3，会把真正更小的界翻转/出基候选
+/// （差距 1e-4 量级）吞进并列集合、按 |主元| 破键输给假并列的 Leave——
+/// 步长越过真最小比值，基变量越界至 band·|α|（2026-10 第三轮在合成算例
+/// 冷解上实测观察到，见 test_ratio_test_band_large_magnitude）。取小后：
+/// |t_min| ≤ CAP−1 时与旧公式逐值一致（零扰动），超出后带宽封顶
+/// feas·CAP（默认 1e-6，仍高于 |t|=1e6 处 ulp 级浮点噪声 ~2e-10 三个
+/// 数量级以上，真并列不被拆散）；收窄并列集合只会让选择更贴近最小比值，
+/// 真 t_min 候选恒在集合内，不引入误剪。
+const RATIO_BAND_CAP: f64 = 1e3;
 
 /// LP 求解状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1168,7 +1178,10 @@ impl Simplex {
                 t_min = c.0;
             }
         }
-        let band = self.tol.feasibility * (1.0 + t_min.abs());
+        // 并列带宽：相对项与绝对上限取小（RATIO_BAND_CAP 文档：大数量级下
+        // 相对项膨胀会吞掉真正更小的候选；|t_min| ≤ 999 时与旧公式逐值一致）。
+        let band =
+            (self.tol.feasibility * (1.0 + t_min)).min(self.tol.feasibility * RATIO_BAND_CAP);
         // 选择：先最小比值（带宽内视为并列），再按模式破键。
         let mut pick: Option<&(f64, usize, bool, f64, usize)> = None;
         for c in cands.iter().filter(|c| c.0 <= t_min + band) {
@@ -1201,25 +1214,36 @@ impl Simplex {
     /// rhs 采用“基变量值”口径：非出基行按 −δt·f_k 更新，出基行 = 入基变量
     /// 新值；系数与 binv 做标准表格行变换。
     ///
-    /// 热路径零分配：消元系数 f 覆盖写暂存 `pivot_f`；行缩放与消元只遍历
-    /// 主元行非零下标 `pivot_nz`（缩放前判零——零经 1/p 缩放仍为零，集合
-    /// 不变）。跳过 m[r][j]==0 列是精确无操作，仅可能翻转个别 ±0.0 的
-    /// 符号位（f64 == 比较行为不变，值级/决策级等价）。matrix/binv 消元
-    /// 内循环经 split_at_mut 同时取得可变行 k 与只读行 r（别名安全写法，
-    /// 可向量化）；matrix[k][q]=0 卫生写在非零循环外保留。
+    /// 热路径零分配：消元系数 f 覆盖写暂存 `pivot_f`；行缩放与消元按主元
+    /// 行密度自适应（O2）：稠密（非零数 ≥ ncols/4）走连续 `zip` 消元（自动
+    /// 向量化，吞吐高数倍），稀疏走非零下标 `pivot_nz`（省算、间接寻址）。
+    /// 跳过/乘零列是精确无操作，仅可能翻转个别 ±0.0 的符号位（f64 == 比较
+    /// 行为不变，值级/决策级等价）。matrix/binv 消元内循环经 split_at_mut
+    /// 同时取得可变行 k 与只读行 r（别名安全写法，可向量化）；
+    /// matrix[k][q]=0 卫生写在消元循环外保留。
     fn do_pivot(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
         let m = self.basis.len();
         let ncols = self.matrix[r].len();
         let p = self.matrix[r][q];
-        // 主元行非零下标（O(ncols)，缩放前收集，按列升序）。
-        self.pivot_nz.clear();
-        for j in 0..ncols {
-            if self.matrix[r][j] != 0.0 {
-                self.pivot_nz.push(j);
+        // 密度自适应（O2）：先计数非零（O(ncols) 无分支计数），稀疏时才
+        // 收集下标。割行/GMI 行在大 LP 上近乎全稠密，索引式内循环（间接
+        // 寻址）阻碍 SIMD——实测 mknap-5x300 t1 do_pivot 占墙钟 ~70%。
+        let nnz = self.matrix[r].iter().filter(|&&v| v != 0.0).count();
+        let dense_elim = nnz * 4 >= ncols;
+        if !dense_elim {
+            self.pivot_nz.clear();
+            for j in 0..ncols {
+                if self.matrix[r][j] != 0.0 {
+                    self.pivot_nz.push(j);
+                }
             }
         }
-        // 行 r 缩放（只遍历非零列）。
-        {
+        // 行 r 缩放（稠密：连续除；稀疏：只遍历非零列）。
+        if dense_elim {
+            for v in self.matrix[r].iter_mut() {
+                *v /= p;
+            }
+        } else {
             let row = &mut self.matrix[r];
             for &j in self.pivot_nz.iter() {
                 row[j] /= p;
@@ -1260,8 +1284,14 @@ impl Simplex {
                     let (left, right) = self.matrix.split_at_mut(k + 1);
                     (&mut left[k], &right[r - k - 1])
                 };
-                for &j in self.pivot_nz.iter() {
-                    row_k[j] -= fk * row_r[j];
+                if dense_elim {
+                    for (x, y) in row_k.iter_mut().zip(row_r.iter()) {
+                        *x -= fk * *y;
+                    }
+                } else {
+                    for &j in self.pivot_nz.iter() {
+                        row_k[j] -= fk * row_r[j];
+                    }
                 }
                 let (bk, br): (&mut Vec<f64>, &Vec<f64>) = if r < k {
                     let (left, right) = self.binv.split_at_mut(k);
@@ -2080,12 +2110,100 @@ mod tests {
             "1e-4 越界在 |rhs|≈1.5e6 下须被对偶修复（非伪数值失败）"
         );
         assert_close(warm.objective, 1.5e6 - 1.0e-4);
-        // 注：不做同界冷解对照——该合成算例的冷路径会踩中 ratio_test 的
-        // 并列带宽 feas·(1+|t_min|)（t_min≈1.5e6 ⇒ 带宽≈1.5e-3，把小 1e-4
-        // 的自身界翻转候选当作并列、按 |主元| 破键输给 Leave），属与本条
-        //（dual_repair 判据）无关的既有大数值量级现象，本用例只钉热路径。
         assert!((warm.x[0] - (1.5e6 - 1.0e-4)).abs() < 1e-6);
         assert!(warm.x[1] >= 0.0 && warm.x[1] <= 1.0);
+        // 冷解对照（2026-10 L5 修复后恢复）：旧并列带宽 feas·(1+|t_min|) 在
+        // t_min≈1.5e6 时 ≈1.5e-3，把比出基候选小 1e-4 的 x 自身界翻转当作
+        // 假并列、按 |主元| 破键输给 Leave（步长越界 1e-4），冷路径 x 越上界
+        // 与热解分叉，故当时只钉热路径；带宽与绝对上限取小（封顶
+        // feas·1e3=1e-6）后冷路径选真最小候选，热冷一致（y 无目标成本，
+        // 最优面在 y 上退化——不钉 y 顶点，只钉终态/目标/x 贴界/行可行）。
+        let mut cold = Simplex::new(&p, t).unwrap();
+        let cold_sol = cold.solve(&b);
+        assert_eq!(
+            cold_sol.status,
+            LpStatus::Optimal,
+            "冷解不得再踩并列带宽扰动"
+        );
+        assert_close(cold_sol.objective, 1.5e6 - 1.0e-4);
+        assert!(
+            (cold_sol.x[0] - (1.5e6 - 1.0e-4)).abs() < 1e-6,
+            "冷解 x = {}（须贴收紧后上界，不越界）",
+            cold_sol.x[0]
+        );
+        assert!(cold_sol.x[1] >= 0.0 && cold_sol.x[1] <= 1.0);
+        assert!(
+            cold_sol.x[0] + cold_sol.x[1] <= 1.5e6 + 1e-6,
+            "冷解行可行性：x+y = {}",
+            cold_sol.x[0] + cold_sol.x[1]
+        );
+    }
+
+    /// （L5）ratio_test 并列带宽大数量级防护：t_min≈1.5e6 时旧带宽
+    /// feas·(1+|t_min|)≈1.5e-3 会把真正更小的界翻转候选（差 1e-4）吞进
+    /// 并列集合、按 |主元| 破键输给 Leave（步长越过真最小比值 1e-4）；
+    /// 取小后带宽 = feas·RATIO_BAND_CAP = 1e-6 < 1e-4 ⇒ 只有真最小候选
+    /// 在集合内 ⇒ Flip 胜出。同时钉 |t_min| ≤ CAP−1 的常规量级行为
+    /// 逐值不变（并列仍按 |主元| 破键）。
+    #[test]
+    fn test_ratio_test_band_large_magnitude() {
+        // —— 大数量级：手钉单行表格状态（基 = 行松弛列，rhs = 1.5e6）——
+        // max x s.t. x+y ≤ 1.5e6；x ∈ [0, 1.5e6−1e-4]（界翻转距离
+        // 1499999.9999 = 真最小 t），y ∈ [0,1]。入基 q = x（delta=+1）。
+        let p = prob(
+            Sense::Maximize,
+            vec![var("x", 0.0, 1.5e6 - 1.0e-4), var("y", 0.0, 1.0)],
+            vec![(0, 1.0)],
+            vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.5e6)],
+        );
+        let mut s = Simplex::new(&p, tol()).unwrap();
+        s.bounds = Bounds::from_problem(&p);
+        let slack_col = s.ncols_static() - 1; // 唯一 Le 行的松弛列
+        s.matrix = vec![vec![1.0, 1.0, 1.0]]; // B⁻¹A 恒等形态
+        s.rhs = vec![1.5e6];
+        s.basis = vec![slack_col];
+        s.in_basis = vec![false, false, true];
+        s.at_upper = vec![false; s.ncols_static()];
+        match s.ratio_test(0, 1.0) {
+            Step::Flip { t } => assert!(
+                (t - 1499999.9999).abs() < 1e-6,
+                "真最小比值应为 x 的界翻转（1499999.9999），得到 Flip t = {t}"
+            ),
+            Step::Leave { row, t, .. } => {
+                panic!("t_min≈1.5e6 下带宽不得吞掉更小的界翻转候选：误选出基行 {row}（t = {t}）")
+            }
+            _ => panic!("预期 Flip（NoBlock/FilteredBlock 均非预期终态）"),
+        }
+
+        // —— 常规量级（t_min = 2.0 ≪ CAP−1 = 999）：带宽与旧公式逐值一致，
+        // 并列仍按 |主元| 最大破键（回归钉：防护不改变既有取解次序）——
+        // 行 0：t = 2.0、|主元| 0.5；行 1：t = 2.0000000005（差 5e-10，在
+        // 带宽 feas·3 = 3e-9 内）、|主元| 1.0 ⇒ 旧行为选行 1，新行为相同。
+        let p2 = prob(
+            Sense::Maximize,
+            vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)],
+            vec![(0, 1.0)],
+            vec![
+                (vec![(0, 0.5)], RelOp::Le, 1.0),
+                (vec![(0, 1.0)], RelOp::Le, 2.0000000005),
+            ],
+        );
+        let mut s2 = Simplex::new(&p2, tol()).unwrap();
+        s2.bounds = Bounds::from_problem(&p2);
+        let slack0 = s2.ncols_static() - 2;
+        let slack1 = s2.ncols_static() - 1;
+        s2.matrix = vec![vec![0.5, 0.0, 1.0, 0.0], vec![1.0, 0.0, 0.0, 1.0]];
+        s2.rhs = vec![1.0, 2.0000000005];
+        s2.basis = vec![slack0, slack1];
+        s2.in_basis = vec![false, false, true, true];
+        s2.at_upper = vec![false; s2.ncols_static()];
+        match s2.ratio_test(0, 1.0) {
+            Step::Leave { row, t, .. } => {
+                assert_eq!(row, 1, "并列（差 5e-10 ≤ 带宽 3e-9）须按 |主元| 最大选行 1");
+                assert!((t - 2.0000000005).abs() < 1e-12, "步长 = {t}");
+            }
+            _ => panic!("预期 Leave（Flip/NoBlock/FilteredBlock 均非预期终态）"),
+        }
     }
 
     fn assert_close(a: f64, b: f64) {

@@ -787,6 +787,46 @@ pub fn parallel_branch_and_bound(
         if let Some(status) = root_terminal_status(sol.status) {
             terminal = Some(status);
         }
+        // —— 根预割启发式（镜像顺序侧 branch_bound.rs 根预割轮；LP Optimal
+        // 且 root_cuts && heuristics 时额外执行一轮）——
+        // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更
+        // 紧但取整/潜水质量下降——max 背包类：纯 LP 贪心顶点仅容量断点一个
+        // 分数变量，dive 的断点回退链恰好在其上跨过；割后中面顶点上同一
+        // dive 只得弱解）。割前顶点上先跑一轮 round_and_check + dive、与
+        // 割后一轮取最优（maybe_update_local 只增不减）；incumbent 只增不减
+        // 不影响割的生成。`root_cuts=false` 时不执行 ⇒ 行为逐字节不变。
+        if terminal.is_none() && opts.root_cuts && opts.heuristics {
+            if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
+                maybe_update_local(sense, &mut incumbent, inc);
+            }
+            if let Some(inc) = heuristics::dive(
+                problem,
+                &mut simplex,
+                &bounds,
+                &sol.x,
+                opts.dive_max_fixes,
+                &tol,
+            ) {
+                maybe_update_local(sense, &mut incumbent, inc);
+            }
+            // dive 扰动 Simplex 内部基：割循环入口的防御性 resolve 只恢复
+            // Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
+            // 的备择最优基上 GMI 分离结果不同，recorded_cuts 会偏离无预割
+            // 路径且与顺序侧冷基割集不一致（实测 11 变量退化背包：修复前
+            // par(threads=4) heur on/off 割数 4/5，顺序侧（已重建冷基）5/5）。
+            // 此处重建冷 Simplex + 重解根 LP（与顺序侧 branch_bound.rs 预割
+            // 轮收尾、本函数 IterationLimit 回退同款模式），使割循环与
+            // worker 的 recorded_cuts 重放恒在冷基上；incumbent 已由
+            // maybe_update_local 收取，不受重建影响。迭代记账先进
+            // base_iters，不丢数。
+            base_iters = base_iters.saturating_add(simplex.iterations());
+            simplex = Simplex::new(problem, tol)?;
+            sol = simplex.solve(&bounds);
+            if let Some(status) = root_terminal_status(sol.status) {
+                terminal = Some(status);
+            }
+        }
+
         if terminal.is_none() && opts.root_cuts {
             let (applied, st, cuts_list) = cuts::cut_loop_recorded(
                 &mut simplex,
@@ -1760,6 +1800,62 @@ mod tests {
                 "threads = {threads} 应拒绝"
             );
         }
+    }
+
+
+    /// （L1 回归钉）根预割启发式轮对并行割循环**基透明**：预割 dive 扰动
+    /// Simplex 基后，若不在割循环前重建冷基，recorded_cuts（及 worker 重放
+    /// 的表格）会在备择最优基上分离——与顺序侧冷基割集不一致且偏离无预割
+    /// 路径（实测本算例修复前 par(threads=4) heur on/off 割数 4/5，顺序侧
+    /// 修复后 5/5）。修复后 `heuristics` 开关不得改变并行根割施加数；
+    /// incumbent 只增不减 ⇒ 两配置均须完备且同最优。算例与顺序侧
+    /// branch_bound.rs::precut_round_is_basis_transparent_to_cut_loop 同源
+    /// （随机族搜索定位的 11 变量退化背包，dive 恰落在备择最优基上）。
+    #[test]
+    fn precut_round_is_basis_transparent_to_cut_loop_parallel() {
+        let obj = [22.0, 33.0, 29.0, 13.0, 18.0, 33.0, 10.0, 12.0, 15.0, 27.0, 9.0];
+        let weights = [21.0, 41.0, 35.0, 25.0, 39.0, 11.0, 42.0, 28.0, 20.0, 36.0, 12.0];
+        let cap = 145.07999999999998_f64;
+        let mut p = Problem::new("knapsack-degen-par", Sense::Maximize);
+        for i in 0..obj.len() {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.set_objective(obj.iter().enumerate().map(|(j, &c)| (j, c)).collect(), 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            weights.iter().enumerate().map(|(j, &w)| (j, w)).collect(),
+            RelOp::Le,
+            cap,
+        )
+        .unwrap();
+        let run = |heuristics: bool| {
+            parallel_branch_and_bound(
+                &p,
+                &BbOptions {
+                    root_cuts: true,
+                    heuristics,
+                    ..BbOptions::default()
+                },
+                &pconfig(4, None),
+                tol(),
+            )
+            .unwrap_or_else(|e| panic!("heuristics={heuristics} 求解失败：{e}"))
+        };
+        let with_heur = run(true);
+        let without_heur = run(false);
+        assert_eq!(
+            with_heur.stats.cuts, without_heur.stats.cuts,
+            "预割轮不得改变并行根割施加数（recorded_cuts 基透明）"
+        );
+        assert_eq!(with_heur.stop, None, "heuristics=true 应完备");
+        assert_eq!(without_heur.stop, None, "heuristics=false 应完备");
+        let a = with_heur.best_objective.expect("应有最优解");
+        let b = without_heur.best_objective.expect("应有最优解");
+        assert!(
+            (a - b).abs() <= 1e-7 * (1.0 + b.abs()),
+            "两配置最优应一致: {a} vs {b}"
+        );
     }
 
     /// （P0-2 回归）dive 回取状态分流：节点 LP 可行性已由 dive 前 resolve

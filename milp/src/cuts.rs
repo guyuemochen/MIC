@@ -831,14 +831,28 @@ fn ceil_bound(val: f64) -> f64 {
     }
 }
 
-/// MIR 内部用 ⌊·⌋：近整数值直接吸附（防 2.9999…96 被归到 2 层），
-/// 否则普通 floor。返回值与真值 ⌊val⌋ 至多相差 ε 吸附量。
+
+/// MIR 内部用 ⌊·⌋，取整 ε 纪律与 [`floor_bound`]/[`ceil_bound`] 对称的
+/// **放宽方向**：结果恒 ≤ 真值 ⌊val⌋，只松不紧——
+/// - val 在整数上方 ε 内（或恰等）：吸附到 round(val)（= ⌊val⌋，向下吸附
+///   只纠浮点表示尾差，与真 floor 相等）；
+/// - val 在整数下方 ε 内：(val−ε).floor()，**不向上吸附**——旧实现取
+///   round=k 会使 f_j = val−k < 0、π_j = k 超出精确 MIR 系数至多
+///   ε/(1−f̂0)（away=0.005 下 α≈1e6 时可达 ~0.2），属加严方向，理论上可
+///   切掉可行整数点；向下取保持 f_j ∈ [0,1)，π_j ≤ 精确 MIR 系数；
+/// - 其余：普通 floor。
+/// （|val| ≳ 1e9 时 ε ≥ 1，(val−ε).floor() 可低于真 floor——仍在放宽
+/// 方向的安全侧；MIR 系数经归一 δ ≥ MIR_MIN_DELTA 有界 ≤ 1e6，常规
+/// 量级下结果即真 floor。）
 fn mir_floor(val: f64) -> f64 {
     let eps = NUMERIC_SNAP_TOL * (1.0 + val.abs());
-    if (val - val.round()).abs() <= eps {
-        val.round()
-    } else {
+    let r = val.round();
+    if (val - r).abs() > eps {
         val.floor()
+    } else if val >= r {
+        r
+    } else {
+        (val - eps).floor()
     }
 }
 
@@ -1925,9 +1939,58 @@ mod tests {
         assert_eq!(ceil_bound(4.999999999999999), 5.0);
         assert_eq!(ceil_bound(1.5), 2.0);
         assert_eq!(ceil_bound(5.000999), 6.0);
-        // mir_floor 的近整数吸附。
-        assert_eq!(mir_floor(2.9999999999999996), 3.0);
+        // mir_floor 的近整数 ε 纪律（放宽方向：结果 ≤ ⌊val⌋）。
+        // 整数下方 ε 内：不向上吸附（旧行为取 3.0——f_j<0 使 MIR 系数
+        // 加严至多 ε/(1−f̂0)，2026-10 遗留修复改回真 floor 2）。
+        assert_eq!(mir_floor(2.9999999999999996), 2.0);
+        // 整数上方 ε 内：向下吸附 = ⌊val⌋。
+        assert_eq!(mir_floor(3.0000000000000004), 3.0);
+        // 恰等整数与非近整数：与普通 floor 一致。
+        assert_eq!(mir_floor(3.0), 3.0);
         assert_eq!(mir_floor(2.5), 2.0);
+        assert_eq!(mir_floor(-2.5), -3.0);
+        // 负数近整数（round 朝上）：下方 ε 内同样不吸附。
+        assert_eq!(mir_floor(-3.0000000000000004), -4.0);
+        assert_eq!(mir_floor(-2.9999999999999996), -3.0);
+    }
+
+    /// （L2 双向数值钉）mir_floor 放宽方向不变量：任意 val 下
+    /// mir_floor(val) ≤ ⌊val⌋（只松不紧，MIR 系数只降不升）。网格扫过
+    /// 正负、近整数双侧、大数量级（α 上界 1e6 附近，ε≈1e-3 仍不越真
+    /// floor 上方）与 eps 边界外侧。
+    #[test]
+    fn mir_floor_never_tightens_above_true_floor() {
+        let mut grid: Vec<f64> = Vec::new();
+        for k in [-3.0, -1.0, 0.0, 1.0, 3.0, 100.0, 1e6] {
+            for d in [
+                0.0,
+                1e-16,
+                1e-12,
+                1e-10,
+                1e-9,
+                1e-6,
+                0.25,
+                0.5,
+                0.75,
+                1.0 - 1e-12,
+            ] {
+                grid.push(k + d); // 整数上方（含 ε 内吸附区与外部）
+                grid.push(k - d); // 整数下方（含 ε 内不吸附区与外部）
+            }
+        }
+        for v in grid {
+            assert!(
+                mir_floor(v) <= v.floor(),
+                "mir_floor({v}) = {} 超出真 floor {}（加严方向）",
+                mir_floor(v),
+                v.floor()
+            );
+        }
+        // ε 边界精确行为：3−1e-9 恰在 ε=4e-9 内（取 2），3−1e-8 在外
+        //（普通 floor=2），3+1e-9 在内（吸附 3）。
+        assert_eq!(mir_floor(3.0 - 1e-9), 2.0);
+        assert_eq!(mir_floor(3.0 - 1e-8), 2.0);
+        assert_eq!(mir_floor(3.0 + 1e-9), 3.0);
     }
 
     // ===================== 单行 c-MIR（WP6 增补）=====================
