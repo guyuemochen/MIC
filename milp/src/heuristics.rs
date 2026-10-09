@@ -88,10 +88,16 @@ pub fn round_and_check(
 
 /// 潜水（fix-and-dive）启发式。
 ///
-/// 复制 bounds，迭代 ≤ max_fixes 次固定“最接近整数的非整整数变量”（并列取
-/// 最小下标）到 round 值（夹回界）并 `simplex.resolve(副本)`；Infeasible/
-/// Unbounded/IterationLimit 即 `None`；得整数解后经 [`round_and_check`] 复核
-/// 返回（复核用调用方传入的原始 bounds，保证 incumbent 全局有效）。
+/// 复制 bounds，迭代固定“最接近整数的非整整数变量”（并列取最小下标）到
+/// round 值（夹回界）并 `simplex.resolve(副本)`；Infeasible/Unbounded/
+/// IterationLimit 即对当前点做 [`round_and_check`] 复核（可行则作为较弱的
+/// incumbent 返回——部分修复的解仍可能取整可行，丢弃是纯浪费）；
+/// 修复预算（`max_fixes`）用尽同样退化为取整复核而非直接放弃。得整数解
+/// 后经 [`round_and_check`] 复核返回（复核用调用方传入的原始 bounds，
+/// 保证 incumbent 全局有效）。
+///
+/// 预算语义：对偶热修复使每次 resolve ≈ 数次迭代，深潜（预算 ≫ 变量数）
+/// 成本可控；调用方（`BbOptions::dive_max_fixes`）按规模给预算。
 ///
 /// 注意：dive 会改变 Simplex 内部基，调用方事后必须用真实 bounds 重新 resolve。
 pub fn dive(
@@ -113,6 +119,8 @@ pub fn dive(
     let mut dive_bounds = bounds.clone();
     let mut cur_x = lp_x.to_vec();
     let mut fixes = 0usize;
+    // 每变量至多一次反向回退（ceil 不可行改试 floor / 反之），防振荡。
+    let mut flipped = vec![false; n];
     loop {
         // 选最接近整数的非整整数变量（并列取最小下标）。
         let mut pick: Option<usize> = None;
@@ -132,7 +140,9 @@ pub fn dive(
             Some(j) => j,
         };
         if fixes >= max_fixes {
-            return None; // 修复预算用尽仍未整数
+            // 预算用尽：部分修复点退化为取整复核（可行则仍是一个合法
+            // incumbent——复核用原始 bounds，全局有效性有契约保证）。
+            return round_and_check(problem, bounds, &cur_x, tol);
         }
         // 固定到 round 值（夹回界）。
         let target = cur_x[j]
@@ -145,7 +155,34 @@ pub fn dive(
         let sol = simplex.resolve(&dive_bounds);
         match sol.status {
             LpStatus::Optimal => cur_x = sol.x,
-            LpStatus::Infeasible | LpStatus::Unbounded | LpStatus::IterationLimit => return None,
+            LpStatus::Infeasible if !flipped[j] => {
+                // 一步反向回退：按 cur_x 在 target 的哪一侧选**对侧**整数
+                // 邻域（cur_x < target ⇒ target 是向上取整，回退取
+                // target−1；cur_x > target ⇒ 向下取整，回退取 target+1），
+                // 落在原始界内才改固定再试（系数潜水的廉价回溯——max 背包
+                // 类断点向上取整超容量、向下取整即恢复可行的形态由此跨过）。
+                let other = if cur_x[j] < target { target - 1.0 } else { target + 1.0 };
+                if other >= bounds.lb[j] - tol.integrality
+                    && other <= bounds.ub[j] + tol.integrality
+                {
+                    flipped[j] = true;
+                    dive_bounds.lb[j] = other;
+                    dive_bounds.ub[j] = other;
+                    let retry = simplex.resolve(&dive_bounds);
+                    match retry.status {
+                        LpStatus::Optimal => cur_x = retry.x,
+                        _ => {
+                            return round_and_check(problem, bounds, &cur_x, tol);
+                        }
+                    }
+                } else {
+                    return round_and_check(problem, bounds, &cur_x, tol);
+                }
+            }
+            LpStatus::Unbounded | LpStatus::IterationLimit | LpStatus::Infeasible => {
+                // 修复失败：退化为对失败前点的取整复核。
+                return round_and_check(problem, bounds, &cur_x, tol);
+            }
         }
     }
 }
@@ -262,10 +299,11 @@ mod tests {
         assert!((back.objective - 21.5).abs() < 1e-9);
     }
 
-    /// wolsey 上潜水会固定 x1=2、x2=4 导致不可行 → None；根 LP 41.25
-    /// 仍可恢复（热启动不受不可行副本污染）。
+    /// wolsey 上潜水固定 x1=2、x2=4 触发不可行 ⇒ 一步反向回退改固定
+    /// x2=3 ⇒ 找到可行整数解 (2,3)=34（升级前直接 None）；根 LP 41.25
+    /// 仍可恢复（热启动不受潜水副本污染）。
     #[test]
-    fn dive_returns_none_on_infeasible_fix_and_root_recovers() {
+    fn dive_backtracks_on_infeasible_fix_and_root_recovers() {
         let mut p = Problem::new("wolsey", Sense::Maximize);
         p.add_var("x1", VarType::Integer).unwrap();
         p.add_var("x2", VarType::Integer).unwrap();
@@ -280,10 +318,56 @@ mod tests {
         let sol = s.solve(&bnds);
         assert_eq!(sol.status, LpStatus::Optimal);
         assert!((sol.objective - 41.25).abs() < 1e-9);
-        assert!(dive(&p, &mut s, &bnds, &sol.x, 4, &t).is_none());
+        let inc = dive(&p, &mut s, &bnds, &sol.x, 4, &t).expect("回退后应找到可行解");
+        assert!((inc.objective - 34.0).abs() < 1e-9);
+        assert_eq!(inc.values, vec![2.0, 3.0]);
         let back = s.resolve(&bnds);
         assert_eq!(back.status, LpStatus::Optimal);
         assert!((back.objective - 41.25).abs() < 1e-9);
+    }
+
+    /// 一步反向回退的方向按 cur_x 在 target 的侧别取**对侧**整数邻域
+    /// （M8）：round-down（LP 2.2 → 固定 2 不可行）回退到 3，round-up
+    ///（LP 2.8 → 固定 3 不可行）回退到 2。旧实现只看 target 相对 lb 的
+    /// 位置，round-down 情形会误取 1（更远离 LP 值的一侧）⇒ 回退失败。
+    #[test]
+    fn dive_backtrack_picks_opposite_side_neighborhood() {
+        let t = tol();
+        // round-down：min x s.t. x ≥ 2.2（LP 解 2.2，固定 2 不可行、对侧 3
+        // 可行；固定 1 不可行——旧方向两次失败后 dive 返回 None）。
+        let mut p = Problem::new("bt-down", Sense::Minimize);
+        let x = p.add_var("x", VarType::Integer).unwrap();
+        p.set_var_bounds(x, 0.0, 5.0).unwrap();
+        p.set_objective(vec![(x, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(x, 1.0)], RelOp::Ge, 2.2)
+            .unwrap();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let bnds = Bounds::from_problem(&p);
+        let sol = s.solve(&bnds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!((sol.x[0] - 2.2).abs() < 1e-9, "根 LP 应为 2.2");
+        let inc = dive(&p, &mut s, &bnds, &sol.x, 2, &t)
+            .expect("round-down 回退必须取对侧 3（旧实现取 1 失败）");
+        assert!((inc.objective - 3.0).abs() < 1e-9);
+        assert_eq!(inc.values, vec![3.0]);
+
+        // round-up：max x s.t. x ≤ 2.8（LP 解 2.8，固定 3 不可行、对侧 2
+        // 可行）。
+        let mut q = Problem::new("bt-up", Sense::Maximize);
+        let y = q.add_var("y", VarType::Integer).unwrap();
+        q.set_var_bounds(y, 0.0, 5.0).unwrap();
+        q.set_objective(vec![(y, 1.0)], 0.0).unwrap();
+        q.add_constraint(None, vec![(y, 1.0)], RelOp::Le, 2.8)
+            .unwrap();
+        let mut s2 = Simplex::new(&q, t).unwrap();
+        let bnds2 = Bounds::from_problem(&q);
+        let sol2 = s2.solve(&bnds2);
+        assert_eq!(sol2.status, LpStatus::Optimal);
+        assert!((sol2.x[0] - 2.8).abs() < 1e-9, "根 LP 应为 2.8");
+        let inc = dive(&q, &mut s2, &bnds2, &sol2.x, 2, &t)
+            .expect("round-up 回退必须取对侧 2");
+        assert!((inc.objective - 2.0).abs() < 1e-9);
+        assert_eq!(inc.values, vec![2.0]);
     }
 
     /// max_fixes = 0：分数起点直接 None；整数起点经复核返回。

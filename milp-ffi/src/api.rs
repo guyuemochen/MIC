@@ -10,10 +10,11 @@
 //! - 枚举 i32 未知值→9（消息列合法值）；u32 计数先转 usize 再建 Vec 防 OOM；
 //! - 入参数组仅在 count>0 时解引用（count=0 允许 NULL，空表达式/空目标合法）。
 //!
-//! CLI 映射纪律照搬 milp/src/main.rs:294-327：TimeLimit 秒→ms 用
-//! `saturating_mul(1000)`（0=不限，BbOptions.time_limit_ms 语义，
-//! branch_bound.rs:97-98）；HeuristicMode off ⇒ bb.heuristics=false、
-//! on/auto ⇒ true、auto 另置 adaptive_heuristics=true。
+//! CLI 映射纪律照搬 milp/src/main.rs:294-327（HeuristicMode off ⇒
+//! bb.heuristics=false、on/auto ⇒ true、auto 另置 adaptive_heuristics=true），
+//! 仅 TimeLimit 秒→ms 换算有意偏离 CLI 的整秒截断：FFI 收 f64 秒，按
+//! [`secs_to_limit_ms`] 四舍五入到最近毫秒（CLI 的 `u64 秒 ×1000` 对小数
+//! 秒静默截断，0<TimeLimit<1 会变 0=不限——B1 已修复并钉死单测）。
 
 use std::any::Any;
 use std::io::Write;
@@ -134,6 +135,28 @@ fn status_code(status: SolveStatus) -> i32 {
         SolveStatus::Infeasible => 2,
         SolveStatus::Unbounded => 3,
         SolveStatus::LimitReached => 4,
+    }
+}
+
+/// TimeLimit 秒→毫秒换算（B1 契约，solve 与单测共用）：
+///
+/// - **四舍五入到最近毫秒**（`(secs*1000).round()`）——不再截断：旧实现
+///   `(secs as u64).saturating_mul(1000)` 对秒截断，`0 < TimeLimit < 1.0`
+///   静默变 0=不限，任意小数向下取整到整秒（0.5s → 0ms 而非 500ms）；
+/// - **正值换算结果下限 1ms**：`0` 是 `BbOptions.time_limit_ms` 的『不限』
+///   保留编码（branch_bound.rs:97-98），绝不能由舍入产生——`0 <
+///   TimeLimit < 0.0005s` 舍入为 0 时夹到 1ms（有限时限就仍是时限）；
+/// - 饱和：f64→u64 的 `as` 转换本身饱和（含上溢/+inf → `u64::MAX`）；
+///   NaN（setter 校验下不可达）防御性给 1ms 而非 0（不静默变不限）。
+///
+/// 输入契约：经 `milp_ffi_set_param_real` 写入的值必为有限正秒（非有限/
+/// 负→9，`0.0`→`None` 不经本函数）。
+pub(crate) fn secs_to_limit_ms(secs: f64) -> u64 {
+    let ms = (secs * 1000.0).round();
+    if ms.is_nan() || ms < 1.0 {
+        1
+    } else {
+        ms as u64 // f64→u64 饱和转换（+inf/上溢 → u64::MAX）
     }
 }
 
@@ -428,9 +451,11 @@ pub extern "C" fn milp_ffi_add_constraint(
     })
 }
 
-/// 设置目标：sense 0=保持现状,1=MINIMIZE,2=MAXIMIZE（写 problem.sense）；
-/// offset 即 obj_offset（model.rs:252）；count=0（空目标）合法；
-/// offset/系数非有限→9；下标越界→2（Problem::set_objective）。
+/// 设置目标：sense 0=保持现状,1=MINIMIZE,2=MAXIMIZE（仅当目标项全部
+/// 合法、写入成功后才写 `problem.sense`——下标越界返回 Err 时模型零突变，
+/// 对齐 add_var 的回滚纪律，B2）；offset 即 obj_offset（model.rs:252）；
+/// count=0（空目标）合法；offset/系数非有限→9；下标越界→2
+/// （`Problem::set_objective`，写 sense 前先校验）。
 #[no_mangle]
 pub extern "C" fn milp_ffi_set_objective(
     model: *mut c_void,
@@ -479,11 +504,17 @@ pub extern "C" fn milp_ffi_set_objective(
             .map(|(&v, &c)| (v as usize, c))
             .collect();
         let mb = unsafe { &mut *m };
-        if let Some(s) = new_sense {
-            mb.problem.sense = s;
-        }
+        // B2：先经 set_objective 校验并写入目标（其内部先全量校验下标再
+        // 突变，失败时零副作用，model.rs:252-268），成功后才写 sense——
+        // 旧实现在校验前先翻 sense，越界返回 Err 时模型半突变。
+        // set_objective 不读 self.sense，故写入顺序无行为差。
         match mb.problem.set_objective(terms, offset) {
-            Ok(()) => MILP_FFI_OK,
+            Ok(()) => {
+                if let Some(s) = new_sense {
+                    mb.problem.sense = s;
+                }
+                MILP_FFI_OK
+            }
             Err(err) => map_milp_error(err),
         }
     })
@@ -493,7 +524,8 @@ pub extern "C" fn milp_ffi_set_objective(
 // 参数（12-14）
 // ===========================================================================
 
-/// real 型参数：TimeLimit（秒，≥0，0=不限→None）/ MIPGap（百分比，≥0，
+/// real 型参数：TimeLimit（秒，≥0，0=不限→None；solve 时经
+/// [`secs_to_limit_ms`] 四舍五入到毫秒）/ MIPGap（百分比，≥0，
 /// 0=关→None）/ LogPeriodSecs（≥0，0=关→None，>0→Some）。
 /// 非有限或负→9；名字存在但类型不符→9；名字不存在→10。
 #[no_mangle]
@@ -640,8 +672,8 @@ pub extern "C" fn milp_ffi_set_param_str(
 /// 求解。选项组装纪律（镜像 main.rs:294-327）：
 /// - `SolveOptions`：Tolerances::default + BbOptions::default（FFI 固定
 ///   root_cuts=true、use_presolve=true，无关闭入口），仅按 HeuristicMode
-///   覆盖 `heuristics`、按 TimeLimit 覆盖 `time_limit_ms`（秒×1000
-///   饱和取整，0=不限）；
+///   覆盖 `heuristics`、按 TimeLimit 覆盖 `time_limit_ms`（秒→毫秒按
+///   [`secs_to_limit_ms`] 四舍五入 + 下限 1ms，0=不限）；
 /// - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=
 ///   (mode==Auto) / log_period_secs / degrade=default；
 /// - LogPeriodSecs 开启时注入 hooks（stdout 进度行，镜像 main.rs:334-341，
@@ -661,7 +693,7 @@ pub extern "C" fn milp_ffi_solve(model: *mut c_void) -> i32 {
         let params = mb.params; // Copy
         let time_limit_ms = params
             .time_limit_secs
-            .map_or(0u64, |secs| (secs.max(0.0) as u64).saturating_mul(1000));
+            .map_or(0u64, secs_to_limit_ms);
         let opts = SolveOptions {
             tol: Tolerances::default(),
             bb: BbOptions {
@@ -963,5 +995,26 @@ mod tests {
     #[test]
     fn guard_passes_through_ok() {
         assert_eq!(guard(None, || MILP_FFI_OK), MILP_FFI_OK);
+    }
+
+    /// B1 回归：TimeLimit 秒→毫秒四舍五入（旧实现按秒截断）。
+    ///
+    /// 旧实现 `(secs as u64).saturating_mul(1000)` 的失真实证：0.5s→0ms
+    /// （=不限！）、2.999s→2000ms、1e-9s→0ms（=不限）。
+    #[test]
+    fn secs_to_limit_ms_rounds_not_truncates() {
+        // 核心钉死向量：0.5 秒必须换算为 500ms（曾静默变 0=不限）。
+        assert_eq!(secs_to_limit_ms(0.5), 500, "0.5s → 500ms（B1）");
+        assert_eq!(secs_to_limit_ms(1.0), 1000, "1.0s → 1000ms（原即精确）");
+        assert_eq!(secs_to_limit_ms(0.999), 999, "亚秒小数不再丢成 0");
+        assert_eq!(secs_to_limit_ms(2.999), 2999, "曾截断为 2000ms");
+        assert_eq!(secs_to_limit_ms(2.5), 2500);
+        // 正值下限 1ms：0 是『不限』保留编码，绝不由舍入产生。
+        assert_eq!(secs_to_limit_ms(0.0001), 1, "0.1ms → 夹到 1ms");
+        assert_eq!(secs_to_limit_ms(f64::MIN_POSITIVE), 1);
+        // 饱和：f64→u64 饱和转换（上溢 → u64::MAX）。
+        assert_eq!(secs_to_limit_ms(1e300), u64::MAX);
+        // NaN 防御（setter 校验下不可达）：给 1ms 而非 0（不静默变不限）。
+        assert_eq!(secs_to_limit_ms(f64::NAN), 1);
     }
 }

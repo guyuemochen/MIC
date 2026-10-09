@@ -12,13 +12,17 @@
 //! - worker panic 不吞不锁死：handle 按下标序 join、记住最小下标 payload、仍 join 完
 //!   其余线程，然后在 scope **外** [`std::panic::resume_unwind`]；`spawn_scoped` 的
 //!   io 失败（如资源不足）映射 [`PlannerError::Io`](crate::model::PlannerError::Io)
-//!   并停止继续 spawn。
+//!   并停止继续 spawn——返回 Err 前先按下标序 join 已派生的全部线程，其中的 panic
+//!   payload 照常暂存并于 scope 外重抛（「panic 不吞」不因 spawn 失败破例）。
 //!
 //! ## 确定性（Steps 终止下逐位可复现）
 //! 固定 seed + 固定 threads + [`crate::localsearch::Termination::Steps`] 终止 ⇒
 //! 聚合结果逐位可复现：
 //! 1. worker 种子集合确定：worker 0 恒用 `cfg.local_search.seed` 原值；worker i ≥ 1 用
-//!    [`crate::rng::derive_seed`](seed, i)，固定 seed 时 i ↦ seed_i 单射；
+//!    [`crate::rng::derive_seed`](seed, i)，固定 seed 时派生种子两两互异
+//!    （i ↦ seed_i 在 i ≥ 1 上单射；与 worker 0 原值的碰撞概率 ~threads/2^64 ≤ 2^-54，
+//!    即便命中也仅两个 worker 重复同一搜索，min 聚合与确定性不受影响——见
+//!    [`crate::rng::derive_seed`]）；
 //! 2. [`crate::localsearch::local_search`] 是 (initial, cfg) 的纯函数（initial 为父线程
 //!    一次性构造的同一解）；
 //! 3. 聚合 = min(best_score)，**严格小于才替换** ⇒ 并列取最小 worker 下标，且聚合在
@@ -38,7 +42,7 @@ use std::sync::Arc;
 
 use crate::construct::construct;
 use crate::localsearch::{local_search, LocalSearchConfig, SearchResult};
-use crate::model::{HardSoftScore, PlannerError, ProblemModel};
+use crate::model::{HardSoftScore, PlannerError, ProblemModel, Solution};
 use crate::rng;
 use crate::solver::{solve, SolverConfig};
 
@@ -54,7 +58,11 @@ pub struct ParallelReport {
     pub best: SearchResult,
     /// 胜出 worker 下标（best_score 并列取最小下标，与完成顺序无关）。
     pub winner: usize,
-    /// 各 worker 的 best_score，按 worker 下标序（长度 == threads）。
+    /// 各 worker 的 best_score，按 worker 下标序。长度分两种情形：
+    /// - 并行路径（threads > 1 且 `run_local_search`）：长度 == threads；
+    /// - 委托路径（threads == 1 或 `!run_local_search`，见 [`solve_parallel_detailed`]
+    ///   第 2 条语义）：恒为 `vec![best.best_score]`（长度 1、winner == 0——该路径
+    ///   与 [`crate::solver::solve`] 完全等价，无并行增益，报告仅包装单次求解）。
     pub worker_scores: Vec<HardSoftScore>,
 }
 
@@ -67,6 +75,128 @@ pub fn solve_parallel(
     threads: usize,
 ) -> Result<SearchResult, PlannerError> {
     solve_parallel_detailed(model, cfg, threads).map(|report| report.best)
+}
+
+/// [`spawn_and_join`] 的 worker 体类型：`(worker 下标, 共享初始解引用, 该 worker 配置)`。
+type WorkerBody<'a> =
+    &'a (dyn Fn(usize, &Solution, &LocalSearchConfig) -> Result<SearchResult, PlannerError> + Sync);
+
+/// 生产 worker 体：克隆共享初始解并以其专属配置跑局部搜索。worker 下标参数生产
+/// 路径不使用——供 [`spawn_and_join`] 的注入式测试区分 worker。
+fn run_local_search_worker(
+    _worker: usize,
+    initial: &Solution,
+    cfg: &LocalSearchConfig,
+) -> Result<SearchResult, PlannerError> {
+    local_search(initial.clone(), cfg)
+}
+
+/// 按句柄序（= spawn 序 = worker 下标序）join 全部线程：
+/// - `Ok(Ok(r))`：`results` 为 `Some` 时按下标序收集（spawn 失败清理路径传 `None` 丢弃）；
+/// - `Ok(Err(pe))`：记录**首个**（即最小下标）worker Err，作为返回值透传；
+/// - `Err(payload)`：暂存**首个** panic payload 到 `panic_slot`（仍 join 完其余线程）。
+fn join_handles(
+    handles: Vec<std::thread::ScopedJoinHandle<'_, Result<SearchResult, PlannerError>>>,
+    mut results: Option<&mut Vec<SearchResult>>,
+    panic_slot: &mut Option<Box<dyn Any + Send>>,
+) -> Option<PlannerError> {
+    let mut first_err: Option<PlannerError> = None;
+    for handle in handles {
+        match handle.join() {
+            Ok(Ok(result)) => {
+                if let Some(rs) = results.as_mut() {
+                    rs.push(result);
+                }
+            }
+            Ok(Err(pe)) => {
+                // 同 cfg 下各 worker 的校验结果恒同；取最小下标者透传
+                if first_err.is_none() {
+                    first_err = Some(pe);
+                }
+            }
+            Err(payload) => {
+                if panic_slot.is_none() {
+                    *panic_slot = Some(payload);
+                }
+            }
+        }
+    }
+    first_err
+}
+
+/// [`solve_parallel_detailed`] 的派生 + join 内核（抽出为独立函数以提供注入式测试点：
+/// worker 体与模拟 spawn 失败；生产经 [`run_local_search_worker`] 与 `fail_spawn_at =
+/// None` 进入，两条注入路径生产二进制均不可达）。
+///
+/// 语义（normative）：
+/// 1. 依次为 worker i ∈ [0, worker_cfgs.len()) 派线程执行
+///    `body(i, initial, &worker_cfgs[i])`（initial 以只读引用借入、cfg 按所有权移入，
+///    每 worker 在自己线程内取用）；
+/// 2. 某次 `spawn_scoped` io 失败（资源不足等）：停止继续 spawn，**先按下标序 join
+///    已派生的全部线程**——其中的 panic payload 照常暂存（见第 4 条，「worker panic
+///    不吞」不因 spawn 失败破例），正常/Err 结果丢弃——然后返回
+///    `Err(PlannerError::Io)`（该双故障角落下 worker 的 Err 被 Io 覆盖，panic 除外）；
+/// 3. 全部派生成功：按下标序 join；有 panic → 返回占位 Err（不可观察，见第 4 条）；
+///    否则首个（最小下标）worker Err 透传；再否则全部结果按下标序返回；
+/// 4. 任一 worker panic：在 scope **外**（全部线程已 join）[`std::panic::resume_unwind`]
+///    最小下标 payload——优先于任何 Err 返回值，不吞不锁死。
+fn spawn_and_join(
+    initial: &Solution,
+    worker_cfgs: Vec<LocalSearchConfig>,
+    body: WorkerBody<'_>,
+    fail_spawn_at: Option<usize>,
+) -> Result<Vec<SearchResult>, PlannerError> {
+    // worker panic payload 的暂存格：仅父线程（scope 闭包运行于父线程）读写，
+    // 非 worker 间共享状态；scope 返回后若已置位则先 resume_unwind 再检查结果。
+    let mut panic_payload: Option<Box<dyn Any + Send>> = None;
+
+    let joined: Result<Vec<SearchResult>, PlannerError> = std::thread::scope(|scope| {
+        // initial 以引用借入 'scope（move 闭包拷贝的是 &Solution 本身）；
+        // cfg_i 按所有权移入。
+        let mut handles = Vec::with_capacity(worker_cfgs.len());
+        for (i, cfg_i) in worker_cfgs.into_iter().enumerate() {
+            // fail_spawn_at：注入式测试专用——Some(i) 时第 i 次派生模拟 io 失败
+            // （不真正建线程），走与真实失败完全相同的清理/返回路径；生产恒 None。
+            let spawned = if fail_spawn_at == Some(i) {
+                Err(std::io::Error::other("injected spawn failure (test-only)"))
+            } else {
+                std::thread::Builder::new().spawn_scoped(scope, move || body(i, initial, &cfg_i))
+            };
+            match spawned {
+                Ok(handle) => handles.push(handle),
+                Err(io) => {
+                    // 资源不足等 io 失败：映射 Io 并停止继续 spawn。返回前先按下标序
+                    // join 已派生线程——无泄漏无死锁，且其中的 panic payload 照常暂存
+                    // （scope 外统一 resume_unwind，不吞）；结果丢弃（本路径以 Io 为
+                    // 返回值）。
+                    let _ = join_handles(handles, None, &mut panic_payload);
+                    return Err(PlannerError::Io(io));
+                }
+            }
+        }
+
+        // 按下标序 join（handles 即 spawn 序 = worker 下标序）：
+        // 首个 panic / 首个 Err 即最小下标；仍 join 完其余线程后才返回。
+        let mut results = Vec::with_capacity(handles.len());
+        let first_err = join_handles(handles, Some(&mut results), &mut panic_payload);
+        if panic_payload.is_some() {
+            // 占位 Err：永不逃逸——panic_payload 已置位，scope 返回后先 resume_unwind
+            // 再检查 joined（见下），本值不会被调用方观察到。
+            return Err(PlannerError::Invalid(
+                "worker thread panicked (payload stashed for resume_unwind)".to_string(),
+            ));
+        }
+        if let Some(pe) = first_err {
+            return Err(pe);
+        }
+        Ok(results)
+    });
+
+    // worker panic：在 scope 外（全部线程已 join）重抛最小下标 payload，不吞不锁死。
+    if let Some(payload) = panic_payload {
+        std::panic::resume_unwind(payload);
+    }
+    joined
 }
 
 /// 多起点并行求解（含各 worker 明细）。
@@ -85,7 +215,10 @@ pub fn solve_parallel(
 ///    各自调用 `local_search(initial.clone(), &cfg_i)`（initial 为父线程构造解）；
 /// 5. 聚合：任一 worker `Err(PlannerError)` → 返回最小下标的 Err（同 cfg 下校验与
 ///    seed 无关 ⇒ 各 worker Err 恒同）；否则 winner = argmin_i(best_score_i)，
-///    严格小于才替换 ⇒ 并列取最小下标，与线程完成顺序无关。
+///    严格小于才替换 ⇒ 并列取最小下标，与线程完成顺序无关；
+/// 6. 派生线程 io 失败（如资源不足）：返回 `Err(PlannerError::Io)`；返回前先 join
+///    已派生线程——其中的 worker panic 仍优先重抛（优先级与清理细节见
+///    [`spawn_and_join`] 第 2/4 条）。
 pub fn solve_parallel_detailed(
     model: Arc<ProblemModel>,
     cfg: &SolverConfig,
@@ -120,67 +253,9 @@ pub fn solve_parallel_detailed(
         })
         .collect();
 
-    // worker panic payload 的暂存格：仅父线程（scope 闭包运行于父线程）读写，
-    // 非 worker 间共享状态；scope 返回后若已置位则先 resume_unwind 再检查结果。
-    let mut panic_payload: Option<Box<dyn Any + Send>> = None;
-
-    let joined: Result<Vec<SearchResult>, PlannerError> = std::thread::scope(|scope| {
-        // initial 以引用借入 'scope（move 闭包拷贝的是 &Solution 本身）；
-        // cfg_i 按所有权移入。每 worker 在自己线程内克隆 initial。
-        let initial_ref = &initial;
-        let mut handles = Vec::with_capacity(threads);
-        for cfg_i in worker_cfgs {
-            match std::thread::Builder::new().spawn_scoped(
-                scope,
-                move || local_search(initial_ref.clone(), &cfg_i),
-            ) {
-                Ok(handle) => handles.push(handle),
-                Err(io) => {
-                    // 资源不足等 io 失败：映射 Io 并停止继续 spawn；
-                    // 已 spawn 线程由 scope 退出自动 join（无泄漏无死锁）。
-                    return Err(PlannerError::Io(io));
-                }
-            }
-        }
-
-        // 按下标序 join（handles 即 spawn 序 = worker 下标序）：
-        // 首个 panic / 首个 Err 即最小下标；仍 join 完其余线程后才返回。
-        let mut first_err: Option<PlannerError> = None;
-        let mut results = Vec::with_capacity(handles.len());
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(result)) => results.push(result),
-                Ok(Err(pe)) => {
-                    // 同 cfg 下各 worker 的校验结果恒同；取最小下标者透传
-                    if first_err.is_none() {
-                        first_err = Some(pe);
-                    }
-                }
-                Err(payload) => {
-                    if panic_payload.is_none() {
-                        panic_payload = Some(payload);
-                    }
-                }
-            }
-        }
-        if panic_payload.is_some() {
-            // 占位 Err：永不逃逸——panic_payload 已置位，scope 返回后先 resume_unwind
-            // 再检查 joined（见下），本值不会被调用方观察到。
-            return Err(PlannerError::Invalid(
-                "worker thread panicked (payload stashed for resume_unwind)".to_string(),
-            ));
-        }
-        if let Some(pe) = first_err {
-            return Err(pe);
-        }
-        Ok(results)
-    });
-
-    // worker panic：在 scope 外（全部线程已 join）重抛最小下标 payload，不吞不锁死。
-    if let Some(payload) = panic_payload {
-        std::panic::resume_unwind(payload);
-    }
-    let results = joined?;
+    // ---- 派生 + join + panic 语义内聚于 spawn_and_join（并作为注入式测试点）：
+    // 此处仅消费其按下标序返回的各 worker 结果。----
+    let results = spawn_and_join(&initial, worker_cfgs, &run_local_search_worker, None)?;
 
     // ---- 聚合：min(best_score)，严格小于才替换 ⇒ 并列取最小下标 ----
     debug_assert_eq!(results.len(), threads, "every worker must report a result");
@@ -502,6 +577,141 @@ mod tests {
         match solve_parallel_detailed(model, &tabu_cfg(10), 4) {
             Err(PlannerError::Model(_)) => {}
             other => panic!("expected Model error, got {other:?}"),
+        }
+    }
+
+    // ---- P4 回归：spawn 失败 / worker panic 的单故障与双故障角落 ----
+    // （经 spawn_and_join 的注入式测试点：fail_spawn_at 模拟派生 io 失败、
+    //   自定义 body 模拟 worker panic / Err；生产体 run_local_search_worker 与
+    //   fail_spawn_at=None 的胶水由上方全部 solve_parallel_detailed 测试覆盖。）
+
+    /// 测试用 SearchResult：best = 共享初始解克隆、steps 编码 worker 下标
+    /// （仅用于断言结果按下标序）。
+    fn canned(initial: &Solution, worker: usize) -> SearchResult {
+        SearchResult {
+            best: initial.clone(),
+            best_score: HardSoftScore::new(0, worker as i64),
+            initial_score: HardSoftScore::new(0, 0),
+            steps: worker,
+        }
+    }
+
+    /// 三个默认 worker 配置（种子不参与注入式 body，内容任意合法即可）。
+    fn three_cfgs() -> Vec<LocalSearchConfig> {
+        (0..3).map(|_| LocalSearchConfig::default()).collect()
+    }
+
+    /// 双故障角落（P4 核心）：worker 0 panic 且第 2 次派生注入 io 失败 ⇒
+    /// 已派生线程仍被按下标序 join、panic payload **不被吞**——spawn_and_join 在
+    /// scope 外 resume_unwind（catch_unwind 捕获，payload 内容保持最小下标者）。
+    #[test]
+    fn spawn_failure_still_unwinds_panicking_worker() {
+        let model = toy_model();
+        let initial = construct(&model, ConstructionHeuristic::FirstFit).expect("construct");
+        let body = |worker: usize, init: &Solution, _cfg: &LocalSearchConfig| {
+            if worker == 0 {
+                panic!("injected worker panic (worker 0)");
+            }
+            Ok(canned(init, worker))
+        };
+        // 静音 worker 线程 panic 的默认打印（测试输出整洁；不影响 payload 传递）
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // 派生 worker 0、1 成功（0 会 panic），第 2 次派生注入失败
+            spawn_and_join(&initial, three_cfgs(), &body, Some(2))
+        }));
+        std::panic::set_hook(prev_hook);
+        let payload = match outcome {
+            Err(payload) => payload,
+            Ok(_) => panic!("double fault must unwind: worker panic was swallowed"),
+        };
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .expect("panic payload must be &str or String");
+        assert_eq!(msg, "injected worker panic (worker 0)");
+    }
+
+    /// 单故障（仅 worker panic，无 spawn 失败）：最小下标 payload 于 scope 外重抛
+    /// （既有路径的回归钉死，确保修复未改变该优先级）。
+    #[test]
+    fn worker_panic_without_spawn_failure_unwinds() {
+        let model = toy_model();
+        let initial = construct(&model, ConstructionHeuristic::FirstFit).expect("construct");
+        let body = |worker: usize, init: &Solution, _cfg: &LocalSearchConfig| {
+            if worker == 1 {
+                panic!("injected worker panic (worker 1)");
+            }
+            Ok(canned(init, worker))
+        };
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            spawn_and_join(&initial, three_cfgs(), &body, None)
+        }));
+        std::panic::set_hook(prev_hook);
+        let payload = match outcome {
+            Err(payload) => payload,
+            Ok(_) => panic!("worker panic without spawn failure must unwind"),
+        };
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .expect("panic payload must be &str or String");
+        assert_eq!(msg, "injected worker panic (worker 1)");
+    }
+
+    /// 单故障（仅 spawn 失败，无 panic）：注入第 1 次派生失败 ⇒ 已派生的 worker 0
+    /// 被按下标序 join（结果丢弃、不泄漏不挂起），返回 Err(Io)、不 panic。
+    #[test]
+    fn injected_spawn_failure_returns_io() {
+        let model = toy_model();
+        let initial = construct(&model, ConstructionHeuristic::FirstFit).expect("construct");
+        let body =
+            |worker: usize, init: &Solution, _cfg: &LocalSearchConfig| Ok(canned(init, worker));
+        match spawn_and_join(&initial, three_cfgs(), &body, Some(1)) {
+            Err(PlannerError::Io(_)) => {}
+            Err(other) => panic!("expected Io, got {other:?}"),
+            Ok(_) => panic!("injected spawn failure must return Err(Io)"),
+        }
+    }
+
+    /// 正常路径：全部派生成功时结果按 worker 下标序返回（steps 编码下标）。
+    #[test]
+    fn spawn_and_join_returns_results_in_index_order() {
+        let model = toy_model();
+        let initial = construct(&model, ConstructionHeuristic::FirstFit).expect("construct");
+        let body =
+            |worker: usize, init: &Solution, _cfg: &LocalSearchConfig| Ok(canned(init, worker));
+        let results =
+            spawn_and_join(&initial, three_cfgs(), &body, None).expect("all workers succeed");
+        assert_eq!(
+            results.iter().map(|r| r.steps).collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "results must be in worker index order"
+        );
+    }
+
+    /// worker Err 以最小下标透传（经重构后的 join_handles 收集路径）。
+    #[test]
+    fn worker_err_propagates_min_index() {
+        let model = toy_model();
+        let initial = construct(&model, ConstructionHeuristic::FirstFit).expect("construct");
+        let body = |worker: usize, init: &Solution, _cfg: &LocalSearchConfig| {
+            if worker >= 1 {
+                Err(PlannerError::Invalid(format!("injected worker {worker} error")))
+            } else {
+                Ok(canned(init, worker))
+            }
+        };
+        match spawn_and_join(&initial, three_cfgs(), &body, None) {
+            Err(PlannerError::Invalid(msg)) => {
+                assert_eq!(msg, "injected worker 1 error", "min worker index wins")
+            }
+            other => panic!("expected Invalid, got {other:?}"),
         }
     }
 }

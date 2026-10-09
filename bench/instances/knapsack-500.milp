@@ -1,0 +1,570 @@
+name knapsack-500
+sense max
+vars
+  x1 binary
+  x2 binary
+  x3 binary
+  x4 binary
+  x5 binary
+  x6 binary
+  x7 binary
+  x8 binary
+  x9 binary
+  x10 binary
+  x11 binary
+  x12 binary
+  x13 binary
+  x14 binary
+  x15 binary
+  x16 binary
+  x17 binary
+  x18 binary
+  x19 binary
+  x20 binary
+  x21 binary
+  x22 binary
+  x23 binary
+  x24 binary
+  x25 binary
+  x26 binary
+  x27 binary
+  x28 binary
+  x29 binary
+  x30 binary
+  x31 binary
+  x32 binary
+  x33 binary
+  x34 binary
+  x35 binary
+  x36 binary
+  x37 binary
+  x38 binary
+  x39 binary
+  x40 binary
+  x41 binary
+  x42 binary
+  x43 binary
+  x44 binary
+  x45 binary
+  x46 binary
+  x47 binary
+  x48 binary
+  x49 binary
+  x50 binary
+  x51 binary
+  x52 binary
+  x53 binary
+  x54 binary
+  x55 binary
+  x56 binary
+  x57 binary
+  x58 binary
+  x59 binary
+  x60 binary
+  x61 binary
+  x62 binary
+  x63 binary
+  x64 binary
+  x65 binary
+  x66 binary
+  x67 binary
+  x68 binary
+  x69 binary
+  x70 binary
+  x71 binary
+  x72 binary
+  x73 binary
+  x74 binary
+  x75 binary
+  x76 binary
+  x77 binary
+  x78 binary
+  x79 binary
+  x80 binary
+  x81 binary
+  x82 binary
+  x83 binary
+  x84 binary
+  x85 binary
+  x86 binary
+  x87 binary
+  x88 binary
+  x89 binary
+  x90 binary
+  x91 binary
+  x92 binary
+  x93 binary
+  x94 binary
+  x95 binary
+  x96 binary
+  x97 binary
+  x98 binary
+  x99 binary
+  x100 binary
+  x101 binary
+  x102 binary
+  x103 binary
+  x104 binary
+  x105 binary
+  x106 binary
+  x107 binary
+  x108 binary
+  x109 binary
+  x110 binary
+  x111 binary
+  x112 binary
+  x113 binary
+  x114 binary
+  x115 binary
+  x116 binary
+  x117 binary
+  x118 binary
+  x119 binary
+  x120 binary
+  x121 binary
+  x122 binary
+  x123 binary
+  x124 binary
+  x125 binary
+  x126 binary
+  x127 binary
+  x128 binary
+  x129 binary
+  x130 binary
+  x131 binary
+  x132 binary
+  x133 binary
+  x134 binary
+  x135 binary
+  x136 binary
+  x137 binary
+  x138 binary
+  x139 binary
+  x140 binary
+  x141 binary
+  x142 binary
+  x143 binary
+  x144 binary
+  x145 binary
+  x146 binary
+  x147 binary
+  x148 binary
+  x149 binary
+  x150 binary
+  x151 binary
+  x152 binary
+  x153 binary
+  x154 binary
+  x155 binary
+  x156 binary
+  x157 binary
+  x158 binary
+  x159 binary
+  x160 binary
+  x161 binary
+  x162 binary
+  x163 binary
+  x164 binary
+  x165 binary
+  x166 binary
+  x167 binary
+  x168 binary
+  x169 binary
+  x170 binary
+  x171 binary
+  x172 binary
+  x173 binary
+  x174 binary
+  x175 binary
+  x176 binary
+  x177 binary
+  x178 binary
+  x179 binary
+  x180 binary
+  x181 binary
+  x182 binary
+  x183 binary
+  x184 binary
+  x185 binary
+  x186 binary
+  x187 binary
+  x188 binary
+  x189 binary
+  x190 binary
+  x191 binary
+  x192 binary
+  x193 binary
+  x194 binary
+  x195 binary
+  x196 binary
+  x197 binary
+  x198 binary
+  x199 binary
+  x200 binary
+  x201 binary
+  x202 binary
+  x203 binary
+  x204 binary
+  x205 binary
+  x206 binary
+  x207 binary
+  x208 binary
+  x209 binary
+  x210 binary
+  x211 binary
+  x212 binary
+  x213 binary
+  x214 binary
+  x215 binary
+  x216 binary
+  x217 binary
+  x218 binary
+  x219 binary
+  x220 binary
+  x221 binary
+  x222 binary
+  x223 binary
+  x224 binary
+  x225 binary
+  x226 binary
+  x227 binary
+  x228 binary
+  x229 binary
+  x230 binary
+  x231 binary
+  x232 binary
+  x233 binary
+  x234 binary
+  x235 binary
+  x236 binary
+  x237 binary
+  x238 binary
+  x239 binary
+  x240 binary
+  x241 binary
+  x242 binary
+  x243 binary
+  x244 binary
+  x245 binary
+  x246 binary
+  x247 binary
+  x248 binary
+  x249 binary
+  x250 binary
+  x251 binary
+  x252 binary
+  x253 binary
+  x254 binary
+  x255 binary
+  x256 binary
+  x257 binary
+  x258 binary
+  x259 binary
+  x260 binary
+  x261 binary
+  x262 binary
+  x263 binary
+  x264 binary
+  x265 binary
+  x266 binary
+  x267 binary
+  x268 binary
+  x269 binary
+  x270 binary
+  x271 binary
+  x272 binary
+  x273 binary
+  x274 binary
+  x275 binary
+  x276 binary
+  x277 binary
+  x278 binary
+  x279 binary
+  x280 binary
+  x281 binary
+  x282 binary
+  x283 binary
+  x284 binary
+  x285 binary
+  x286 binary
+  x287 binary
+  x288 binary
+  x289 binary
+  x290 binary
+  x291 binary
+  x292 binary
+  x293 binary
+  x294 binary
+  x295 binary
+  x296 binary
+  x297 binary
+  x298 binary
+  x299 binary
+  x300 binary
+  x301 binary
+  x302 binary
+  x303 binary
+  x304 binary
+  x305 binary
+  x306 binary
+  x307 binary
+  x308 binary
+  x309 binary
+  x310 binary
+  x311 binary
+  x312 binary
+  x313 binary
+  x314 binary
+  x315 binary
+  x316 binary
+  x317 binary
+  x318 binary
+  x319 binary
+  x320 binary
+  x321 binary
+  x322 binary
+  x323 binary
+  x324 binary
+  x325 binary
+  x326 binary
+  x327 binary
+  x328 binary
+  x329 binary
+  x330 binary
+  x331 binary
+  x332 binary
+  x333 binary
+  x334 binary
+  x335 binary
+  x336 binary
+  x337 binary
+  x338 binary
+  x339 binary
+  x340 binary
+  x341 binary
+  x342 binary
+  x343 binary
+  x344 binary
+  x345 binary
+  x346 binary
+  x347 binary
+  x348 binary
+  x349 binary
+  x350 binary
+  x351 binary
+  x352 binary
+  x353 binary
+  x354 binary
+  x355 binary
+  x356 binary
+  x357 binary
+  x358 binary
+  x359 binary
+  x360 binary
+  x361 binary
+  x362 binary
+  x363 binary
+  x364 binary
+  x365 binary
+  x366 binary
+  x367 binary
+  x368 binary
+  x369 binary
+  x370 binary
+  x371 binary
+  x372 binary
+  x373 binary
+  x374 binary
+  x375 binary
+  x376 binary
+  x377 binary
+  x378 binary
+  x379 binary
+  x380 binary
+  x381 binary
+  x382 binary
+  x383 binary
+  x384 binary
+  x385 binary
+  x386 binary
+  x387 binary
+  x388 binary
+  x389 binary
+  x390 binary
+  x391 binary
+  x392 binary
+  x393 binary
+  x394 binary
+  x395 binary
+  x396 binary
+  x397 binary
+  x398 binary
+  x399 binary
+  x400 binary
+  x401 binary
+  x402 binary
+  x403 binary
+  x404 binary
+  x405 binary
+  x406 binary
+  x407 binary
+  x408 binary
+  x409 binary
+  x410 binary
+  x411 binary
+  x412 binary
+  x413 binary
+  x414 binary
+  x415 binary
+  x416 binary
+  x417 binary
+  x418 binary
+  x419 binary
+  x420 binary
+  x421 binary
+  x422 binary
+  x423 binary
+  x424 binary
+  x425 binary
+  x426 binary
+  x427 binary
+  x428 binary
+  x429 binary
+  x430 binary
+  x431 binary
+  x432 binary
+  x433 binary
+  x434 binary
+  x435 binary
+  x436 binary
+  x437 binary
+  x438 binary
+  x439 binary
+  x440 binary
+  x441 binary
+  x442 binary
+  x443 binary
+  x444 binary
+  x445 binary
+  x446 binary
+  x447 binary
+  x448 binary
+  x449 binary
+  x450 binary
+  x451 binary
+  x452 binary
+  x453 binary
+  x454 binary
+  x455 binary
+  x456 binary
+  x457 binary
+  x458 binary
+  x459 binary
+  x460 binary
+  x461 binary
+  x462 binary
+  x463 binary
+  x464 binary
+  x465 binary
+  x466 binary
+  x467 binary
+  x468 binary
+  x469 binary
+  x470 binary
+  x471 binary
+  x472 binary
+  x473 binary
+  x474 binary
+  x475 binary
+  x476 binary
+  x477 binary
+  x478 binary
+  x479 binary
+  x480 binary
+  x481 binary
+  x482 binary
+  x483 binary
+  x484 binary
+  x485 binary
+  x486 binary
+  x487 binary
+  x488 binary
+  x489 binary
+  x490 binary
+  x491 binary
+  x492 binary
+  x493 binary
+  x494 binary
+  x495 binary
+  x496 binary
+  x497 binary
+  x498 binary
+  x499 binary
+  x500 binary
+obj
+  27 x1 21 x2 16 x3 49 x4 23 x5 41 x6 29 x7 35 x8
+  38 x9 38 x10 48 x11 36 x12 42 x13 29 x14 45 x15 37 x16
+  42 x17 32 x18 45 x19 16 x20 46 x21 50 x22 43 x23 33 x24
+  35 x25 20 x26 47 x27 38 x28 48 x29 20 x30 45 x31 51 x32
+  32 x33 28 x34 36 x35 9 x36 37 x37 42 x38 24 x39 55 x40
+  14 x41 50 x42 50 x43 28 x44 11 x45 36 x46 30 x47 33 x48
+  27 x49 40 x50 46 x51 45 x52 17 x53 15 x54 51 x55 24 x56
+  40 x57 26 x58 22 x59 54 x60 52 x61 28 x62 55 x63 32 x64
+  15 x65 49 x66 19 x67 19 x68 44 x69 45 x70 39 x71 33 x72
+  44 x73 31 x74 11 x75 45 x76 55 x77 19 x78 29 x79 37 x80
+  48 x81 19 x82 49 x83 48 x84 30 x85 42 x86 47 x87 10 x88
+  36 x89 55 x90 35 x91 18 x92 38 x93 52 x94 42 x95 37 x96
+  27 x97 12 x98 11 x99 9 x100 44 x101 16 x102 51 x103 20 x104
+  21 x105 41 x106 49 x107 19 x108 23 x109 28 x110 20 x111 36 x112
+  37 x113 23 x114 23 x115 24 x116 30 x117 22 x118 11 x119 34 x120
+  33 x121 45 x122 46 x123 21 x124 17 x125 22 x126 38 x127 29 x128
+  46 x129 31 x130 19 x131 48 x132 49 x133 47 x134 36 x135 13 x136
+  46 x137 48 x138 14 x139 40 x140 29 x141 45 x142 19 x143 31 x144
+  18 x145 19 x146 53 x147 49 x148 42 x149 30 x150 49 x151 48 x152
+  26 x153 45 x154 40 x155 45 x156 21 x157 52 x158 17 x159 41 x160
+  53 x161 39 x162 29 x163 42 x164 38 x165 27 x166 18 x167 20 x168
+  46 x169 16 x170 8 x171 50 x172 43 x173 36 x174 33 x175 26 x176
+  38 x177 35 x178 42 x179 42 x180 15 x181 27 x182 29 x183 30 x184
+  10 x185 12 x186 25 x187 35 x188 31 x189 52 x190 28 x191 42 x192
+  36 x193 38 x194 31 x195 31 x196 51 x197 20 x198 21 x199 26 x200
+  17 x201 40 x202 45 x203 16 x204 50 x205 42 x206 17 x207 35 x208
+  23 x209 41 x210 21 x211 39 x212 10 x213 31 x214 47 x215 23 x216
+  52 x217 47 x218 39 x219 46 x220 48 x221 30 x222 43 x223 20 x224
+  29 x225 41 x226 25 x227 28 x228 27 x229 28 x230 36 x231 40 x232
+  37 x233 35 x234 50 x235 28 x236 25 x237 55 x238 28 x239 34 x240
+  46 x241 20 x242 27 x243 41 x244 23 x245 47 x246 19 x247 42 x248
+  22 x249 55 x250 45 x251 43 x252 34 x253 12 x254 41 x255 54 x256
+  21 x257 36 x258 25 x259 18 x260 30 x261 54 x262 38 x263 18 x264
+  18 x265 44 x266 47 x267 44 x268 41 x269 40 x270 37 x271 46 x272
+  48 x273 22 x274 49 x275 48 x276 18 x277 15 x278 21 x279 29 x280
+  36 x281 18 x282 55 x283 46 x284 28 x285 16 x286 17 x287 30 x288
+  37 x289 15 x290 35 x291 13 x292 15 x293 12 x294 20 x295 27 x296
+  24 x297 35 x298 50 x299 40 x300 46 x301 49 x302 44 x303 54 x304
+  43 x305 17 x306 16 x307 41 x308 41 x309 48 x310 26 x311 39 x312
+  12 x313 25 x314 15 x315 42 x316 52 x317 12 x318 16 x319 15 x320
+  18 x321 18 x322 50 x323 53 x324 18 x325 22 x326 42 x327 40 x328
+  48 x329 29 x330 48 x331 36 x332 32 x333 39 x334 27 x335 23 x336
+  27 x337 52 x338 47 x339 8 x340 40 x341 18 x342 19 x343 29 x344
+  48 x345 29 x346 14 x347 45 x348 14 x349 46 x350 45 x351 43 x352
+  18 x353 50 x354 31 x355 45 x356 24 x357 44 x358 28 x359 50 x360
+  23 x361 45 x362 19 x363 18 x364 18 x365 32 x366 45 x367 17 x368
+  49 x369 32 x370 47 x371 27 x372 17 x373 17 x374 26 x375 56 x376
+  26 x377 43 x378 19 x379 53 x380 37 x381 13 x382 51 x383 45 x384
+  21 x385 38 x386 17 x387 28 x388 22 x389 45 x390 15 x391 8 x392
+  34 x393 35 x394 13 x395 49 x396 37 x397 34 x398 44 x399 56 x400
+  29 x401 40 x402 50 x403 56 x404 49 x405 42 x406 35 x407 18 x408
+  39 x409 52 x410 50 x411 43 x412 23 x413 37 x414 16 x415 16 x416
+  41 x417 26 x418 14 x419 25 x420 19 x421 43 x422 24 x423 33 x424
+  32 x425 19 x426 21 x427 48 x428 47 x429 41 x430 48 x431 18 x432
+  36 x433 21 x434 46 x435 22 x436 21 x437 12 x438 16 x439 23 x440
+  15 x441 41 x442 49 x443 54 x444 17 x445 26 x446 23 x447 20 x448
+  36 x449 35 x450 23 x451 50 x452 54 x453 35 x454 20 x455 21 x456
+  45 x457 32 x458 49 x459 30 x460 45 x461 29 x462 15 x463 17 x464
+  23 x465 33 x466 39 x467 39 x468 24 x469 28 x470 49 x471 33 x472
+  47 x473 15 x474 42 x475 27 x476 20 x477 17 x478 18 x479 34 x480
+  29 x481 30 x482 17 x483 29 x484 21 x485 42 x486 32 x487 28 x488
+  16 x489 53 x490 29 x491 43 x492 42 x493 36 x494 17 x495 15 x496
+  19 x497 17 x498 33 x499 34 x500
+cons
+  cap: 19 x1 15 x2 12 x3 41 x4 21 x5 36 x6 23 x7 26 x8 31 x9 37 x10 40 x11 32 x12 35 x13 19 x14 40 x15 28 x16 36 x17 28 x18 38 x19 12 x20 37 x21 44 x22 34 x23 31 x24 33 x25 13 x26 46 x27 31 x28 39 x29 19 x30 39 x31 41 x32 30 x33 25 x34 27 x35 8 x36 31 x37 40 x38 19 x39 46 x40 12 x41 47 x42 43 x43 22 x44 9 x45 31 x46 26 x47 29 x48 21 x49 31 x50 42 x51 38 x52 14 x53 9 x54 43 x55 18 x56 39 x57 16 x58 16 x59 46 x60 44 x61 19 x62 46 x63 23 x64 14 x65 39 x66 14 x67 15 x68 37 x69 35 x70 38 x71 32 x72 36 x73 22 x74 9 x75 37 x76 46 x77 11 x78 25 x79 28 x80 45 x81 15 x82 42 x83 40 x84 24 x85 39 x86 45 x87 7 x88 30 x89 45 x90 28 x91 17 x92 35 x93 43 x94 33 x95 32 x96 23 x97 8 x98 7 x99 7 x100 35 x101 12 x102 47 x103 14 x104 16 x105 36 x106 42 x107 13 x108 14 x109 19 x110 16 x111 26 x112 33 x113 15 x114 13 x115 20 x116 20 x117 13 x118 8 x119 29 x120 25 x121 42 x122 36 x123 13 x124 10 x125 16 x126 33 x127 19 x128 43 x129 23 x130 9 x131 38 x132 45 x133 46 x134 26 x135 7 x136 40 x137 45 x138 9 x139 38 x140 22 x141 39 x142 14 x143 22 x144 8 x145 16 x146 47 x147 44 x148 37 x149 29 x150 47 x151 41 x152 25 x153 36 x154 30 x155 41 x156 16 x157 44 x158 10 x159 31 x160 44 x161 32 x162 28 x163 39 x164 34 x165 22 x166 9 x167 14 x168 40 x169 7 x170 7 x171 40 x172 41 x173 30 x174 23 x175 25 x176 28 x177 33 x178 34 x179 35 x180 11 x181 20 x182 28 x183 20 x184 8 x185 9 x186 23 x187 30 x188 21 x189 44 x190 18 x191 34 x192 27 x193 29 x194 21 x195 29 x196 47 x197 13 x198 20 x199 23 x200 15 x201 30 x202 43 x203 11 x204 41 x205 41 x206 15 x207 33 x208 16 x209 38 x210 11 x211 29 x212 9 x213 30 x214 45 x215 21 x216 46 x217 41 x218 32 x219 36 x220 46 x221 26 x222 36 x223 16 x224 27 x225 31 x226 18 x227 23 x228 26 x229 21 x230 33 x231 30 x232 27 x233 26 x234 41 x235 24 x236 15 x237 47 x238 19 x239 29 x240 39 x241 14 x242 20 x243 37 x244 18 x245 43 x246 11 x247 38 x248 16 x249 47 x250 40 x251 36 x252 25 x253 8 x254 34 x255 45 x256 18 x257 31 x258 16 x259 9 x260 28 x261 47 x262 34 x263 13 x264 11 x265 42 x266 45 x267 39 x268 33 x269 38 x270 27 x271 45 x272 46 x273 19 x274 40 x275 47 x276 10 x277 11 x278 17 x279 23 x280 34 x281 9 x282 45 x283 40 x284 24 x285 15 x286 16 x287 24 x288 28 x289 10 x290 29 x291 9 x292 14 x293 11 x294 16 x295 26 x296 17 x297 33 x298 40 x299 32 x300 41 x301 41 x302 35 x303 45 x304 38 x305 11 x306 13 x307 40 x308 32 x309 44 x310 24 x311 30 x312 10 x313 16 x314 13 x315 33 x316 45 x317 8 x318 12 x319 11 x320 16 x321 17 x322 47 x323 43 x324 13 x325 15 x326 41 x327 37 x328 42 x329 28 x330 46 x331 27 x332 27 x333 37 x334 20 x335 15 x336 22 x337 44 x338 43 x339 7 x340 30 x341 17 x342 13 x343 19 x344 47 x345 25 x346 9 x347 40 x348 10 x349 43 x350 39 x351 35 x352 11 x353 41 x354 25 x355 38 x356 22 x357 34 x358 25 x359 45 x360 16 x361 44 x362 15 x363 17 x364 13 x365 22 x366 36 x367 11 x368 40 x369 26 x370 44 x371 25 x372 9 x373 15 x374 16 x375 47 x376 23 x377 37 x378 13 x379 44 x380 30 x381 11 x382 42 x383 37 x384 18 x385 33 x386 10 x387 22 x388 15 x389 43 x390 9 x391 7 x392 32 x393 30 x394 8 x395 44 x396 27 x397 30 x398 38 x399 47 x400 28 x401 37 x402 45 x403 46 x404 47 x405 40 x406 28 x407 10 x408 38 x409 44 x410 47 x411 42 x412 13 x413 30 x414 15 x415 14 x416 31 x417 22 x418 7 x419 15 x420 15 x421 38 x422 19 x423 23 x424 23 x425 10 x426 13 x427 40 x428 38 x429 33 x430 46 x431 14 x432 35 x433 14 x434 44 x435 14 x436 14 x437 8 x438 10 x439 13 x440 8 x441 36 x442 41 x443 47 x444 13 x445 18 x446 20 x447 15 x448 32 x449 30 x450 15 x451 43 x452 46 x453 28 x454 12 x455 18 x456 37 x457 28 x458 43 x459 20 x460 36 x461 24 x462 7 x463 7 x464 14 x465 25 x466 30 x467 37 x468 21 x469 24 x470 39 x471 31 x472 41 x473 12 x474 39 x475 22 x476 15 x477 8 x478 11 x479 29 x480 26 x481 28 x482 9 x483 24 x484 11 x485 34 x486 29 x487 20 x488 12 x489 47 x490 20 x491 34 x492 40 x493 31 x494 10 x495 12 x496 17 x497 16 x498 27 x499 25 x500 <= 6804
+end

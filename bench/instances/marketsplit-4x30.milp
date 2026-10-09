@@ -1,0 +1,44 @@
+name marketsplit-4x30
+sense min
+vars
+  x1 binary
+  x2 binary
+  x3 binary
+  x4 binary
+  x5 binary
+  x6 binary
+  x7 binary
+  x8 binary
+  x9 binary
+  x10 binary
+  x11 binary
+  x12 binary
+  x13 binary
+  x14 binary
+  x15 binary
+  x16 binary
+  x17 binary
+  x18 binary
+  x19 binary
+  x20 binary
+  x21 binary
+  x22 binary
+  x23 binary
+  x24 binary
+  x25 binary
+  x26 binary
+  x27 binary
+  x28 binary
+  x29 binary
+  x30 binary
+obj
+  1 x1 1 x2 1 x3 1 x4 1 x5 1 x6 1 x7 1 x8
+  1 x9 1 x10 1 x11 1 x12 1 x13 1 x14 1 x15 1 x16
+  1 x17 1 x18 1 x19 1 x20 1 x21 1 x22 1 x23 1 x24
+  1 x25 1 x26 1 x27 1 x28 1 x29 1 x30
+cons
+  m1: 169 x1 128 x2 171 x3 142 x4 152 x5 104 x6 193 x7 166 x8 175 x9 133 x10 181 x11 134 x12 115 x13 143 x14 136 x15 152 x16 118 x17 184 x18 118 x19 120 x20 110 x21 103 x22 136 x23 118 x24 186 x25 144 x26 194 x27 156 x28 169 x29 153 x30 = 2308
+  m2: 141 x1 111 x2 107 x3 161 x4 143 x5 150 x6 199 x7 163 x8 123 x9 178 x10 130 x11 138 x12 187 x13 148 x14 171 x15 177 x16 183 x17 119 x18 181 x19 123 x20 100 x21 158 x22 109 x23 123 x24 192 x25 133 x26 161 x27 172 x28 125 x29 192 x30 = 2292
+  m3: 116 x1 173 x2 190 x3 110 x4 112 x5 161 x6 131 x7 109 x8 163 x9 150 x10 163 x11 175 x12 106 x13 119 x14 130 x15 111 x16 110 x17 153 x18 194 x19 185 x20 147 x21 109 x22 188 x23 183 x24 113 x25 126 x26 155 x27 178 x28 134 x29 128 x30 = 2151
+  m4: 197 x1 140 x2 112 x3 134 x4 175 x5 132 x6 166 x7 134 x8 125 x9 166 x10 168 x11 105 x12 133 x13 145 x14 184 x15 118 x16 182 x17 180 x18 110 x19 105 x20 193 x21 189 x22 178 x23 147 x24 160 x25 158 x26 119 x27 142 x28 101 x29 105 x30 = 2123
+end

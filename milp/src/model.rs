@@ -378,6 +378,42 @@ impl Problem {
     }
 }
 
+/// `2^53`：|c| ≥ 此值时相邻 f64 的间距 ≥ 2，`c == c.round()` 失去区分度
+/// （该量级以上全部 f64 恰为整数值，须以幅值界显式排除而非依赖 round 判定）。
+const TWO_POW_53: f64 = 9_007_199_254_740_992.0;
+
+/// 整数目标判定（纯函数）：目标函数取值是否恒落在整数网格上。
+///
+/// 判据（三者同时满足才为 true）：
+/// - 目标项系数全为整数值：`|c| < 2^53` 且 `|c − round(c)| = 0`；
+/// - 全部目标项落在 Binary/Integer 变量上（无连续变量入目标——连续变量
+///   取分数值会破坏整数网格；空目标项集 vacuously 满足）；
+/// - [`Problem::obj_offset`] 为整数值：`|offset − round(offset)| = 0`
+///   （数学上任意 offset 只是整数网格的等距平移，非整数 offset 亦不改
+///   网格间距；此处有意保守收紧——它同时是测试侧指定禁用整数 cutoff
+///   剪枝的杠杆：fixture 置 offset = 0.5 即关闭。.milp 文法无目标常数
+///   token，解析产物的 obj_offset 恒 0.0，文件型算例不受影响）。
+///
+/// 用途：分支定界的整数目标 cutoff 剪枝与陈旧前沿 est 弹出剪枝共用此
+/// 门控（见 [`crate::branch_bound`]）：true ⇒ Max 下任何严格更优解
+/// `obj ≥ inc + 1`（Min 镜像 `obj ≤ inc − 1`）。
+///
+/// NaN/±∞ 系数：幅值界 `|c| < 2^53` 对 NaN（比较为假）与 ±∞ 均判非
+/// 整数（validate 亦拒绝之，此处仅防御）；offset NaN 同理由
+/// `offset == offset.round()` 判非整数。
+pub fn objective_is_integral(problem: &Problem) -> bool {
+    if problem.obj_offset != problem.obj_offset.round() {
+        return false;
+    }
+    problem.obj.terms.iter().all(|&(var, coeff)| {
+        matches!(
+            problem.vars.get(var).map(|v| v.var_type),
+            Some(VarType::Binary | VarType::Integer)
+        ) && coeff.abs() < TWO_POW_53
+            && coeff == coeff.round()
+    })
+}
+
 /// 校验一条稀疏表达式：下标有效、系数有限且非零、下标严格升序（蕴含无重复）。
 fn validate_terms(expr: &LinearExpr, num_vars: usize, what: &str) -> Result<()> {
     for window in expr.terms.windows(2) {
@@ -625,6 +661,50 @@ mod tests {
         assert_eq!(p.integer_vars(), vec![0, 1]);
         let q = Problem::new("q", Sense::Minimize);
         assert!(q.integer_vars().is_empty());
+    }
+
+    /// 整数目标判定正例：整数系数 × Binary/Integer 变量 + 整数 offset。
+    #[test]
+    fn objective_is_integral_positive() {
+        // x=Integer、y=Binary，负系数与 2^52 级大系数均为整数值。
+        let mut p = small_problem();
+        p.set_objective(vec![(0, -3.0), (1, 2.0)], 0.0).unwrap();
+        assert!(objective_is_integral(&p));
+        // 非零整数 offset 仍为整数网格。
+        p.set_objective(vec![(0, 1.0)], -7.0).unwrap();
+        assert!(objective_is_integral(&p));
+        // 2^52（4_503_599_627_370_496）恰可精确表示且 < 2^53。
+        p.set_objective(vec![(0, 4_503_599_627_370_496.0)], 0.0).unwrap();
+        assert!(objective_is_integral(&p));
+        // 空目标项集 + 整数 offset：目标恒为常数整数 ⇒ vacuously true。
+        p.set_objective(vec![], 5.0).unwrap();
+        assert!(objective_is_integral(&p));
+        // 仅有 Binary/Integer 之外无别的形式：单 Binary 系数 1。
+        let mut q = Problem::new("b", Sense::Maximize);
+        q.add_var("b", VarType::Binary).unwrap();
+        q.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        assert!(objective_is_integral(&q));
+    }
+
+    /// 整数目标判定负例：连续变量入目标 / 分数系数 / 分数 offset。
+    #[test]
+    fn objective_is_integral_negative_cases() {
+        // ① 连续变量入目标（small_problem 的 z 为 Continuous）。
+        let mut p = small_problem();
+        p.set_objective(vec![(0, 1.0), (2, 1.0)], 0.0).unwrap();
+        assert!(!objective_is_integral(&p), "连续变量入目标 ⇒ 非整数网格");
+        // ② 分数系数。
+        p.set_objective(vec![(0, 2.5), (1, 1.0)], 0.0).unwrap();
+        assert!(!objective_is_integral(&p), "分数系数 ⇒ 非整数网格");
+        // ③ 分数 offset（整数系数 × 整数变量仍被 offset 破坏判据）。
+        p.set_objective(vec![(0, 1.0), (1, 1.0)], 0.5).unwrap();
+        assert!(!objective_is_integral(&p), "分数 offset ⇒ 判定关闭（测试侧禁用杠杆）");
+        // ④ |c| ≥ 2^53：幅值界排除（该量级 round 判定失去区分度）。
+        p.set_objective(vec![(0, TWO_POW_53)], 0.0).unwrap();
+        assert!(!objective_is_integral(&p), "|c| ≥ 2^53 ⇒ 排除");
+        // ⑤ offset NaN（防御：validate 拒绝，此处仅证判定为假）。
+        p.set_objective(vec![(0, 1.0)], f64::NAN).unwrap();
+        assert!(!objective_is_integral(&p), "NaN offset ⇒ 非整数");
     }
 
     /// 无 bounds 节的连续/整数变量（ub=+∞）必须通过校验。

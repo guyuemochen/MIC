@@ -290,22 +290,26 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
 /// 数值取契约默认值（`Tolerances::default()` 与 `BbOptions::default()` 的
 /// 文档值），仅 `time_limit_ms`（经 `N.saturating_mul(1000)` 饱和映射）与
 /// `heuristics`（按 `--heuristic-mode`：off ⇒ false，on/auto ⇒ true）按 CLI
-/// 覆盖；其余字段仍用契约默认值字面量（本包内维护）。
+/// 覆盖；其余字段仍用契约默认值字面量（本包内维护）。分支规则默认
+/// Pseudocost + 可靠性冷启动探测预算 8（2026-10 起；CLI 不设旗标，默认
+/// 路径即启用——纯被动复现走 bench 探针 `--branch-rule pseudo
+/// --pc-probes 0`）。
 fn solve_options_from(config: &Config) -> SolveOptions {
     SolveOptions {
         tol: Tolerances::default(),
         bb: BbOptions {
-            branch_rule: BranchRule::MostFractional,
+            branch_rule: BranchRule::Pseudocost,
             node_rule: NodeRule::DepthFirst,
-            node_limit: 100_000,
+            node_limit: 2_000_000,
             time_limit_ms: config
                 .time_limit_secs
                 .map_or(0, |secs| secs.saturating_mul(1000)),
             root_cuts: true,
             heuristics: !matches!(config.heuristic_mode, HeuristicModeCli::Off),
-            dive_max_fixes: 8,
+            dive_max_fixes: 4096,
             prune_abs: 1e-9,
             prune_rel: 1e-9,
+            pc_reliability_probes: 8,
         },
         use_presolve: true,
     }
@@ -801,11 +805,15 @@ mod tests {
         assert_eq!(ctrl.mipgap_percent, Some(3.0));
         // 其余 BbOptions 字段仍为契约默认值字面量。
         let opts = solve_options_from(&config);
-        assert_eq!(opts.bb.node_limit, 100_000);
+        assert_eq!(opts.bb.node_limit, 2_000_000);
         assert!(opts.bb.root_cuts);
-        assert_eq!(opts.bb.dive_max_fixes, 8);
+        assert_eq!(opts.bb.dive_max_fixes, 4096);
         assert_eq!(opts.bb.prune_abs, 1e-9);
         assert_eq!(opts.bb.prune_rel, 1e-9);
+        // 默认分支规则 Pseudocost + 可靠性冷启动预算 8（CLI 不设旗标，
+        // 默认路径即启用；纯被动复现走 bench 探针 --pc-probes 0）。
+        assert_eq!(opts.bb.branch_rule, BranchRule::Pseudocost);
+        assert_eq!(opts.bb.pc_reliability_probes, 8);
         assert!(opts.use_presolve);
     }
 

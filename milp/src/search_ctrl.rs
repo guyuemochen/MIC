@@ -6,7 +6,8 @@
 //! - gap 百分比 [`gap_percent`]（一律 clamp 到 ≥0，见 N1）与对偶界聚合
 //!   [`aggregate_bound`]（空迭代 ⇒ None，无哨兵毒化）；
 //! - 自适应启发式控制器 [`HeuristicController`]（『无 incumbent ⇄ stall ⇄
-//!   近期命中率高』三条件 + 节流 + 时间预算保护）。
+//!   近期命中率高』三条件 + 节流 + 时间预算保护 + 停滞退避：连续 miss
+//!   ≥ K 起节流间隔指数回退、任一命中复位）。
 //!
 //! 纪律：本模块不含锁、线程与真实计时——时间一律经 [`SearchSnapshot`]
 //! 注入，测试可伪造；多线程编排见 [`crate::parallel_bb`]。
@@ -128,7 +129,7 @@ pub fn format_progress_line(info: &ProgressInfo) -> String {
 /// 进度回调（Arc 共享多线程；回调内不得获取求解器任何锁、应快速返回）。
 pub type ProgressCallback = Arc<dyn Fn(&ProgressInfo) + Send + Sync>;
 
-/// 自适应控制器参数（默认 32/50/8/0.25/0.8）。
+/// 自适应控制器参数（默认 256/400/8/0.25/0.8 + 2/16384）。
 #[derive(Debug, Clone, Copy)]
 pub struct HeuristicConfig {
     /// 两次 dive 最小节点间隔（节流）。
@@ -142,17 +143,29 @@ pub struct HeuristicConfig {
     /// elapsed > frac × budget 且有 incumbent ⇒ 停 dive（把尾段留给最优性
     /// 证明）。
     pub time_budget_frac: f64,
+    /// 停滞退避起始连续 miss 数 K：连续 miss < K 时节流与基础间隔完全
+    /// 一致；自第 K 个连续 miss 起有效间隔按 2 的幂翻倍（见
+    /// [`HeuristicController::effective_interval_nodes`]）。
+    pub backoff_start_misses: u32,
+    /// 停滞退避后有效间隔的封顶（节点数）。
+    pub max_interval_nodes: u64,
 }
 
 impl Default for HeuristicConfig {
-    /// 默认值：32/50/8/0.25/0.8。
+    /// 默认值：256/400/8/0.25/0.8 + 2/16384（2026-10 重调：dive 深预算化后
+    /// 单次成本 ↑ 两个数量级，节流与停滞阈值相应放宽；退避 K=2/封顶
+    /// 16384——k500 隔离实验：incumbent 已达 DP 最优后 stall 分支仍按基础
+    /// 间隔 256 反复 dive，节点吞吐 32.0k→18.1k/s（−43%）且 incumbent/bound
+    /// 零变化，故连续 miss 起指数拉开间隔）。
     fn default() -> Self {
         HeuristicConfig {
-            min_interval_nodes: 32,
-            stall_nodes: 50,
+            min_interval_nodes: 256,
+            stall_nodes: 400,
             hit_window: 8,
             keep_hit_rate: 0.25,
             time_budget_frac: 0.8,
+            backoff_start_misses: 2,
+            max_interval_nodes: 16384,
         }
     }
 }
@@ -203,6 +216,8 @@ pub struct HeuristicController {
     window: VecDeque<bool>,
     /// decide 最近一次看到的快照节点（record 的节流推进锚点）。
     last_seen_node: Cell<u64>,
+    /// 连续 miss 计数（停滞退避输入；任一 hit 复位 0，无上界）。
+    miss_streak: u32,
 }
 
 impl HeuristicController {
@@ -213,6 +228,7 @@ impl HeuristicController {
             last_run_node: 0,
             window: VecDeque::new(),
             last_seen_node: Cell::new(0),
+            miss_streak: 0,
         }
     }
 
@@ -223,13 +239,16 @@ impl HeuristicController {
     }
 
     /// 决策（可观察行为不改状态）：
-    /// 1. 节流未到（距上次运行 < min_interval_nodes）⇒ Skip；
+    /// 1. 节流未到（距上次运行 < 有效间隔：基础 `min_interval_nodes`，连续
+    ///    miss ≥ K 后指数退避、封顶 `max_interval_nodes`，见
+    ///    [`Self::effective_interval_nodes`]）⇒ Skip——位于 stall/hit_rate
+    ///    分支之前，退避期内 stall 达标也不放行；
     /// 2. 时间预算保护（有预算且有 incumbent 且 elapsed > frac×budget）⇒ Skip；
     /// 3. 无 incumbent，或 stall 达标（nodes_since_improvement ≥ stall_nodes），
     ///    或窗口命中率 ≥ keep_hit_rate ⇒ Run；否则 Skip。
     pub fn decide(&self, snap: &SearchSnapshot) -> HeuristicDecision {
         self.last_seen_node.set(snap.nodes);
-        if snap.nodes.saturating_sub(self.last_run_node) < self.cfg.min_interval_nodes {
+        if snap.nodes.saturating_sub(self.last_run_node) < self.effective_interval_nodes() {
             return HeuristicDecision::Skip;
         }
         if let Some(budget) = snap.time_budget_secs {
@@ -251,9 +270,41 @@ impl HeuristicController {
         HeuristicDecision::Skip
     }
 
+    /// 有效节流间隔（停滞退避）：
+    /// `min(min_interval_nodes × 2^shifts, max_interval_nodes)`，其中
+    /// `shifts = min(miss_streak − (K−1), 63)`（K = backoff_start_misses）。
+    ///
+    /// 行为：连续 miss < K 时 shifts = 0 ⇒ 与基础间隔完全一致；自第 K 个
+    /// 连续 miss 起每多一 miss 翻一倍（256→512→…），封顶 max_interval_nodes；
+    /// 任一 hit 将 miss_streak 复位 0 ⇒ 间隔还原。
+    ///
+    /// 移位饱和规范（评审红线）：miss_streak 无上界，裸
+    /// `1u64 << (miss_streak − K + 1)` 在 streak ≥ 65 时 debug 构建 panic、
+    /// release 静默取模（shift ≡ shift mod 64，可回退到 256）——故 shifts
+    /// 一律钳到 63，乘法用 saturating_mul（256 × 2^63 溢出时饱和为
+    /// u64::MAX），再与 max_interval_nodes 取 min，两端皆安全。
+    fn effective_interval_nodes(&self) -> u64 {
+        let shifts = self
+            .miss_streak
+            .saturating_sub(self.cfg.backoff_start_misses.saturating_sub(1))
+            .min(63);
+        self.cfg
+            .min_interval_nodes
+            .saturating_mul(1u64 << shifts)
+            .min(self.cfg.max_interval_nodes)
+    }
+
     /// 记录一次 dive 结果（`hit` = 是否产生新全局 incumbent）。
+    ///
+    /// 停滞退避：miss ⇒ `miss_streak + 1`、hit ⇒ 复位 0（下一次节流间隔经
+    /// [`Self::effective_interval_nodes`] 相应翻倍/还原）。
     pub fn record(&mut self, hit: bool) {
         self.last_run_node = self.last_seen_node.get();
+        if hit {
+            self.miss_streak = 0;
+        } else {
+            self.miss_streak = self.miss_streak.saturating_add(1);
+        }
         self.window.push_back(hit);
         while self.window.len() > self.cfg.hit_window {
             self.window.pop_front();
@@ -267,6 +318,131 @@ impl HeuristicController {
         }
         let hits = self.window.iter().filter(|h| **h).count();
         Some(hits as f64 / self.window.len() as f64)
+    }
+}
+
+// ===========================================================================
+// 伪代价分支（pseudocost branching；对顶点漂移鲁棒的分支打分）
+// ===========================================================================
+
+/// score 下限保护（f·p 为 0 时保留可比较的次序）。
+const PC_EPS: f64 = 1e-6;
+
+/// 伪代价分支统计（每个结构变量一个条目；纯数据、无线程——并行侧各
+/// worker 持本地实例，无全局锁）。
+///
+/// 打分：score(j) = max(f⁻·p⁻, ε) · max(f⁺·p⁺, ε)，取最大。f⁻ = x_j−⌊x_j⌋、
+/// f⁺ = ⌈x_j⌉−x_j；p 为该方向历史上「目标增益 / 分数距离」的均值。无观测
+/// 时 p = 1 ⇒ score = f⁻·f⁺（分数度乘积规则，中心分数优先）——比
+/// most-fractional 对最优基顶点漂移更鲁棒（强退化 LP 的大量可选顶点不再
+/// 系统性误导分支）。并列破键：min(f,1−f) 更接近 0.5 → 最小下标（确定性）。
+#[derive(Debug, Clone)]
+pub struct Pseudocosts {
+    down_sum: Vec<f64>,
+    down_n: Vec<u32>,
+    up_sum: Vec<f64>,
+    up_n: Vec<u32>,
+}
+
+impl Pseudocosts {
+    /// 全零初始化（长度 = 结构变量数）。
+    pub fn new(num_vars: usize) -> Self {
+        Pseudocosts {
+            down_sum: vec![0.0; num_vars],
+            down_n: vec![0; num_vars],
+            up_sum: vec![0.0; num_vars],
+            up_n: vec![0; num_vars],
+        }
+    }
+
+    fn p_down(&self, j: usize) -> f64 {
+        match self.down_n[j] {
+            0 => 1.0,
+            n => self.down_sum[j] / n as f64,
+        }
+    }
+
+    fn p_up(&self, j: usize) -> f64 {
+        match self.up_n[j] {
+            0 => 1.0,
+            n => self.up_sum[j] / n as f64,
+        }
+    }
+
+    /// 变量 j 的双方向可靠观测数：`min(down_n, up_n)`。
+    ///
+    /// 可靠性门控（强分支冷启动，η 阈值在调用方）以「两方向均有 ≥η 条
+    /// 观测」为可靠判据——任一方向缺观测即不可靠，min 恰是该判据的标量
+    /// 形式（0 = 至少一个方向从未观测过）。
+    pub fn n_obs(&self, j: usize) -> u32 {
+        self.down_n[j].min(self.up_n[j])
+    }
+
+    /// 方向化估计增益（best-estimate 子代压栈序用）：p 方向均值 × 该方向
+    /// 的分数距离（down: f = x−⌊x⌋；up: 1−f）。
+    ///
+    /// gain 语义 = 该方向分支引起的 LP 目标退化估计——更小 ⇒ 该子代估计
+    /// 目标更优。无观测方向 p = 1 ⇒ est = 分数距离（中性默认值与真实增益
+    /// 量级不可比，调用方须以观测存在性 [`Self::n_obs`] 门控比较）。
+    pub fn est_gain(&self, j: usize, up: bool, frac_dist: f64) -> f64 {
+        let p = if up { self.p_up(j) } else { self.p_down(j) };
+        p * frac_dist
+    }
+
+    /// 变量 j 在分数度 f∈(0,1) 下的分支得分。
+    pub fn score(&self, j: usize, f: f64) -> f64 {
+        (f * self.p_down(j)).max(PC_EPS) * ((1.0 - f) * self.p_up(j)).max(PC_EPS)
+    }
+
+    /// 记录一次观测（gain = 该子节点 LP 目标相对父节点的方向化增益 ÷
+    /// 该方向的分数距离；调用方滤非有限与负增益）。
+    pub fn record(&mut self, j: usize, up: bool, gain_per_frac: f64) {
+        if !gain_per_frac.is_finite() || gain_per_frac < 0.0 {
+            return;
+        }
+        if up {
+            self.up_sum[j] += gain_per_frac;
+            self.up_n[j] = self.up_n[j].saturating_add(1);
+        } else {
+            self.down_sum[j] += gain_per_frac;
+            self.down_n[j] = self.down_n[j].saturating_add(1);
+        }
+    }
+
+    /// 选分支变量：分数候选（f ∈ (tol, 1−tol)）中得分最大者；并列取
+    /// min(f,1−f) 更接近 0.5 者、再最小下标。返回 (变量下标, LP 取值)。
+    pub fn select(
+        &self,
+        int_vars: &[usize],
+        x: &[f64],
+        frac_tol: f64,
+    ) -> Option<(usize, f64)> {
+        let mut best: Option<(usize, f64, f64, f64)> = None; // (var, 值, score, 分数度)
+        for &j in int_vars {
+            let Some(&v) = x.get(j) else {
+                continue;
+            };
+            if !v.is_finite() {
+                continue;
+            }
+            let f = v - v.floor();
+            if f <= frac_tol || f >= 1.0 - frac_tol {
+                continue;
+            }
+            let score = self.score(j, f);
+            let centrality = f.min(1.0 - f);
+            let replace = match best {
+                None => true,
+                Some((_, _, s, c)) => {
+                    score > s
+                        || (score == s && (centrality > c))
+                }
+            };
+            if replace {
+                best = Some((j, v, score, centrality));
+            }
+        }
+        best.map(|(j, v, _, _)| (j, v))
     }
 }
 
@@ -401,15 +577,17 @@ impl AutoDegrade {
 mod tests {
     use super::*;
 
-    /// 默认参数逐字段符合契约（32/50/8/0.25/0.8）。
+    /// 默认参数逐字段符合契约（256/400/8/0.25/0.8 + 2/16384）。
     #[test]
     fn heuristic_config_default_values() {
         let c = HeuristicConfig::default();
-        assert_eq!(c.min_interval_nodes, 32);
-        assert_eq!(c.stall_nodes, 50);
+        assert_eq!(c.min_interval_nodes, 256);
+        assert_eq!(c.stall_nodes, 400);
         assert_eq!(c.hit_window, 8);
         assert_eq!(c.keep_hit_rate, 0.25);
         assert_eq!(c.time_budget_frac, 0.8);
+        assert_eq!(c.backoff_start_misses, 2, "退避起始 K=2（miss#1 行为不变）");
+        assert_eq!(c.max_interval_nodes, 16384, "退避封顶 16384");
     }
 
     /// 无记录 ⇒ hit_rate None；有记录按个数计。
@@ -447,9 +625,9 @@ mod tests {
             elapsed_secs: 0.0,
         };
         assert_eq!(c.decide(&snap), HeuristicDecision::Skip);
-        // 恰达间隔（差 == min_interval_nodes）⇒ 不再节流。
+        // 恰达间隔（差 == min_interval_nodes = 256）⇒ 不再节流。
         let snap = SearchSnapshot {
-            nodes: 33,
+            nodes: 257,
             incumbent: None,
             nodes_since_improvement: 0,
             time_budget_secs: None,
@@ -464,7 +642,7 @@ mod tests {
         let mut c = HeuristicController::new(HeuristicConfig::default());
         c.notify_root_done(1);
         let snap = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: None,
             nodes_since_improvement: 0,
             time_budget_secs: None,
@@ -479,18 +657,18 @@ mod tests {
         let mut c = HeuristicController::new(HeuristicConfig::default());
         c.notify_root_done(1);
         let snap = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
         assert_eq!(c.decide(&snap), HeuristicDecision::Run);
         // 差一条不达标 ⇒ Skip（无命中记录时）。
         let snap = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 49,
+            nodes_since_improvement: 399,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
@@ -508,7 +686,7 @@ mod tests {
         c.record(true);
         c.record(false); // 命中率 0.5
         let snap = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
             nodes_since_improvement: 0,
             time_budget_secs: None,
@@ -545,9 +723,9 @@ mod tests {
         c.notify_root_done(1);
         // 先让一次 decide（stall 达标）授权 dive，随后 8 次 miss。
         let snap = SearchSnapshot {
-            nodes: 60,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
@@ -556,7 +734,7 @@ mod tests {
             c.record(false);
         }
         let snap = SearchSnapshot {
-            nodes: 100,
+            nodes: 400,
             incumbent: Some(10.0),
             nodes_since_improvement: 0,
             time_budget_secs: None,
@@ -572,31 +750,158 @@ mod tests {
         let mut c = HeuristicController::new(HeuristicConfig::default());
         c.notify_root_done(1);
         let run = SearchSnapshot {
-            nodes: 60,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
         assert_eq!(c.decide(&run), HeuristicDecision::Run);
         c.record(false);
-        // dive 在节点 60 运行过：节点 61–91 均节流 Skip（即使 stall 达标）。
+        // dive 在节点 300 运行过：其后 255 个节点内均节流 Skip（即使 stall 达标）。
         let snap = SearchSnapshot {
-            nodes: 91,
+            nodes: 555,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
-        assert_eq!(c.decide(&snap), HeuristicDecision::Skip, "61 + 32 − 1 = 92 前均节流");
+        assert_eq!(c.decide(&snap), HeuristicDecision::Skip, "300 + 256 − 1 = 555 前均节流");
         let snap = SearchSnapshot {
-            nodes: 92,
+            nodes: 556,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 0.0,
         };
-        assert_eq!(c.decide(&snap), HeuristicDecision::Run, "距节点 60 恰 32 ⇒ 放行");
+        assert_eq!(c.decide(&snap), HeuristicDecision::Run, "距节点 300 恰 256 ⇒ 放行");
+    }
+
+    // —— 停滞退避（backoff：连续 miss ≥ K 起指数回退、命中复位）——
+
+    /// stall 恒达标的快照（隔离退避节流行为，排除其它分支干扰）。
+    fn stall_snap(nodes: u64) -> SearchSnapshot {
+        SearchSnapshot {
+            nodes,
+            incumbent: Some(10.0),
+            nodes_since_improvement: 400,
+            time_budget_secs: None,
+            elapsed_secs: 0.0,
+        }
+    }
+
+    /// 退避翻倍序列：miss#1 间隔不变，miss#2（K=2）起 256→512→1024→…
+    /// →16384 封顶，此后恒 16384。
+    #[test]
+    fn backoff_doubling_sequence_from_second_miss() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        // 下标 = 当前连续 miss 数；值 = 其后下一次 dive 的有效节流间隔。
+        let expect = [256, 256, 512, 1024, 2048, 4096, 8192, 16384, 16384];
+        for (misses, &eff) in expect.iter().enumerate() {
+            assert_eq!(
+                c.effective_interval_nodes(),
+                eff,
+                "连续 miss={misses} 后的有效间隔"
+            );
+            c.record(false);
+        }
+    }
+
+    /// 行为级验证：2 连 miss 后放行边界从锚点 +256 移到 +512。
+    #[test]
+    fn backoff_gate_moves_with_miss_streak() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        c.notify_root_done(1);
+        assert_eq!(c.decide(&stall_snap(300)), HeuristicDecision::Run);
+        c.record(false);
+        c.record(false); // streak=2 ⇒ eff=512，锚点 300
+        assert_eq!(
+            c.decide(&stall_snap(811)),
+            HeuristicDecision::Skip,
+            "811−300=511 < 512 ⇒ 节流"
+        );
+        assert_eq!(
+            c.decide(&stall_snap(812)),
+            HeuristicDecision::Run,
+            "812−300=512 恰达退避间隔 ⇒ 放行"
+        );
+    }
+
+    /// 任一 hit ⇒ streak 复位 0 ⇒ 间隔还原基础 256；再 2 连 miss 又到 512
+    /// （序列只看当前连 miss，不受历史影响）。
+    #[test]
+    fn backoff_hit_resets_streak() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        for _ in 0..6 {
+            c.record(false); // streak=6 ⇒ eff=8192
+        }
+        assert_eq!(c.effective_interval_nodes(), 8192);
+        c.record(true);
+        assert_eq!(c.effective_interval_nodes(), 256, "hit 复位 ⇒ 基础间隔");
+        c.record(false);
+        c.record(false);
+        assert_eq!(c.effective_interval_nodes(), 512);
+    }
+
+    /// stall 达标但处于退避节流期内 ⇒ Skip（节流检查在 stall 分支之前，
+    /// 天然覆盖『stall 达标即放行』的泄漏）；恰达退避间隔 ⇒ Run。
+    #[test]
+    fn backoff_skips_despite_stall_qualified() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        c.notify_root_done(1);
+        assert_eq!(c.decide(&stall_snap(300)), HeuristicDecision::Run);
+        for _ in 0..4 {
+            c.record(false); // streak=4 ⇒ eff=2048，锚点 300
+        }
+        // 若仍为基础间隔 256，节点 2000（差 1700）会 Run；退避期 2048 内 Skip。
+        assert_eq!(
+            c.decide(&stall_snap(2000)),
+            HeuristicDecision::Skip,
+            "stall 达标但在退避间隔 2048 内 ⇒ Skip"
+        );
+        assert_eq!(
+            c.decide(&stall_snap(2348)),
+            HeuristicDecision::Run,
+            "300+2048 恰达退避间隔 ⇒ 放行"
+        );
+    }
+
+    /// miss#1 行为不变（K=2 钉死）：1 连 miss 后放行边界仍恰为基础 256
+    /// （与既有 record_advances_throttle_anchor 同边界，另附 eff 断言）。
+    #[test]
+    fn backoff_first_miss_keeps_base_interval() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        c.notify_root_done(1);
+        assert_eq!(c.decide(&stall_snap(300)), HeuristicDecision::Run);
+        c.record(false);
+        assert_eq!(c.effective_interval_nodes(), 256, "miss#1 ⇒ 基础间隔不变");
+        assert_eq!(
+            c.decide(&stall_snap(555)),
+            HeuristicDecision::Skip,
+            "300+255 仍节流（与无退避完全一致）"
+        );
+        assert_eq!(
+            c.decide(&stall_snap(556)),
+            HeuristicDecision::Run,
+            "300+256 恰放行（与无退避完全一致）"
+        );
+    }
+
+    /// 移位饱和压测：200 连 miss（streak ≫ 64，裸 `<<` 将在 debug 构建
+    /// panic）⇒ streak 无上界递增、有效间隔自 miss#7 起恒为封顶 16384。
+    #[test]
+    fn backoff_shift_saturation_200_misses() {
+        let mut c = HeuristicController::new(HeuristicConfig::default());
+        for i in 1..=200u32 {
+            c.record(false);
+            assert_eq!(c.miss_streak, i, "streak 随 miss 无上界递增");
+            if i >= 7 {
+                assert_eq!(c.effective_interval_nodes(), 16384, "miss#{i} 已封顶");
+            }
+        }
+        // streak=200：shifts = 200−1 = 199 → 钳 63；256 × 2^63 saturating_mul
+        // 饱和 ⇒ min(饱和值, 16384) = 16384，无溢出 panic、无静默取模回退。
+        assert_eq!(c.effective_interval_nodes(), 16384);
     }
 
     /// 时间预算保护双分支：
@@ -608,32 +913,32 @@ mod tests {
         let mut c = HeuristicController::new(HeuristicConfig::default());
         c.notify_root_done(1);
         let stall = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: Some(100.0),
             elapsed_secs: 80.000001, // > 0.8 × 100
         };
         assert_eq!(c.decide(&stall), HeuristicDecision::Skip, "尾段预算保护");
         let not_yet = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: Some(100.0),
             elapsed_secs: 80.0, // == frac×budget，未超
         };
         assert_eq!(c.decide(&not_yet), HeuristicDecision::Run);
         let no_budget = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: Some(10.0),
-            nodes_since_improvement: 50,
+            nodes_since_improvement: 400,
             time_budget_secs: None,
             elapsed_secs: 1e9,
         };
         assert_eq!(c.decide(&no_budget), HeuristicDecision::Run, "无预算不保护");
         // 有预算但无 incumbent：不保护（仍 Run）。
         let no_inc = SearchSnapshot {
-            nodes: 100,
+            nodes: 300,
             incumbent: None,
             nodes_since_improvement: 0,
             time_budget_secs: Some(1.0),
@@ -880,5 +1185,58 @@ mod tests {
         assert!((c.start_frac - 0.5).abs() < 1e-12);
         assert!((c.plateau_frac - 0.25).abs() < 1e-12);
         assert!((c.bound_progress_rel - 0.01).abs() < 1e-12);
+    }
+
+    // —— 伪代价分支（Pseudocosts：n_obs / est_gain / select）——
+
+    /// n_obs = min(down_n, up_n)：任一方向缺观测即不可靠（0）；双方向
+    /// 均有观测取较小侧。
+    #[test]
+    fn pseudocosts_n_obs_is_directional_min() {
+        let mut pc = Pseudocosts::new(2);
+        assert_eq!(pc.n_obs(0), 0, "无观测 ⇒ 0");
+        assert_eq!(pc.n_obs(1), 0);
+        pc.record(0, false, 3.0);
+        pc.record(0, false, 4.0);
+        assert_eq!(pc.n_obs(0), 0, "上行仍无观测 ⇒ min = 0");
+        pc.record(0, true, 5.0);
+        assert_eq!(pc.n_obs(0), 1, "双方向均有 ⇒ min(2,1) = 1");
+        assert_eq!(pc.n_obs(1), 0);
+        // 非有限与负增益被拒（record 过滤）⇒ 不计观测。
+        pc.record(1, true, f64::NAN);
+        pc.record(1, true, -1.0);
+        assert_eq!(pc.n_obs(1), 0);
+    }
+
+    /// est_gain：p 方向均值 × 分数距离；无观测方向 p = 1 ⇒ est = 分数距离。
+    #[test]
+    fn pseudocosts_est_gain_directional_mean() {
+        let mut pc = Pseudocosts::new(1);
+        // 无观测：down est = 0.3×1、up est = 0.7×1。
+        assert!((pc.est_gain(0, false, 0.3) - 0.3).abs() < 1e-12);
+        assert!((pc.est_gain(0, true, 0.7) - 0.7).abs() < 1e-12);
+        // down 方向两条观测均值 = (2+4)/2 = 3 ⇒ est = 3×0.3 = 0.9。
+        pc.record(0, false, 2.0);
+        pc.record(0, false, 4.0);
+        assert!((pc.est_gain(0, false, 0.3) - 0.9).abs() < 1e-12);
+        // up 方向仍无观测（p=1）不受 down 观测影响。
+        assert!((pc.est_gain(0, true, 0.7) - 0.7).abs() < 1e-12);
+    }
+
+    /// select：分数候选过滤（f ∈ (tol, 1−tol)）、得分比较与并列破键。
+    #[test]
+    fn pseudocosts_select_filters_and_ties() {
+        let mut pc = Pseudocosts::new(3);
+        // 无观测 ⇒ score = f⁻·f⁺ 乘积：0.25(0.5) > 0.16(0.2) ⇒ 变量 0。
+        let iv = [0usize, 1, 2];
+        assert_eq!(pc.select(&iv, &[1.5, 1.2, 3.0], 1e-6), Some((0, 1.5)));
+        // 精确并列（0.25/0.25）：min(f,1−f) 相同 ⇒ 最小下标。
+        assert_eq!(pc.select(&iv, &[1.25, 3.75, 0.0], 1e-6), Some((0, 1.25)));
+        // 观测改变得分：变量 1 的 down 方向大增益 ⇒ 乘积胜出。
+        pc.record(1, false, 100.0);
+        assert_eq!(pc.select(&iv, &[1.5, 1.2, 3.0], 1e-6), Some((1, 1.2)));
+        // 容差内整数（f ≤ tol 或 ≥ 1−tol）不是候选；全部整数 ⇒ None。
+        assert_eq!(pc.select(&iv, &[2.0, 3.0, 4.0], 1e-6), None);
+        assert_eq!(pc.select(&[], &[1.5], 1e-6), None);
     }
 }

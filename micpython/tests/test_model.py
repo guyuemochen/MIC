@@ -6,6 +6,7 @@
 - lb 非有限（-∞）在 FFI 层拒绝（码 9）→ ArgumentError。
 """
 
+import ctypes
 import unittest
 
 from micpython import (
@@ -18,6 +19,7 @@ from micpython import (
     ModelError,
     Status,
 )
+from micpython import _ffi
 
 # 与 milp/src/model.rs:62-75 的 RESERVED_WORDS 一致（.milp 语法保留字）。
 RESERVED_WORDS = (
@@ -111,6 +113,91 @@ class ModelBuildingTests(unittest.TestCase):
         with self.assertRaises(ModelError):
             self.m.addVars(2, name='x')
         self.assertEqual(self.m.NumVars, 3, '第二次 addVars 整体失败不留列')
+
+
+class SetObjectiveAtomicityTests(unittest.TestCase):
+    """B2 回归：setObjective 被 FFI 拒绝时目标方向零突变（FFI 与镜像同步）。"""
+
+    def setUp(self):
+        self.m = Model('objective-atomicity', MINIMIZE)
+
+    def tearDown(self):
+        self.m.dispose()
+
+    def test_ffi_set_objective_out_of_range_keeps_sense_minimize(self):
+        # ctypes 直调 FFI（绕过 core.py）：MINIMIZE 模型上越界 set_objective
+        # 携 sense=2(MAXIMIZE) → 码 2；旧实现在校验前已翻 problem.sense。
+        lib = _ffi._lib()
+        x = self.m.addVar(lb=0.0, ub=1.0, name='x')
+        bad_idx = (ctypes.c_uint32 * 1)(7)
+        coef = (ctypes.c_double * 1)(1.0)
+        rc = lib.milp_ffi_set_objective(self.m._handle, bad_idx, coef, 1, 2, 0.0)
+        self.assertEqual(rc, 2, '越界目标项 → FFI 码 2（ERR_INVALID_MODEL）')
+        # 合法重设也用 ctypes 直调且 sense=0（保持现状）——不走公共 API
+        # （公共 API 会重发显式 sense，掩盖被翻的方向）。
+        ok_idx = (ctypes.c_uint32 * 1)(x._index)
+        rc2 = lib.milp_ffi_set_objective(self.m._handle, ok_idx, coef, 1, 0, 0.0)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(self.m.optimize(), Status.OPTIMAL)
+        self.assertAlmostEqual(self.m.ObjVal, 0.0, delta=1e-9,
+                               msg='sense 须保持 MINIMIZE（ObjVal=1.0 即已被翻为 MAXIMIZE）')
+
+    def test_rejected_set_objective_keeps_python_sense_mirror(self):
+        # 公共 API 路径：inf 系数被 FFI 拒（码 9 → ArgumentError）时，
+        # Python 镜像 _sense 也不得先翻（与 FFI problem.sense 同步零突变）。
+        x = self.m.addVar(lb=0.0, ub=1.0, name='x')
+        with self.assertRaises(ArgumentError):
+            self.m.setObjective(INF * x, MAXIMIZE)
+        # 镜像仍 MINIMIZE：后续 sense=None 的 setObjective 不得翻转方向。
+        self.m.setObjective(x)
+        self.assertEqual(self.m.optimize(), Status.OPTIMAL)
+        self.assertAlmostEqual(self.m.ObjVal, 0.0, delta=1e-9,
+                               msg='镜像 _sense 须保持 MINIMIZE（ObjVal=1.0 即镜像已被翻）')
+
+
+class NulNameRejectionTests(unittest.TestCase):
+    """B3 回归：含内嵌 NUL 的字符串入口统一拒绝（ArgumentError 且为 ValueError）。
+
+    不拦截则 FFI 的 CStr 在首个 NUL 截断而 Python 镜像保留全名，两侧静默
+    分叉（实证：addVar(name='a\\x00b') 后 FFI 实存截断名 'a'，
+    getVarByName('a') 返回 None 但 addVar(name='a') 报重名）。
+    """
+
+    def setUp(self):
+        self.m = Model('nul-tests')
+
+    def tearDown(self):
+        self.m.dispose()
+
+    def assert_nul_rejected(self, callable_, *args, **kwargs):
+        with self.assertRaises(ArgumentError) as ctx:
+            callable_(*args, **kwargs)
+        self.assertIsInstance(ctx.exception, ValueError,
+                              '含 NUL 的参数错误须可按 ValueError 捕获')
+        self.assertIn('NUL', str(ctx.exception), '消息须点名 NUL 原因')
+
+    def test_model_name_with_nul_rejected(self):
+        self.assert_nul_rejected(Model, 'a\x00b')
+
+    def test_addvar_name_with_nul_rejected_no_residual(self):
+        self.assert_nul_rejected(self.m.addVar, name='a\x00b')
+        self.assertEqual(self.m.NumVars, 0, '被拒 addVar 不留残余列')
+        # 反转原 bug 场景：合法名 'a' 不被截断残影顶撞（不再误报重名）。
+        self.m.addVar(name='a')
+
+    def test_addvars_prefix_with_nul_rejected(self):
+        self.assert_nul_rejected(self.m.addVars, 3, name='x\x00')
+        self.assertEqual(self.m.NumVars, 0, '被拒 addVars 不留残余列')
+
+    def test_addconstr_name_with_nul_rejected(self):
+        v = self.m.addVar(name='v')
+        self.assert_nul_rejected(self.m.addConstr, v <= 1, 'c\x00d')
+        self.assertEqual(self.m.NumConstrs, 0, '被拒 addConstr 不留残余行')
+
+    def test_setparam_str_value_with_nul_rejected(self):
+        self.assert_nul_rejected(self.m.setParam, 'HeuristicMode', 'on\x00off')
+        self.assertEqual(self.m.getParam('HeuristicMode'), 'on',
+                         '被拒值不污染镜像（默认 on 保持）')
 
 
 if __name__ == '__main__':

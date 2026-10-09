@@ -26,6 +26,8 @@ MIC/
 │   ├── examples/       knapsack.py 端到端示例
 │   ├── tests/          Python unittest 套件（已知最优/状态/参数/句柄）
 │   └── README.md       安装前置与完整 API 参考
+├── bench/              大规模基准算例与生成器（gen_instances.py，种子确定；
+│   └── instances/      背包 200/500（附 DP 核对最优）、多背包、指派、混合 MILP、宽 LP）
 ├── docs/
 │   └── 交付报告.md      验证结果、评审发现（含证据与状态）、未覆盖范围
 └── README.md           本文件

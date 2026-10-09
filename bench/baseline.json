@@ -1,0 +1,825 @@
+{
+  "_format": "bench/baseline.json —— 第 3 轮基准画像（2026-10-09，Windows/14 逻辑核）。13 算例 = 旧 7 + 新 6（marketsplit-2x20/4x30、setcover-60x100/100x150、knapsack-2000、mknap-5x300，规模经 90s/threads=1 终态标定，种子确定）。timings[]: 每算例×threads{1,4}，快 3 次/慢 2 次重复，wall_secs 取中位；统一 time-limit 90s（本轮协议变更；旧基线的 knapsack-500 无上限跑满 200 万节点 125s——当前工作区代码已能在 776 节点证最优，旧数字全面过时）。测量工具：milp/examples/profile_stats.rs（临时，画像后删除）——库 API solve_controlled 复刻 CLI 默认选项（MostFractional/DepthFirst/node_limit=2M/root_cuts/heuristics=auto/dive 4096/presolve on）+ 90s 上限，输出 stats.lp_iterations；CLI 抽查逐字段一致（marketsplit-4x30 t1: 395095 节点/obj 15；setcover-60x100 t1: 1 节点/obj 243）。原始逐次数据：bench/raw_runs.jsonl。experiments[]: 隔离实验（非计时基线）。",
+  "machine": {
+    "logical_cores": 14,
+    "os": "win32",
+    "toolchain": "cargo release (default profile)"
+  },
+  "timings": [
+    {
+      "instance": "assign-16x16",
+      "class": "assign(指派)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.001199,
+        0.001304,
+        0.001622
+      ],
+      "wall_secs": 0.001304,
+      "nodes": 1,
+      "objective": 165.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 217,
+      "cuts": 0,
+      "stats_time_ms": 1,
+      "bound": 165.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 766.9,
+      "iter_density_per_node": 217.0,
+      "per_node_us": 1304.0,
+      "lp_iter_per_sec": 166411.0
+    },
+    {
+      "instance": "assign-16x16",
+      "class": "assign(指派)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.001166,
+        0.001182,
+        0.001303
+      ],
+      "wall_secs": 0.001182,
+      "nodes": 1,
+      "objective": 165.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 217,
+      "cuts": 0,
+      "stats_time_ms": 1,
+      "bound": 165.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 846.0,
+      "iter_density_per_node": 217.0,
+      "per_node_us": 1182.0,
+      "lp_iter_per_sec": 183587.0
+    },
+    {
+      "instance": "knapsack-200",
+      "class": "knapsack(强相关单约束背包)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.009963,
+        0.010337,
+        0.01096
+      ],
+      "wall_secs": 0.010337,
+      "nodes": 702,
+      "objective": 3409.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 3039,
+      "cuts": 12,
+      "stats_time_ms": 10,
+      "bound": 3409.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 67911.4,
+      "iter_density_per_node": 4.329,
+      "per_node_us": 14.73,
+      "lp_iter_per_sec": 293992.0
+    },
+    {
+      "instance": "knapsack-200",
+      "class": "knapsack(强相关单约束背包)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.005702,
+        0.009529,
+        0.010454
+      ],
+      "wall_secs": 0.009529,
+      "nodes": 782,
+      "objective": 3409.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 5360,
+      "cuts": 12,
+      "stats_time_ms": 9,
+      "bound": 3409.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 82065.3,
+      "iter_density_per_node": 6.854,
+      "per_node_us": 12.19,
+      "lp_iter_per_sec": 562493.0
+    },
+    {
+      "instance": "knapsack-2000",
+      "class": "knapsack(强相关单约束背包·大规模)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.544609,
+        0.549643,
+        0.568035
+      ],
+      "wall_secs": 0.549643,
+      "nodes": 594,
+      "objective": 35328.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 29085,
+      "cuts": 12,
+      "stats_time_ms": 549,
+      "bound": 35328.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 1080.7,
+      "iter_density_per_node": 48.965,
+      "per_node_us": 925.32,
+      "lp_iter_per_sec": 52916.0
+    },
+    {
+      "instance": "knapsack-2000",
+      "class": "knapsack(强相关单约束背包·大规模)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.283857,
+        0.29754,
+        0.312179
+      ],
+      "wall_secs": 0.29754,
+      "nodes": 49,
+      "objective": 35328.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 16890,
+      "cuts": 12,
+      "stats_time_ms": 296,
+      "bound": 35328.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 164.7,
+      "iter_density_per_node": 344.694,
+      "per_node_us": 6072.24,
+      "lp_iter_per_sec": 56765.0
+    },
+    {
+      "instance": "knapsack-500",
+      "class": "knapsack(强相关单约束背包)",
+      "threads": 1,
+      "reps": 2,
+      "wall_secs_all": [
+        0.019172,
+        0.019516
+      ],
+      "wall_secs": 0.019344,
+      "nodes": 360,
+      "objective": 8975.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 2
+      },
+      "lp_iterations": 3902,
+      "cuts": 13,
+      "stats_time_ms": 19,
+      "bound": 8975.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 18610.4,
+      "iter_density_per_node": 10.839,
+      "per_node_us": 53.73,
+      "lp_iter_per_sec": 201716.0
+    },
+    {
+      "instance": "knapsack-500",
+      "class": "knapsack(强相关单约束背包)",
+      "threads": 4,
+      "reps": 2,
+      "wall_secs_all": [
+        0.02405,
+        0.026015
+      ],
+      "wall_secs": 0.025032,
+      "nodes": 546,
+      "objective": 8975.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 2
+      },
+      "lp_iterations": 5445,
+      "cuts": 13,
+      "stats_time_ms": 23,
+      "bound": 8975.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 21811.6,
+      "iter_density_per_node": 9.973,
+      "per_node_us": 45.85,
+      "lp_iter_per_sec": 217517.0
+    },
+    {
+      "instance": "lp-wide-200x300",
+      "class": "lp-wide(纯LP)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.008892,
+        0.009044,
+        0.009691
+      ],
+      "wall_secs": 0.009044,
+      "nodes": 1,
+      "objective": 112.668615,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 93,
+      "cuts": 0,
+      "stats_time_ms": 7,
+      "bound": 112.668615,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 110.6,
+      "iter_density_per_node": 93.0,
+      "per_node_us": 9044.0,
+      "lp_iter_per_sec": 10283.0
+    },
+    {
+      "instance": "lp-wide-200x300",
+      "class": "lp-wide(纯LP)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.007923,
+        0.008303,
+        0.008335
+      ],
+      "wall_secs": 0.008303,
+      "nodes": 1,
+      "objective": 112.668615,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 93,
+      "cuts": 0,
+      "stats_time_ms": 7,
+      "bound": 112.668615,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 120.4,
+      "iter_density_per_node": 93.0,
+      "per_node_us": 8303.0,
+      "lp_iter_per_sec": 11201.0
+    },
+    {
+      "instance": "marketsplit-2x20",
+      "class": "marketsplit(等式市场分割)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.018925,
+        0.020289,
+        0.020694
+      ],
+      "wall_secs": 0.020289,
+      "nodes": 5247,
+      "objective": 10.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 19881,
+      "cuts": 13,
+      "stats_time_ms": 20,
+      "bound": 10.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 258613.0,
+      "iter_density_per_node": 3.789,
+      "per_node_us": 3.87,
+      "lp_iter_per_sec": 979891.0
+    },
+    {
+      "instance": "marketsplit-2x20",
+      "class": "marketsplit(等式市场分割)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.007848,
+        0.009033,
+        0.009814
+      ],
+      "wall_secs": 0.009033,
+      "nodes": 4596,
+      "objective": 10.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 18706,
+      "cuts": 13,
+      "stats_time_ms": 8,
+      "bound": 10.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 508801.1,
+      "iter_density_per_node": 4.07,
+      "per_node_us": 1.97,
+      "lp_iter_per_sec": 2070851.0
+    },
+    {
+      "instance": "marketsplit-4x30",
+      "class": "marketsplit(等式市场分割)",
+      "threads": 1,
+      "reps": 2,
+      "wall_secs_all": [
+        0.15218,
+        0.155348
+      ],
+      "wall_secs": 0.153764,
+      "nodes": 12132,
+      "objective": 15.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 2
+      },
+      "lp_iterations": 119631,
+      "cuts": 22,
+      "stats_time_ms": 152,
+      "bound": 15.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 78900.1,
+      "iter_density_per_node": 9.861,
+      "per_node_us": 12.67,
+      "lp_iter_per_sec": 778017.0
+    },
+    {
+      "instance": "marketsplit-4x30",
+      "class": "marketsplit(等式市场分割)",
+      "threads": 4,
+      "reps": 2,
+      "wall_secs_all": [
+        0.231122,
+        0.248511
+      ],
+      "wall_secs": 0.239816,
+      "nodes": 47922,
+      "objective": 15.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 2
+      },
+      "lp_iterations": 449965,
+      "cuts": 22,
+      "stats_time_ms": 231,
+      "bound": 15.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 199827.8,
+      "iter_density_per_node": 9.39,
+      "per_node_us": 5.0,
+      "lp_iter_per_sec": 1876289.0
+    },
+    {
+      "instance": "milp-mixed-120i30c",
+      "class": "mixed(一般MILP)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.0062,
+        0.006222,
+        0.006726
+      ],
+      "wall_secs": 0.006222,
+      "nodes": 49,
+      "objective": 980.853268,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 1119,
+      "cuts": 14,
+      "stats_time_ms": 6,
+      "bound": 980.853268,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 7875.3,
+      "iter_density_per_node": 22.837,
+      "per_node_us": 126.98,
+      "lp_iter_per_sec": 179846.0
+    },
+    {
+      "instance": "milp-mixed-120i30c",
+      "class": "mixed(一般MILP)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.005453,
+        0.005752,
+        0.00671
+      ],
+      "wall_secs": 0.005752,
+      "nodes": 51,
+      "objective": 980.853268,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 1155,
+      "cuts": 14,
+      "stats_time_ms": 5,
+      "bound": 980.853268,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 8866.5,
+      "iter_density_per_node": 22.647,
+      "per_node_us": 112.78,
+      "lp_iter_per_sec": 200800.0
+    },
+    {
+      "instance": "milp-mixed-250i40c",
+      "class": "mixed(一般MILP)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.018621,
+        0.018801,
+        0.019624
+      ],
+      "wall_secs": 0.018801,
+      "nodes": 53,
+      "objective": 1275.791752,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 1704,
+      "cuts": 13,
+      "stats_time_ms": 18,
+      "bound": 1275.791752,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 2819.0,
+      "iter_density_per_node": 32.151,
+      "per_node_us": 354.74,
+      "lp_iter_per_sec": 90633.0
+    },
+    {
+      "instance": "milp-mixed-250i40c",
+      "class": "mixed(一般MILP)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.01786,
+        0.020147,
+        0.020412
+      ],
+      "wall_secs": 0.020147,
+      "nodes": 53,
+      "objective": 1275.791752,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 1893,
+      "cuts": 13,
+      "stats_time_ms": 19,
+      "bound": 1275.791752,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 2630.7,
+      "iter_density_per_node": 35.717,
+      "per_node_us": 380.13,
+      "lp_iter_per_sec": 93959.0
+    },
+    {
+      "instance": "mknap-3x100",
+      "class": "mknap(多维背包)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.198725,
+        0.202961,
+        0.213275
+      ],
+      "wall_secs": 0.202961,
+      "nodes": 6825,
+      "objective": 2331.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 46547,
+      "cuts": 34,
+      "stats_time_ms": 202,
+      "bound": 2331.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 33627.2,
+      "iter_density_per_node": 6.82,
+      "per_node_us": 29.74,
+      "lp_iter_per_sec": 229340.0
+    },
+    {
+      "instance": "mknap-3x100",
+      "class": "mknap(多维背包)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.110411,
+        0.110694,
+        0.112699
+      ],
+      "wall_secs": 0.110694,
+      "nodes": 11139,
+      "objective": 2331.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 66514,
+      "cuts": 34,
+      "stats_time_ms": 110,
+      "bound": 2331.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 100628.8,
+      "iter_density_per_node": 5.971,
+      "per_node_us": 9.94,
+      "lp_iter_per_sec": 600882.0
+    },
+    {
+      "instance": "mknap-5x300",
+      "class": "mknap(多维背包·大规模)",
+      "threads": 1,
+      "reps": 2,
+      "wall_secs_all": [
+        45.001081,
+        45.001963
+      ],
+      "wall_secs": 45.001522,
+      "nodes": 140710,
+      "objective": 4751.0,
+      "status": "auto_degraded",
+      "status_all": {
+        "auto_degraded": 2
+      },
+      "lp_iterations": 1647499,
+      "cuts": 42,
+      "stats_time_ms": 45000,
+      "bound": 4773.720144,
+      "gap_percent_at_stop": 0.478218,
+      "node_throughput_per_sec": 3126.8,
+      "iter_density_per_node": 11.708,
+      "per_node_us": 319.82,
+      "lp_iter_per_sec": 36610.0
+    },
+    {
+      "instance": "mknap-5x300",
+      "class": "mknap(多维背包·大规模)",
+      "threads": 4,
+      "reps": 2,
+      "wall_secs_all": [
+        19.8973,
+        29.71401
+      ],
+      "wall_secs": 24.805655,
+      "nodes": 391182,
+      "objective": 4762.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 2
+      },
+      "lp_iterations": 4803641,
+      "cuts": 42,
+      "stats_time_ms": 29713,
+      "bound": 4762.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 15769.9,
+      "iter_density_per_node": 12.28,
+      "per_node_us": 63.41,
+      "lp_iter_per_sec": 193651.0
+    },
+    {
+      "instance": "setcover-100x150",
+      "class": "setcover(集合覆盖)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.535112,
+        0.553567,
+        0.586258
+      ],
+      "wall_secs": 0.553567,
+      "nodes": 45,
+      "objective": 276.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 16694,
+      "cuts": 0,
+      "stats_time_ms": 553,
+      "bound": 276.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 81.3,
+      "iter_density_per_node": 370.978,
+      "per_node_us": 12301.49,
+      "lp_iter_per_sec": 30157.0
+    },
+    {
+      "instance": "setcover-100x150",
+      "class": "setcover(集合覆盖)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.530291,
+        0.547647,
+        0.550399
+      ],
+      "wall_secs": 0.547647,
+      "nodes": 54,
+      "objective": 276.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 19070,
+      "cuts": 0,
+      "stats_time_ms": 547,
+      "bound": 276.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 98.6,
+      "iter_density_per_node": 353.148,
+      "per_node_us": 10141.61,
+      "lp_iter_per_sec": 34822.0
+    },
+    {
+      "instance": "setcover-60x100",
+      "class": "setcover(集合覆盖)",
+      "threads": 1,
+      "reps": 3,
+      "wall_secs_all": [
+        0.003914,
+        0.004004,
+        0.004257
+      ],
+      "wall_secs": 0.004004,
+      "nodes": 1,
+      "objective": 243.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 277,
+      "cuts": 0,
+      "stats_time_ms": 3,
+      "bound": 243.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 249.8,
+      "iter_density_per_node": 277.0,
+      "per_node_us": 4004.0,
+      "lp_iter_per_sec": 69181.0
+    },
+    {
+      "instance": "setcover-60x100",
+      "class": "setcover(集合覆盖)",
+      "threads": 4,
+      "reps": 3,
+      "wall_secs_all": [
+        0.003763,
+        0.003783,
+        0.003794
+      ],
+      "wall_secs": 0.003783,
+      "nodes": 1,
+      "objective": 243.0,
+      "status": "optimal",
+      "status_all": {
+        "optimal": 3
+      },
+      "lp_iterations": 277,
+      "cuts": 0,
+      "stats_time_ms": 3,
+      "bound": 243.0,
+      "gap_percent_at_stop": null,
+      "node_throughput_per_sec": 264.3,
+      "iter_density_per_node": 277.0,
+      "per_node_us": 3783.0,
+      "lp_iter_per_sec": 73222.0
+    }
+  ],
+  "knapsack_dp_check": {
+    "knapsack-200": {
+      "dp_optimal": 3409,
+      "solver_objective_t1": 3409,
+      "matches": true,
+      "proved_optimal": true
+    },
+    "knapsack-500": {
+      "dp_optimal": 8975,
+      "solver_objective_t1": 8975,
+      "matches": true,
+      "proved_optimal": true
+    },
+    "knapsack-2000": {
+      "dp_optimal": 35328,
+      "solver_objective_t1": 35328,
+      "matches": true,
+      "proved_optimal": true
+    }
+  },
+  "experiments": {
+    "branch_rule_pseudocost_isolation_t1": {
+      "desc": "BranchRule::Pseudocost vs 默认 MostFractional（profile_stats --branch-rule；CLI 默认硬编码 MostFractional 于 main.rs:298）。",
+      "marketsplit-4x30": {
+        "mostfractional_median": {
+          "wall_secs": 8.281,
+          "nodes": 395095,
+          "lp_iterations": 3348919
+        },
+        "pseudocost": {
+          "wall_secs": 4.587,
+          "nodes": 299280,
+          "lp_iterations": 2849031,
+          "status": "optimal",
+          "objective": 15
+        },
+        "conclusion": "节点 −24%（395k→299k）、墙钟 −45%（8.3s→4.6s）、迭代 −15%。"
+      },
+      "mknap-5x300": {
+        "mostfractional_90s": {
+          "wall_secs": 82.0,
+          "nodes": 336610,
+          "status": "limit_reached/auto_degraded 摆动",
+          "objective": 4752,
+          "bound": 4773.624886,
+          "gap_percent": 0.455
+        },
+        "pseudocost_90s": {
+          "wall_secs": 74.577,
+          "nodes": 371665,
+          "status": "optimal",
+          "objective": 4762,
+          "bound": 4762
+        },
+        "conclusion": "Pseudocost 在同预算内证得最优 4762（MostFractional 90s 未达该 incumbent 且 gap 0.46% 不闭合）——分支规则是当前树规模的第一杠杆。"
+      }
+    },
+    "mknap-5x300_adaptive_dive_30s_t1": {
+      "desc": "30s 预算、threads=1：adaptive=0（仅根启发式） vs adaptive=1（默认 auto）。",
+      "adaptive0_root_only": {
+        "wall_secs": 30.000492,
+        "nodes": 156110,
+        "lp_iterations": 1728380,
+        "node_rate_per_sec": 5203.7,
+        "iter_per_node": 11.07,
+        "status": "limit_reached",
+        "objective": 4737,
+        "bound": 4773.624886
+      },
+      "adaptive1_auto": {
+        "wall_secs": 19.841771,
+        "nodes": 100422,
+        "lp_iterations": 1093843,
+        "node_rate_per_sec": 5061.1,
+        "iter_per_node": 10.89,
+        "status": "auto_degraded",
+        "objective": 4732,
+        "bound": 4773.624886,
+        "gap_percent": 0.879647
+      },
+      "conclusion": "节点吞吐持平（5.2k vs 5.1k/s），但 adaptive 的 dive 反而拿到更差 incumbent（4732 < 4737）并提前降级——多维背包类上 dive 投入接近零收益；所有运行的 bound 冻结在根割值 4773.62 ⇒ 缺口在树/割不在启发式。"
+    },
+    "setcover_root_iterationlimit_abort": {
+      "desc": "setcover-100x150 t1：默认（root_cuts=1）vs --root-cuts 0。",
+      "default_root_cuts": {
+        "wall_secs": 0.525,
+        "nodes": 1,
+        "lp_iterations": 13288,
+        "cuts": 37,
+        "status": "limit_reached",
+        "objective": null
+      },
+      "root_cuts_off": {
+        "wall_secs": 0.133305,
+        "nodes": 45,
+        "lp_iterations": 3406,
+        "cuts": 0,
+        "status": "optimal",
+        "objective": 276,
+        "bound": 276
+      },
+      "conclusion": "根 LP 本体可解（3406 迭代）；是割循环加行后的 resolve 打满单次调用迭代上限 max(10k, 20×(m+n))（simplex.rs:1312）触发 IterationLimit，cut_loop 将其作为终态上报（cuts.rs:563），branch_bound.rs:364 即整个求解以 limit_reached 终结——1 个节点、无 incumbent、无 bound。割关闭后 45 节点即最优 ⇒ 该类被『迭代上限传播』整体锁死，而非难度高。"
+    },
+    "mknap-5x300_t1_nondeterminism": {
+      "desc": "同参数 t1 两次：rep1 90s/336610 节点 limit_reached，rep2 74s/392468 节点 auto_degraded；另一次探针 76s/356460。原因：自适应控制器与自动降级的判定含墙钟比较（search_ctrl.rs:255 elapsed>frac×budget、:508/:528 plateau 窗），给了 time budget 后 t1 也随时序抖动改变 dive/降级时机 ⇒ 节点数与终态跨次漂移。bench 以 wall_secs_all/status_all 记录离散。"
+    },
+    "marketsplit_size_ladder_t1": {
+      "desc": "90s 上限探针（planted 子集保证可行；系数 [100,200]）。",
+      "results": {
+        "marketsplit-2x20": "0.012s optimal 2936 节点",
+        "marketsplit-3x30": "1.44s optimal 122234 节点",
+        "marketsplit-3x40": "1.74s optimal 126768 节点",
+        "marketsplit-4x30": "5.5~9.3s optimal 395095 节点（入列）",
+        "marketsplit-4x40": "49.1s 打满 200 万节点上限，零可行解（超规格）",
+        "marketsplit-5x50": "90s 时间上限，1.56M 节点，零可行解（超规格）"
+      },
+      "conclusion": "m≥4 且 n≥40 时 B&B 在 200 万节点内找不到任何可行解（等式行下 round/dive 均无能为力，见 heuristics.rs:29/:103）——可行解发现（feasibility pump 类启发式）是该类的第一瓶颈。"
+    }
+  }
+}

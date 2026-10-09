@@ -262,13 +262,14 @@ mod tests {
         assert_eq!(o.tol.pivot, t.pivot);
         assert_eq!(o.tol.integrality, t.integrality);
         assert_eq!(o.tol.zero, t.zero);
-        assert_eq!(o.bb.branch_rule, BranchRule::MostFractional);
+        assert_eq!(o.bb.branch_rule, BranchRule::Pseudocost);
         assert_eq!(o.bb.node_rule, NodeRule::DepthFirst);
-        assert_eq!(o.bb.node_limit, 100_000);
+        assert_eq!(o.bb.node_limit, 2_000_000);
         assert_eq!(o.bb.time_limit_ms, 0);
         assert!(o.bb.root_cuts);
         assert!(o.bb.heuristics);
-        assert_eq!(o.bb.dive_max_fixes, 8);
+        assert_eq!(o.bb.dive_max_fixes, 4096);
+        assert_eq!(o.bb.pc_reliability_probes, 8);
         assert!(o.use_presolve);
     }
 
@@ -473,10 +474,13 @@ mod tests {
         }
     }
 
-    /// 受控顺序 gap 用例（dive 问题，关 presolve 与根割保证确定性）：
+    /// 受控顺序 gap 用例（dive 问题，关 presolve 与根割保证确定性；
+    /// offset=0.5 有意非整数化——整数目标 cutoff 门控判否，保住 gap 路径
+    /// 覆盖；offset=0.0 时根 bound 21.5 ≤ 21+1−ε 会被 cutoff 在 (d) 直接
+    /// 闭合，终态翻转为完备 Optimal）：
     /// - mipgap=Some(3.0) ⇒ report.status=LimitReached（携带 incumbent 解）、
-    ///   gap_terminated=true、gap_percent=Some(≈2.38)（非负有限）、bound≈21.5；
-    /// - mipgap=Some(2.0) ⇒ Optimal 21、gap_percent=None。
+    ///   gap_terminated=true、gap_percent=Some(≈2.33)（非负有限）、bound≈22.0；
+    /// - mipgap=Some(2.0) ⇒ Optimal 21.5、gap_percent=None。
     #[test]
     fn solve_controlled_sequential_gap_dive_problem() {
         let mut p = Problem::new("dive-gap", Sense::Maximize);
@@ -484,7 +488,7 @@ mod tests {
         p.add_var("x2", VarType::Integer).unwrap();
         p.set_var_bounds(0, 0.0, 10.0).unwrap();
         p.set_var_bounds(1, 0.0, 10.0).unwrap();
-        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.5).unwrap();
         p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
             .unwrap();
         let opts = SolveOptions {
@@ -496,7 +500,7 @@ mod tests {
             },
             ..SolveOptions::default()
         };
-        // Some(3.0)：gap=(21.5−21)/21×100≈2.381 ≤ 3 ⇒ LimitReached + 证据。
+        // Some(3.0)：gap=(22.0−21.5)/21.5×100≈2.326 ≤ 3 ⇒ LimitReached + 证据。
         let ctrl = SearchControl {
             mipgap_percent: Some(3.0),
             ..SearchControl::default()
@@ -504,12 +508,12 @@ mod tests {
         let r = solve_controlled(&p, &opts, &ctrl, None).unwrap();
         assert_eq!(r.report.status, SolveStatus::LimitReached);
         assert!(r.gap_terminated);
-        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.report.objective.unwrap(), 21.5);
         assert_close(r.report.values.as_ref().unwrap()[0], 2.0);
-        assert_close(r.bound.unwrap(), 21.5);
+        assert_close(r.bound.unwrap(), 22.0);
         let g = r.gap_percent.expect("gap_terminated ⇒ gap_percent 必为 Some");
         assert!(g.is_finite() && g >= 0.0, "gap_percent 非负有限，实际 {g}");
-        assert!((g - 2.3809523809523813).abs() < 1e-9, "实际 {g}");
+        assert!((g - 2.3255813953488373).abs() < 1e-9, "实际 {g}");
         // Some(2.0)：不触发 ⇒ Optimal。
         let ctrl = SearchControl {
             mipgap_percent: Some(2.0),
@@ -519,16 +523,17 @@ mod tests {
         assert_eq!(r.report.status, SolveStatus::Optimal);
         assert!(!r.gap_terminated);
         assert_eq!(r.gap_percent, None);
-        assert_close(r.report.objective.unwrap(), 21.0);
-        assert_close(r.bound.unwrap(), 21.0);
+        assert_close(r.report.objective.unwrap(), 21.5);
+        assert_close(r.bound.unwrap(), 21.5);
     }
 
-    /// 策略级自动降级（顺序路径；dive 问题关 presolve/根割保证确定性）：
+    /// 策略级自动降级（顺序路径；dive 问题关 presolve/根割保证确定性；
+    /// offset=0.5 非整数化保住降级路径覆盖，见上用例注释）：
     /// - 激进参数（start_frac=0 / plateau_frac=0）+ auto + 时间预算 ⇒ 双停滞
     ///   判定即时触发：LimitReached + gap_terminated + auto_degraded，携带
-    ///   incumbent 21 与 gap 证据（≈2.38%，同 mipgap 口径）；
-    /// - 同参数但**无时间预算** ⇒ 契约红线：auto 仍证明最优（Optimal 21）；
-    /// - 时间预算但**非 auto 模式** ⇒ 降级不评估：Optimal 21。
+    ///   incumbent 21.5 与 gap 证据（≈2.33%，同 mipgap 口径）；
+    /// - 同参数但**无时间预算** ⇒ 契约红线：auto 仍证明最优（Optimal 21.5）；
+    /// - 时间预算但**非 auto 模式** ⇒ 降级不评估：Optimal 21.5。
     #[test]
     fn solve_controlled_auto_degrade_sequential() {
         let mut p = Problem::new("dive-gap", Sense::Maximize);
@@ -536,7 +541,7 @@ mod tests {
         p.add_var("x2", VarType::Integer).unwrap();
         p.set_var_bounds(0, 0.0, 10.0).unwrap();
         p.set_var_bounds(1, 0.0, 10.0).unwrap();
-        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.5).unwrap();
         p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
             .unwrap();
         let aggressive = crate::search_ctrl::DegradePolicy {
@@ -565,7 +570,7 @@ mod tests {
         assert_eq!(r.report.status, SolveStatus::LimitReached);
         assert!(r.gap_terminated, "降级 ⇒ gap_terminated");
         assert!(r.auto_degraded, "降级 ⇒ auto_degraded");
-        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.report.objective.unwrap(), 21.5);
         assert_close(r.report.values.as_ref().unwrap()[0], 2.0);
         let g = r.gap_percent.expect("降级 ⇒ gap_percent 必为 Some");
         assert!(g.is_finite() && g >= 0.0, "gap 非负有限，实际 {g}");
@@ -579,7 +584,7 @@ mod tests {
         assert_eq!(r.report.status, SolveStatus::Optimal);
         assert!(!r.gap_terminated);
         assert!(!r.auto_degraded);
-        assert_close(r.report.objective.unwrap(), 21.0);
+        assert_close(r.report.objective.unwrap(), 21.5);
         // ③ 预算但非 auto 模式 ⇒ 降级不评估。
         let ctrl = SearchControl {
             adaptive_heuristics: false,

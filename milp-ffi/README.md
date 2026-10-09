@@ -47,7 +47,7 @@ ctypes 对应列见文末类型对齐表。
 | 8 | `int32_t milp_ffi_add_var(void *model, const char *name, int32_t vtype, double lb, double ub, uint32_t *index_out)` | `vtype`：1=CONTINUOUS, 2=INTEGER, 3=BINARY；`Problem::add_var`（默认界）+ `set_var_bounds(lb,ub)`（lb/ub 恒传入，Python 层已填类型默认）；`ub=+∞` 合法、`lb` 非有限→9；重名/保留字/lb>ub→2；name 为必填（NULL→1），非 UTF-8→8；设置界失败时回滚（变量不入模） |
 | 9 | `int32_t milp_ffi_set_var_bounds(void *model, uint32_t index, double lb, double ub)` | 界校验同 add_var；`index ≥ 当前变量数`→9；lb>ub / Binary 越出 [0,1]→2 |
 | 10 | `int32_t milp_ffi_add_constraint(void *model, const char *name_or_null, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t relop, double rhs, uint32_t *index_out)` | `relop`：1=LE, 2=GE, 3=EQ；`rhs` 须有限（→9）；`name_or_null` 可 NULL（未命名，非 UTF-8→8）；`count=0` 允许两数组指针 NULL（空行照常入模）；系数非有限→9；下标越界→2 |
-| 11 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（写 `problem.sense`）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9；下标越界→2 |
+| 11 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（**仅在目标写入成功后**写 `problem.sense`——下标越界→2 失败时模型零突变，对齐 add_var 回滚纪律）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9 |
 | 12 | `int32_t milp_ffi_set_param_real(void *model, const char *name, double value)` | real 型参数（见参数表）；非有限/负→9；类型不符→9；名字不存在→10 |
 | 13 | `int32_t milp_ffi_set_param_int(void *model, const char *name, int64_t value)` | int 型参数（`Threads` 1..=1024，越界→9） |
 | 14 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`：`auto\|on\|off`，大小写敏感，未知值→9） |
@@ -116,7 +116,7 @@ ctypes 对应列见文末类型对齐表。
 
 | FFI 名 | 类型 | 值域 | 默认 | 透传目标 |
 |--------|------|------|------|----------|
-| TimeLimit | real 秒 | ≥0（**0=不限**） | 0 | `BbOptions.time_limit_ms`（秒×1000 饱和取整；`time_limit_ms=0` 即不限） |
+| TimeLimit | real 秒 | ≥0（**0=不限**） | 0 | `BbOptions.time_limit_ms`（秒→毫秒**四舍五入、正值下限 1ms**：`0.5`→500ms，`0<限时<0.0005s` 夹到 1ms，绝不舍回 0；`time_limit_ms=0` 即不限） |
 | Threads | int | 1..=1024 | 1 | `SearchControl.threads`（1=纯顺序，≥2 并行引擎） |
 | MIPGap | real 百分比 | ≥0（**0=关闭**） | 0 | `SearchControl.mipgap_percent`（None/Some(p>0)） |
 | HeuristicMode | str | `auto\|on\|off`（大小写敏感） | **`on`** | off ⇒ `bb.heuristics=false`；on/auto ⇒ true；auto 另置 `adaptive_heuristics=true` |
@@ -135,7 +135,8 @@ ctypes 对应列见文末类型对齐表。
 
 - `SolveOptions`：`Tolerances::default` + `BbOptions::default`（root_cuts=true、
   use_presolve=true）——仅按 HeuristicMode 覆盖 `heuristics`、按 TimeLimit 覆盖
-  `time_limit_ms`（`saturating_mul(1000)`）；
+  `time_limit_ms`（`secs_to_limit_ms`：秒→毫秒四舍五入 + 正值下限 1ms + 饱和，
+  见参数表；与 CLI 的整秒 `u64×1000` 截断有意不同——FFI 收 f64 秒）；
 - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=(mode==Auto) /
   log_period_secs / degrade=default；
 - 映射纪律照搬 milp CLI（main.rs 的 solve_options_from / search_control_from）。

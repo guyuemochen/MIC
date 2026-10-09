@@ -12,12 +12,12 @@
 //! # 受控搜索参数包扩展（追加测试）
 //! - CLI 默认输出逐字节基线（原 7 算例；threads=1 与默认 auto 红线端到端
 //!   钉死）；
-//! - 库级/CLI 级 threads=4 并发一致性（含新算例 hard-knapsack-12：227 节点
+//! - 库级/CLI 级 threads=4 并发一致性（含新算例 hard-knapsack-12：200+ 节点
 //!   真实压满节点池；CLI 级重复 ≥10 次不依赖计时）；
 //! - `--log-secs` 进度行格式（首行契约钉死 + 全行正则 + 空栈矛盾行防护）；
 //! - `--mipgap`（0≡关闭、大阈值 gap_reached 择一断言、库级确定性用例）；
 //! - 自适应启发式 auto 于原算例与新算例仍精确最优；`--heuristic-mode on`
-//!   在 227 节点算例上与升级前逐字节一致。
+//!   在 200+ 节点算例上钉死 on 路径基线。
 //!
 //! （时间/节点上限触发的 LimitReached 仍不做 CLI 级验收——依赖计时不稳定；
 //! 由 WP4 单元测试以极小 node_limit 覆盖。gap 终止（`--mipgap`）不依赖计时，
@@ -29,7 +29,7 @@ use std::process::Command;
 use milp::branch_bound::{BbOptions, SearchControl};
 use milp::instance::load_instance;
 use milp::model::{Problem, RelOp, Sense, SolveStatus, VarType};
-use milp::solver::{solve_controlled, solve_default, SolveOptions};
+use milp::solver::{solve, solve_controlled, solve_default, SolveOptions};
 
 /// 数值型验收算例与已知最优目标值（mustMatch，须精确达到，容差 1e-6）。
 const CASES: &[(&str, f64)] = &[
@@ -400,15 +400,17 @@ fn first_progress_tail(stdout: &str) -> &str {
 }
 
 /// dive 问题（与 solver/branch_bound 单元测试同构；关 presolve 与根割保证
-/// gap 触发确定性）：max 10·x1 + x2 s.t. 20·x1 + 3·x2 ≤ 43，整数 [0,10]²。
-/// 根 LP 21.5 分数，根启发式 dive 得 (2,1)=21，整数最优 21。
+/// gap 触发确定性）：max 10·x1 + x2 + 0.5 s.t. 20·x1 + 3·x2 ≤ 43，整数
+/// [0,10]²。根 LP 22.0 分数，根启发式 dive 得 (2,1)=21.5，整数最优 21.5。
+/// offset=0.5 有意非整数化（整数目标 cutoff 门控判否）：offset=0.0 时根
+/// bound 21.5 ≤ 21+1−ε 会被 cutoff 在 (d) 直接闭合，gap 触发路径消失。
 fn dive_gap_problem() -> Problem {
     let mut p = Problem::new("dive-gap", Sense::Maximize);
     p.add_var("x1", VarType::Integer).unwrap();
     p.add_var("x2", VarType::Integer).unwrap();
     p.set_var_bounds(0, 0.0, 10.0).unwrap();
     p.set_var_bounds(1, 0.0, 10.0).unwrap();
-    p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+    p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.5).unwrap();
     p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
         .unwrap();
     p
@@ -423,6 +425,12 @@ fn acceptance_cli_default_output_identical() {
         ("lp-prod-3", "status = optimal\nnodes = 1\nobjective = 13.000000\n", 0),
         ("knapsack-10", "status = optimal\nnodes = 1\nobjective = 17.000000\n", 0),
         ("assign-4x4", "status = optimal\nnodes = 1\nobjective = 10.000000\n", 0),
+        // wolsey-2：整数目标（系数 5/8 × Integer）⇒ cutoff 生效；默认分支
+        // 规则换 Pseudocost（含可靠性冷启动探测）后节点数随分支/压栈序
+        // 变化（A+B 叠加实测钉值），目标 40 精确不变。
+        // （WP6 包 A 复核：本包根割改动（4×40 + c-MIR/隐含界/提升）后实测
+        // 仍为 7；禁用新割复算（同轮数纯 GMI+覆盖）亦为 7 ⇒ 该值对割族
+        // 不敏感，钉值稳定。）
         ("milp-wolsey-2", "status = optimal\nnodes = 7\nobjective = 40.000000\n", 0),
         ("milp-mixed-5", "status = optimal\nnodes = 1\nobjective = 29.000000\n", 0),
         ("infeasible-tiny", "status = infeasible\n", 2),
@@ -445,7 +453,7 @@ fn acceptance_cli_default_output_identical() {
 /// (2) 库级 threads=4 与 threads=1（solve_default）一致：5 个原数值算例
 /// status 相同且 |objective 差| ≤ 1e-6；infeasible/unbounded status 相同；
 /// hard-knapsack-12（新算例文件）：Optimal 且 objective=523±1e-6
-///（227 节点 ≫ 原算例的 1/7 节点，真实压满节点池路径）。
+///（195 节点 ≫ 原算例的 1/7 节点，真实压满节点池路径）。
 #[test]
 fn acceptance_threads4_matches_threads1() {
     let ctrl4 = SearchControl {
@@ -508,7 +516,7 @@ fn acceptance_threads4_matches_threads1() {
 
 /// (3) CLI 级并发：knapsack-10 --threads 4 ⇒ 退出码 0、末行 objective=17±1e-6；
 /// hard-knapsack-12 --threads 4 ⇒ 退出码 0、末行 objective=523±1e-6，重复
-/// ≥10 次同断言（227 节点压满池；丢唤醒/死锁/竞态在重复下必现，单次亚毫秒
+/// ≥10 次同断言（195 节点压满池；丢唤醒/死锁/竞态在重复下必现，单次亚毫秒
 /// 耗时可忽略；断言不依赖计时）。
 #[test]
 fn acceptance_cli_threads4() {
@@ -572,15 +580,21 @@ fn acceptance_cli_progress_log_format() {
     );
     assert_progress_lines_wellformed(&stdout);
 
-    // milp-wolsey-2：首行 incumbent=none、gap=inf。
+    // milp-wolsey-2：根 dive 现在成功（深预算 + 一步回退）⇒ 首行即有
+    // incumbent（2026-10 启发式增强前为 none/gap=inf——当时 8 次修复
+    // 预算在断点链上必耗尽；数值 34→37 随根割族增强漂移，A+B 叠加实测
+    // 钉值）。
     let (code, stdout) = cli(&[&instance_path("milp-wolsey-2"), "--log-secs", "5"]);
     assert_eq!(code, Some(0), "{stdout}");
     let tail = first_progress_tail(&stdout);
     assert!(
-        tail.contains(" incumbent=none "),
+        tail.contains(" incumbent=37.000000 "),
         "milp-wolsey-2 首行 incumbent：{stdout}"
     );
-    assert!(tail.ends_with(" gap=inf"), "milp-wolsey-2 首行 gap：{stdout}");
+    assert!(
+        !tail.ends_with(" gap=inf"),
+        "milp-wolsey-2 首行 gap 应为数值（有 incumbent）：{stdout}"
+    );
     assert_progress_lines_wellformed(&stdout);
 
     // infeasible-tiny / unbounded-tiny：首行四字段全钉。
@@ -704,7 +718,7 @@ fn acceptance_cli_mipgap() {
         other => panic!("--mipgap 100 退出码应为 0 或 4，得到 {other:?}：{stdout}"),
     }
 
-    // 库级确定性：dive 问题（gap=(21.5−21)/21×100≈2.381）。
+    // 库级确定性：dive 问题（gap=(22.0−21.5)/21.5×100≈2.326）。
     let problem = dive_gap_problem();
     let opts = SolveOptions {
         use_presolve: false,
@@ -728,16 +742,16 @@ fn acceptance_cli_mipgap() {
         .objective
         .expect("gap 终止须携带 incumbent 解的目标值");
     assert!(
-        (objective - 21.0).abs() <= 1e-9,
-        "mipgap=3.0 触发时 incumbent = {objective}，期望 21"
+        (objective - 21.5).abs() <= 1e-9,
+        "mipgap=3.0 触发时 incumbent = {objective}，期望 21.5"
     );
     let gap = r.gap_percent.expect("gap_terminated ⇒ gap_percent 必为 Some");
     assert!(gap.is_finite() && gap >= 0.0, "gap 须非负有限：{gap}");
     assert!(
-        (gap - 100.0 * 0.5 / 21.0).abs() < 1e-9,
-        "gap_percent = {gap}，期望 ≈2.38"
+        (gap - 100.0 * 0.5 / 21.5).abs() < 1e-9,
+        "gap_percent = {gap}，期望 ≈2.33"
     );
-    // Some(2.0)：2.381 > 2 不触发 ⇒ Optimal 21。
+    // Some(2.0)：2.326 > 2 不触发 ⇒ Optimal 21.5。
     let ctrl = SearchControl {
         mipgap_percent: Some(2.0),
         ..SearchControl::default()
@@ -747,7 +761,7 @@ fn acceptance_cli_mipgap() {
     assert_eq!(r.report.status, SolveStatus::Optimal);
     assert!(!r.gap_terminated);
     assert_eq!(r.gap_percent, None);
-    assert!((r.report.objective.unwrap() - 21.0).abs() <= 1e-9);
+    assert!((r.report.objective.unwrap() - 21.5).abs() <= 1e-9);
 }
 
 /// (6) 库层 adaptive_heuristics=true（auto 模式）：5 个原数值算例
@@ -775,7 +789,7 @@ fn acceptance_heuristic_auto_optimal() {
             "算例 {name} auto objective = {objective}，期望 {expected}"
         );
     }
-    // hard-knapsack-12：227 节点超自适应阈值（32/50），auto 仍精确最优。
+    // hard-knapsack-12：195 节点超自适应阈值（32/50），auto 仍精确最优。
     let problem = load_instance(Path::new(&instance_path("hard-knapsack-12")))
         .unwrap_or_else(|error| panic!("算例 hard-knapsack-12 加载失败：{error}"));
     let r = solve_controlled(&problem, &SolveOptions::default(), &ctrl, None)
@@ -792,55 +806,207 @@ fn acceptance_heuristic_auto_optimal() {
     );
 }
 
-/// (6b) CLI `--heuristic-mode on` 在 hard-knapsack-12 上与升级前逐字节一致
-///（on ≡ 升级前行为：heuristics=true 且不自适应；227 节点算例上钉死自适应
-/// 开关不改变 on 路径）。默认 auto 的 nodes 不钉（见 README：阈值超限后
-/// 控制器可补跑 dive；目标不变）。
+/// (6b) CLI `--heuristic-mode on` 在 hard-knapsack-12 上的确定性基线
+///（on ≡ heuristics=true 且不自适应）。整数目标（整数系数 × 全 Binary）⇒
+/// cutoff=inc+1−ε 收紧 (d) 界 + 陈旧前沿 est 弹出剪枝；根覆盖割（WP4 增补，
+/// cuts.rs）对全 Binary 背包行再收紧；默认分支规则换 Pseudocost（含可靠性
+/// 冷启动探测 + best-estimate 压栈序）改变树形；objective 523.000000 钉死
+/// 不变（2^12 穷举真值）。默认 auto 的 nodes 不钉（见 README：阈值超限后
+/// 控制器可补跑 dive；目标不变）。nodes 为 A+B 叠加实测钉值。
 #[test]
 fn acceptance_cli_heuristic_on_identical() {
     let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on"]);
     assert_eq!(code, Some(0), "{stdout}");
+    // 演进：根 dive 供应 incumbent 227→235；整数目标 cutoff 235→211；根
+    // 覆盖割 211→195；默认 Pseudocost + 可靠性探测 + best-estimate 压栈序
+    // （A+B 叠加实测）195→201（目标不变——树形受割与分支序交互影响）。
+    // （WP6 包 A 复核归因：本包割轮 5→4 + c-MIR/提升族后实测仍为 201；
+    // 禁用新割复算（同 4 轮纯 GMI+覆盖）得 93，割轮保持 5 时新割族下为
+    // 73——树形对割集混沌敏感，201 为 A+B 叠加终态实测钉值。）
+    // （2026-10 根预割启发式轮：割后顶点中面化使根 incumbent 453 质量塌
+    // 缩，割前顶点补跑一轮 round_and_check + dive 后根 incumbent 511 ⇒
+    // 剪枝提前，201→184（目标不变）。）
     assert_eq!(
         stdout,
-        "status = optimal\nnodes = 227\nobjective = 523.000000\n",
-        "hard-knapsack-12 --heuristic-mode on 输出必须与升级前逐字节一致"
+        "status = optimal\nnodes = 184\nobjective = 523.000000\n",
+        "hard-knapsack-12 --heuristic-mode on 输出（默认 Pseudocost + 可靠性冷启动后确定性基线）"
     );
 }
 
-/// 契约：auto 模式 + 充足时间预算（默认降级参数 0.5/0.25/0.01）在全部
-/// 验收算例上仍证明最优——默认策略不会在秒级完成的算例上误触发降级
-/// （资格预检要求预算过半 + 双停滞窗口）；降级只应在真实长停滞时放弃
-/// 证明。同时顺序（threads=1）与并行（threads=4）口径一致。
-#[test]
-fn acceptance_auto_with_budget_still_optimal() {
-    for threads in [1usize, 4] {
-        let ctrl = SearchControl {
-            threads,
-            adaptive_heuristics: true,
-            ..SearchControl::default()
-        };
-        for &(name, expected) in CASES {
-            let path = instance_path(name);
-            let problem = load_instance(std::path::Path::new(&path))
-                .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
-            let mut opts = SolveOptions::default();
-            opts.bb.time_limit_ms = 60_000;
-            let r = solve_controlled(&problem, &opts, &ctrl, None)
-                .unwrap_or_else(|error| panic!("算例 {name}（threads={threads}）求解失败：{error}"));
-            assert_eq!(
-                r.report.status,
-                SolveStatus::Optimal,
-                "算例 {name}（threads={threads}）：默认降级参数不得误触发"
-            );
-            assert!(!r.auto_degraded, "算例 {name}（threads={threads}）不应降级");
-            let objective = r
-                .report
-                .objective
-                .unwrap_or_else(|| panic!("算例 {name} 报告 Optimal 但无 objective"));
-            assert!(
-                (objective - expected).abs() <= 1e-6,
-                "算例 {name}（threads={threads}）：objective = {objective}，期望 {expected}"
-            );
+    /// 契约：auto 模式 + 充足时间预算（默认降级参数 0.5/0.25/0.01）在全部
+    /// 验收算例上仍证明最优——默认策略不会在秒级完成的算例上误触发降级
+    /// （资格预检要求预算过半 + 双停滞窗口）；降级只应在真实长停滞时放弃
+    /// 证明。同时顺序（threads=1）与并行（threads=4）口径一致。
+    #[test]
+    fn acceptance_auto_with_budget_still_optimal() {
+        for threads in [1usize, 4] {
+            let ctrl = SearchControl {
+                threads,
+                adaptive_heuristics: true,
+                ..SearchControl::default()
+            };
+            for &(name, expected) in CASES {
+                let path = instance_path(name);
+                let problem = load_instance(std::path::Path::new(&path))
+                    .unwrap_or_else(|error| panic!("算例 {name} 加载失败：{error}"));
+                let mut opts = SolveOptions::default();
+                opts.bb.time_limit_ms = 60_000;
+                let r = solve_controlled(&problem, &opts, &ctrl, None)
+                    .unwrap_or_else(|error| panic!("算例 {name}（threads={threads}）求解失败：{error}"));
+                assert_eq!(
+                    r.report.status,
+                    SolveStatus::Optimal,
+                    "算例 {name}（threads={threads}）：默认降级参数不得误触发"
+                );
+                assert!(!r.auto_degraded, "算例 {name}（threads={threads}）不应降级");
+                let objective = r
+                    .report
+                    .objective
+                    .unwrap_or_else(|| panic!("算例 {name} 报告 Optimal 但无 objective"));
+                assert!(
+                    (objective - expected).abs() <= 1e-6,
+                    "算例 {name}（threads={threads}）：objective = {objective}，期望 {expected}"
+                );
+            }
         }
     }
-}
+
+    /// bench 算例路径（`bench/instances/<name>.milp`，milp crate 根的上一级；
+    /// bench/ 归画像与复测所有，本文件只读引用，不修改）。
+    fn bench_instance_path(name: &str) -> String {
+        format!("{}/../bench/instances/{name}.milp", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// （P0-1 验收 + 割轮 IterationLimit 分流）setcover-100x150：根割循环
+    /// 的割后 resolve 触发迭代上限时不再作整树终态——丢弃全部根割、重建
+    /// 无割 Simplex 恢复 Optimal 根态后继续搜索。修复前 6/6 次运行 1 节点
+    /// limit_reached 无解（bench/raw_runs.jsonl 第 3 轮基线）；修复后：
+    /// - t1/t4 均 Optimal 且目标 276（节点数 > 1：搜索越过根节点）；
+    /// - threads≥2 + adaptive 与 t1 目标一致（子树不丢、不误终态）；
+    /// - 记账完整：默认路径 lp_iterations **严格大于**关割等价路径（回退后
+    ///   树与关割一致，多出的恰是根 LP + 割循环的重建前迭代）；
+    /// - 割丢弃如实：stats.cuts == 0（割已随 Simplex 一起丢弃）。
+    #[test]
+    fn acceptance_setcover_100x150_unlocked_optimal() {
+        let path = bench_instance_path("setcover-100x150");
+        let problem = load_instance(Path::new(&path))
+            .unwrap_or_else(|error| panic!("算例 setcover-100x150 加载失败：{error}"));
+
+        // t1 默认路径：Optimal 276。
+        let seq = solve_default(&problem)
+            .unwrap_or_else(|error| panic!("setcover-100x150 t1 求解失败：{error}"));
+        assert_eq!(seq.status, SolveStatus::Optimal, "t1 终态");
+        assert!(
+            (seq.objective.unwrap() - 276.0).abs() <= 1e-6,
+            "t1 objective = {:?}，期望 276",
+            seq.objective
+        );
+        assert!(seq.stats.nodes > 1, "搜索越过根节点（实际 {} 节点）", seq.stats.nodes);
+        // 割丢弃如实（该算例当前必然触发回退；若割行为变化导致不再触发，
+        // 本断言随 A+B 叠加实测重钉）。
+        assert_eq!(seq.stats.cuts, 0, "回退丢弃根割 ⇒ cuts 如实清零");
+
+        // 记账完整：lp_iterations 含重建前迭代（根 LP + 割循环）。
+        let opts_nocuts = SolveOptions {
+            bb: BbOptions {
+                root_cuts: false,
+                ..BbOptions::default()
+            },
+            ..SolveOptions::default()
+        };
+        let nocuts = solve(&problem, &opts_nocuts)
+            .unwrap_or_else(|error| panic!("setcover-100x150 关割求解失败：{error}"));
+        assert_eq!(nocuts.status, SolveStatus::Optimal);
+        assert!((nocuts.objective.unwrap() - 276.0).abs() <= 1e-6);
+        assert!(
+            seq.stats.lp_iterations > nocuts.stats.lp_iterations,
+            "默认（回退）lp_iterations={} 须 > 关割={}（含重建前根割迭代）",
+            seq.stats.lp_iterations,
+            nocuts.stats.lp_iterations
+        );
+
+        // threads≥2 + adaptive 与 t1 目标一致（重复 3 次：并行口径下每次都
+        // 不得丢子树/误终态）。
+        for threads in [2usize, 4] {
+            let ctrl = SearchControl {
+                threads,
+                adaptive_heuristics: true,
+                ..SearchControl::default()
+            };
+            for rep in 0..3 {
+                let r = solve_controlled(&problem, &SolveOptions::default(), &ctrl, None)
+                    .unwrap_or_else(|error| {
+                        panic!("setcover-100x150 threads={threads} rep={rep} 求解失败：{error}")
+                    });
+                assert_eq!(
+                    r.report.status,
+                    SolveStatus::Optimal,
+                    "threads={threads} rep={rep} 终态"
+                );
+                assert!(
+                    (r.report.objective.unwrap() - 276.0).abs() <= 1e-6,
+                    "threads={threads} rep={rep}：objective 须与 t1 一致（276）"
+                );
+                assert!(!r.gap_terminated && !r.auto_degraded);
+            }
+        }
+    }
+
+    /// （确定性验收）固定 node_limit（默认 2M）、time_limit=0 下默认路径
+    /// （Pseudocost + 可靠性探测预算 8）两次运行逐项一致：探测预算按
+    /// 节点/迭代计、绝不读墙钟——无时间上限时自适应/降级的时间面也不
+    /// 参与决策，搜索全确定。
+    #[test]
+    fn acceptance_default_path_deterministic_two_runs() {
+        let path = bench_instance_path("setcover-100x150");
+        let problem = load_instance(Path::new(&path)).unwrap();
+        let r1 = solve_default(&problem).unwrap();
+        let r2 = solve_default(&problem).unwrap();
+        assert_eq!(r1.status, r2.status);
+        assert_eq!(r1.objective, r2.objective);
+        assert_eq!(r1.stats.nodes, r2.stats.nodes, "节点数跨次一致");
+        assert_eq!(r1.stats.lp_iterations, r2.stats.lp_iterations);
+
+        // 本地算例同断言（不同规模/结构）。
+        let problem = load_instance(Path::new(&instance_path("hard-knapsack-12"))).unwrap();
+        let r1 = solve_default(&problem).unwrap();
+        let r2 = solve_default(&problem).unwrap();
+        assert_eq!(r1.stats.nodes, r2.stats.nodes);
+        assert_eq!(r1.stats.lp_iterations, r2.stats.lp_iterations);
+        assert_eq!(r1.objective, r2.objective);
+    }
+
+    /// （P1-4 纯被动等价验收）pc_reliability_probes=0 ≡ 纯被动 Pseudocost：
+    /// 探测零动作 ⇒ 与无探测实现逐节点一致（两次运行 + 两个入口逐项相等，
+    /// 机制性保证的行为级复验）；默认预算 8 仅改变统计冷启动与树形——
+    /// 目标值精确不变（搜索完整性：探测只读界并恢复，不剪任何可行解）。
+    #[test]
+    fn acceptance_pc_probes_zero_passive_parity() {
+        let problem = load_instance(Path::new(&instance_path("hard-knapsack-12"))).unwrap();
+        let passive = SolveOptions {
+            bb: BbOptions {
+                branch_rule: milp::branch_bound::BranchRule::Pseudocost,
+                pc_reliability_probes: 0,
+                ..BbOptions::default()
+            },
+            ..SolveOptions::default()
+        };
+        // 纯被动两次运行逐项一致（确定性）。
+        let p1 = solve(&problem, &passive).unwrap();
+        let p2 = solve(&problem, &passive).unwrap();
+        assert_eq!(p1.status, SolveStatus::Optimal);
+        assert_eq!(p1.stats.nodes, p2.stats.nodes, "纯被动逐节点一致");
+        assert_eq!(p1.stats.lp_iterations, p2.stats.lp_iterations);
+        assert_eq!(p1.objective, p2.objective);
+        // 入口等价：solve（默认受控委托）与 solve_controlled(默认) 同逐项。
+        let p3 = solve_controlled(&problem, &passive, &SearchControl::default(), None).unwrap();
+        assert_eq!(p3.report.stats.nodes, p1.stats.nodes);
+        assert_eq!(p3.report.stats.lp_iterations, p1.stats.lp_iterations);
+        // 默认预算 8：目标值与纯被动精确一致（树形允许不同）。
+        let probed = solve_default(&problem).unwrap();
+        assert_eq!(probed.status, SolveStatus::Optimal);
+        assert!(
+            (probed.objective.unwrap() - p1.objective.unwrap()).abs() <= 1e-6,
+            "探测预算只改统计不剪枝 ⇒ 目标必须一致"
+        );
+    }

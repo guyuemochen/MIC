@@ -3,48 +3,85 @@
 //! 架构：调用线程先完成与顺序 [`crate::branch_bound::branch_and_bound`]
 //! 同构的根阶段（根 LP → 纯 LP 捷径 → 根割循环（记录割清单）→ 根启发式 →
 //! resolve 回取），随后把根子节点（各自携带完整 [`Bounds`] 快照与 est =
-//! 父节点目标）压入共享池，再经 [`std::thread::scope`] 派生 N 个 worker
-//! 抢占式处理池节点。worker 各自持有独立 [`Simplex`]（Send、不共享），
-//! 按序 `add_row` 重放根阶段记录的割清单，首节点 resolve 自动冷启动，
-//! 任意界跳转由 snap/Phase-1 重建处理。
+//! 父节点目标）压入全局窃取池，再经 [`std::thread::scope`] 派生 N 个
+//! worker。worker 各自持有独立 [`Simplex`]（Send、不共享），按序 `add_row`
+//! 重放根阶段记录的割清单，首节点 resolve 自动冷启动，任意界跳转由
+//! snap/Phase-1 重建处理。
+//!
+//! 节点归属（并行亲和，单一大锁保护）：每个存活节点恰归属一个容器——
+//! 某 worker 的本地 `VecDeque` 队列、全局窃取池、或某 worker 的 inflight
+//! 槽，全部转移在池锁临界区内原子完成（无丢无重）。worker 分支时把两个
+//! 孩子按序压**自己队首**（owner 随后队首弹出即得近亲子代——同亲热启动
+//! 使对偶修复迭代数贴近顺序 DFS 档），本地空时先窃取池尾、再从随机起点
+//! 轮询各 victim **队尾**偷单个（最老 deferred 分支；owner 正在探索的近亲
+//! 前沿不动，首版不拆半）。victim 本地 push 不发全局 notify——空闲 worker
+//! 经 `wait_timeout(≤5ms)` 周期醒来重扫窃取；stop/done/窃取池 push 走
+//! `notify_all` 快路径立即唤醒。
 //!
 //! 正确性骨架（与顺序路径逐字相同的判定）：
-//! - 每节点恰处理一次（池互斥弹出）；已处理节点的全部子节点必入池
-//!   （空界分支除外——与顺序 tighten_child 语义一致）⇒ 树覆盖无遗漏；
-//! - 剪枝判定 (d)/(e)/(f) 与 [`crate::branch_bound`] 逐字移植（本模块私有
-//!   副本，测试向量钉死）；incumbent 单调 ⇒ 剪枝永不丢更优解；
-//! - stop 粘滞（CAS 一次性置位，镜像顺序 limit_hit 语义）：截断绝不冒充
-//!   完备；gap 触发用触发时刻证据快照（粘滞、clamp 后非负有限）。
+//! - 每节点恰处理一次（锁内原子弹出，无丢无重）；已处理节点的全部子节点
+//!   必入 owner 本地队列（空界分支除外——与顺序 tighten_child 语义一致）
+//!   ⇒ 树覆盖无遗漏；
+//! - 剪枝判定 (d)/(e)/(f) 与 [`crate::branch_bound`] 同口径：bound_no_better
+//!   / is_integral 为共享 pub(crate) 实现（含整数目标 cutoff 的
+//!   effective_prune_bound 合成，三调用点同口径；原逐字私有副本已删除）；
+//!   陈旧前沿 est 弹出剪枝在池弹出后、reserve 之前（不 reserve、不
+//!   performed——与顺序侧 pop 后跳过同口径）；incumbent 单调 ⇒ 剪枝永不
+//!   丢更优解；
+//! - 根割循环的 IterationLimit 分流与顺序侧同款：割后 resolve 触发迭代
+//!   上限 ⇒ 丢弃全部根割（worker 不重放）、重建无割 Simplex 恢复 Optimal
+//!   根态后继续搜索（有效割不切任何整数可行解 ⇒ 回退可行域只会更大；
+//!   重建前迭代经 base_iters 累计不丢，stats.cuts 如实清零）；
+//! - Pseudocost 分支（默认规则）：worker 各持本地 [`Pseudocosts`]（无全局
+//!   锁）——子节点 resolve 后按 PoolNode 记账三元组（var/tighten_lb/
+//!   frac_dir）以顺序侧同口径被动记账；浅层节点经共享的
+//!   [`crate::branch_bound::probe_reliability`] 冷启动（同口径预算/深度门，
+//!   探测只读界并恢复，不参与节点判定）；子代入池序与顺序侧 P1-5
+//!   best-estimate 压栈序同口径翻转；
+//! - 自适应 dive 的记账性回取 resolve：状态不参与节点判定（dive 前的
+//!   resolve 已证实节点 LP 可行/最优）——Infeasible/IterationLimit 弃用
+//!   结果继续分支（绝不 closed 丢子树，见 [`dive_back_action`]），
+//!   Unbounded 诚实 Err；
+//! - stop 粘滞（CAS 一次性置位）与 LP 迭代上限剪枝标记 limit_hit（镜像
+//!   顺序 limit_hit：剪枝 + 粘滞 + 树继续，终态诚实 LimitReached）：截断
+//!   绝不冒充完备；gap 触发用触发时刻证据快照（粘滞、clamp 后非负有限）。
 //!
-//! gap 保守性：聚合 db 取『池内 est ∪ 在处理槽 est』的方向极值，est 为父
-//! 谱系 LP 目标（对子树有效）；快照后 db 沿谱系只可能变严、incumbent 只
-//! 可能更优 ⇒ 计算得到的 gap ≥ 真实 gap（N1 的 clamp 只把负 gap 提到 0，
-//! 而 db ≤ inc 蕴含最优 ≤ inc，0% 触发诚实）⇒ 触发只推迟、不虚假。
+//! gap 保守性：聚合 db 取『全部本地队列的全部节点 est ∪ 窃取池全部 est ∪
+//! 在处理槽 est』（**全量口径**， [`pool_db_aggregate`] 唯一实现）的方向
+//! 极值，est 为父谱系 LP 目标（对子树有效）；快照后 db 沿谱系只可能变严、
+//! incumbent 只可能更优 ⇒ 计算得到的 gap ≥ 真实 gap（N1 的 clamp 只把负
+//! gap 提到 0，而 db ≤ inc 蕴含最优 ≤ inc，0% 触发诚实）⇒ 触发只推迟、
+//! 不虚假。全量扫描成本被 complete_node 门控控制（仅 mipgap 有限正值或
+//! degrade 预算存在时聚合）；严禁退回『各队列尾+inflight』口径——漏窃取
+//! 池且依赖未写明的 est 单调不变量，低估开放节点极值使 gap 偏小属不保守
+//! 方向。
 //!
-//! 锁纪律：任一线程任一时刻至多持一把锁，绝不嵌套；gap 检查两段式
-//! （池锁内聚合 → 释放 → incumbent 读 → 释放 → 无锁计算 + CAS）；
-//! 锁中毒 `into_inner` 恢复并置 stop；join Err（worker panic）映射
-//! `MilpError::Internal`，不外泄 panic。
+//! 锁纪律：任一线程任一时刻至多持一把锁，绝不嵌套；单一大锁（池锁）覆盖
+//! 全部本地队列 + 窃取池 + active/inflight/done（4 线程竞争可控，规避分锁
+//! +终止检测复杂度）；gap 检查两段式（池锁内聚合 → 释放 → incumbent 读
+//! → 释放 → 无锁计算 + CAS）；锁中毒 `into_inner` 恢复并置 stop；join Err
+//! （worker panic）映射 `MilpError::Internal`，不外泄 panic。
 //!
 //! 与顺序路径的已知行为差异（不影响正确性与最优值，README 口径）：
 //! nodes/迭代数/耗时/取值（多最优时）跨运行可变。根割循环经
 //! `cuts::cut_loop_recorded`（带记账、与顺序 `cuts::cut_loop` 逐字节一致），
 //! worker 按序 `add_row` 重放记录的割清单 ⇒ 根割行为与顺序路径一致。
 
+use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::branch_bound::{BbOptions, BbStats, BranchRule, NodeRule};
+use crate::branch_bound::{bound_no_better, is_integral, probe_reliability, BbOptions, BbStats, BranchRule, NodeRule};
 use crate::cuts::{self, CutOptions};
 use crate::error::{MilpError, Result};
 use crate::heuristics::{self, Incumbent};
-use crate::model::{Problem, RelOp, Sense, SolveStatus, Tolerances};
+use crate::model::{objective_is_integral, Problem, RelOp, Sense, SolveStatus, Tolerances};
 use crate::search_ctrl::{
     aggregate_bound, gap_percent, AutoDegrade, DegradePolicy, DegradeSnapshot, HeuristicController,
-    HeuristicDecision, ProgressCallback, ProgressInfo, SearchSnapshot,
+    HeuristicDecision, ProgressCallback, ProgressInfo, Pseudocosts, SearchSnapshot,
 };
 use crate::simplex::{Bounds, LpSolution, LpStatus, Simplex};
 
@@ -58,6 +95,12 @@ const STOP_TIME: u8 = 2;
 const STOP_GAP: u8 = 3;
 /// stop 槽位：策略级自动降级触发（auto 模式 + 时间预算 + 双停滞）。
 const STOP_DEGRADE: u8 = 4;
+
+/// worker 等待/窃取轮询周期上限：本地队列与窃取池均空且仍有在处理节点时，
+/// `cv_workers.wait_timeout(5ms)` 周期醒来从随机起点重扫各 victim 队尾——
+/// 解决『victim 本地队列 push 不发全局 notify 则偷不到』的永久睡眠风险；
+/// stop/done/窃取池 push 走 `notify_all` 快路径立即唤醒，常态不依赖本超时。
+const WORKER_WAIT_TIMEOUT: Duration = Duration::from_millis(5);
 
 /// 并行参数。仅 derive(Clone)——含 `Arc<dyn Fn>` 字段不得 derive(Debug)
 /// （rustc 实证 E0277：dyn Fn 不实现 Debug）。
@@ -83,10 +126,12 @@ pub struct ParallelConfig {
 }
 
 /// 停止原因（粘滞：一旦置位终态按此判定，即使池随后排空也不得报完备——
-/// 镜像 branch_bound 的 limit_hit 粘滞语义）。
+/// 镜像 branch_bound 的 limit_hit 粘滞语义；节点 LP 迭代上限经独立粘滞
+/// 标记 limit_hit 剪枝续搜、不截断树，终局经 [`effective_stop_code`] 同样
+/// 映射到 NodeLimit ⇒ LimitReached，见 M3）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParallelStop {
-    /// 节点上限（含 LP 迭代上限）。
+    /// 节点上限（含节点 LP 迭代上限：剪枝续搜，探索完备后仍诚实 LimitReached）。
     NodeLimit,
     /// 时间上限。
     TimeLimit,
@@ -101,7 +146,9 @@ pub enum ParallelStop {
 pub struct ParallelOutcome {
     /// 根终局捷径直返；None = 进入过树搜索。
     pub root_terminal: Option<SolveStatus>,
-    /// 停止原因；None = 树探索完备（池空 ∧ active == 0 且从未置 stop）。
+    /// 停止原因；None = 树探索完备（池空 ∧ active == 0 且从未置 stop，也
+    /// 从未置 LP 迭代上限剪枝标记 limit_hit——置位时按 NodeLimit 类截断
+    /// 诚实报告 LimitReached，不冒充完备）。
     pub stop: Option<ParallelStop>,
     /// 最优目标（原始 sense + obj_offset 口径）。
     pub best_objective: Option<f64>,
@@ -129,16 +176,33 @@ pub struct ParallelOutcome {
 // ===========================================================================
 
 /// 池节点：完整界快照 + est（父 resolve 目标，原始 sense 口径，Optimal
-/// 路径必有限）。
+/// 路径必有限）+ 分支记账三元组（var/tighten_lb/frac_dir，供子节点 resolve
+/// 后按顺序侧同口径做伪代价被动记账）+ 深度（可靠性探测的深度门控）。
 struct PoolNode {
     bounds: Bounds,
     est: f64,
+    /// 父节点分支决策的变量。
+    var: usize,
+    /// true = 上行分支（父节点收紧 lb 至 ⌊x̄⌋+1）；false = 下行（ub 至 ⌊x̄⌋）。
+    tighten_lb: bool,
+    /// 该方向距被违反界的分数距离（与顺序侧 Pending.frac_dir 同口径）。
+    frac_dir: f64,
+    /// 节点深度（根子节点 = 1）。
+    depth: u32,
 }
 
-/// 池状态。不变量：`active` == inflight 中 `Some` 槽位数。
+/// 池状态（**单一大锁**保护：全部本地队列 + 窃取池 + active/inflight/done，
+/// 4 线程竞争可控，规避分锁+终止检测复杂度）。不变量：`active` == inflight
+/// 中 `Some` 槽位数；每个存活节点恰归属一个容器（某本地队列 / 窃取池 /
+/// 某 worker 的 inflight 槽），全部转移在锁临界区内原子完成 ⇒ 无丢无重。
 struct PoolState {
-    /// 待处理节点（尾弹出 = LIFO，下行分支先探索）。
-    nodes: Vec<PoolNode>,
+    /// per-worker 本地队列（双端：**队首** = owner 弹出端 = 最新子代——分支时
+    /// 两个孩子按序 `push_front` 到自己队首，owner 随后 `pop_front` 即得近亲
+    /// 子代，同亲热启动保亲和；**队尾** = 最老 deferred 分支，留给窃取者）。
+    locals: Vec<VecDeque<PoolNode>>,
+    /// 全局窃取池（Vec 尾弹出 = LIFO）：根子节点入池；worker 本地空时优先
+    /// 从池尾窃取。push 走 `notify_all` 快路径。
+    steal: Vec<PoolNode>,
     /// 在处理节点数。
     active: usize,
     /// 搜索结束标志（完备或 stop 后置位）。
@@ -146,6 +210,57 @@ struct PoolState {
     /// Some(est) = worker w 在处理节点（est 为该节点父谱系目标）；
     /// None = 空闲（聚合时剔除，无哨兵毒化）。
     inflight: Vec<Option<f64>>,
+}
+
+impl PoolState {
+    /// 全部待处理容器是否为空：**全部本地队列 ∧ 窃取池**（done 判定口径，
+    /// 漏任一容器都会提前 done 丢树）。
+    fn all_empty(&self) -> bool {
+        self.steal.is_empty() && self.locals.iter().all(|q| q.is_empty())
+    }
+
+    /// 取节点（调用方持池锁；弹出即从容器原子移除，无丢无重）：
+    /// ① 本地队首（owner 最新子代，保亲和 LIFO）→ ② 窃取池尾 →
+    /// ③ 从随机起点轮询各 victim **队尾**偷**单个**（首版不拆半：victim 只
+    ///    失去一个最老 deferred 分支，owner 正在探索的近亲前沿不动；被偷
+    ///    节点成为窃取者自家子树的种子，亲和按 worker 各自积累）。
+    /// 全部为空返回 None（调用方判定终止或 wait_timeout）。
+    fn take_local_or_steal(&mut self, w: usize, rng: &mut u64) -> Option<PoolNode> {
+        if let Some(node) = self.locals[w].pop_front() {
+            return Some(node);
+        }
+        if let Some(node) = self.steal.pop() {
+            return Some(node);
+        }
+        let threads = self.locals.len().max(1);
+        let start = (splitmix_next(rng) % threads as u64) as usize;
+        for k in 0..threads {
+            let v = (start + k) % threads;
+            if v == w {
+                continue;
+            }
+            if let Some(node) = self.locals[v].pop_back() {
+                return Some(node);
+            }
+        }
+        None
+    }
+}
+
+/// SplitMix64 单步（确定性伪随机，无墙钟依赖）：窃取扫描的随机起点。
+fn splitmix_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// worker 取节点结果：Node = 成功取到（active/inflight 已在锁内记账）；
+/// Finished = 搜索结束（stop 置位、或 done——含本线程在锁内判定的完备）。
+enum AcquireOutcome {
+    Node(PoolNode),
+    Finished,
 }
 
 /// gap 触发证据（粘滞）：仅 stop CAS 0→Gap 的胜者写入一次（db、inc 均有限，
@@ -163,7 +278,10 @@ struct GapEvidence {
 /// 借用调用栈上的 `&Problem` 与 `&[(terms, rhs)]`（无 'static 要求）。
 struct Shared {
     pool: Mutex<PoolState>,
-    /// worker 等节点：push → notify_one；done/stop → notify_all。
+    /// worker 等待/窃取：本地与窃取池皆空且 active>0 ⇒ wait_timeout(≤5ms)
+    /// 周期醒来重扫 victim 队尾；窃取池 push / done / stop → notify_all
+    /// （快路径立即唤醒）；本地队列 push **静默**（亲和保护——唤醒的睡者
+    /// 会与 owner 争夺刚压入的近亲子代，靠超时兜底窃取）。
     cv_workers: Condvar,
     /// 仅协调线程 wait_timeout：仅 done/stop → notify_all。
     cv_progress: Condvar,
@@ -177,6 +295,10 @@ struct Shared {
     last_improve_node: AtomicU64,
     /// 最近一次 incumbent 改进的时刻（毫秒；降级停滞信号）。
     last_improve_millis: AtomicU64,
+    /// LP 迭代上限剪枝的粘滞标记（镜像顺序路径 limit_hit）：worker 节点
+    /// resolve 迭代上限 ⇒ 剪枝该节点并置位，**不终止树搜索**；终局若 stop
+    /// 仍为 NONE 且本标记置位 ⇒ 诚实映射 NodeLimit 类截断（LimitReached）。
+    limit_hit: AtomicBool,
     /// 0=None 1=NodeLimit 2=TimeLimit 3=Gap 4=Degrade（CAS 一次性置位，粘滞）。
     stop: AtomicU8,
     gap_evidence: Mutex<Option<GapEvidence>>,
@@ -202,7 +324,8 @@ impl Shared {
     ) -> Self {
         Shared {
             pool: Mutex::new(PoolState {
-                nodes: Vec::new(),
+                locals: (0..threads).map(|_| VecDeque::new()).collect(),
+                steal: Vec::new(),
                 active: 0,
                 done: false,
                 inflight: vec![None; threads],
@@ -214,6 +337,7 @@ impl Shared {
             performed: AtomicU64::new(0),
             last_improve_node: AtomicU64::new(0),
             last_improve_millis: AtomicU64::new(0),
+            limit_hit: AtomicBool::new(false),
             stop: AtomicU8::new(STOP_NONE),
             gap_evidence: Mutex::new(None),
             controller: Mutex::new(HeuristicController::new(Default::default())),
@@ -366,20 +490,59 @@ impl Shared {
         self.cv_progress.notify_all();
     }
 
-    /// worker 等待节点（池空且 active > 0 且未 done/stop）。
-    fn wait_workers<'a>(&'a self, guard: MutexGuard<'a, PoolState>) -> MutexGuard<'a, PoolState> {
-        self.cv_workers
-            .wait(guard)
-            .unwrap_or_else(|poisoned| {
-                self.abort();
-                poisoned.into_inner()
-            })
+    /// worker 取节点（单一大锁内：本地队首 → 窃取池尾 → 随机起点扫各
+    /// victim 队尾偷单个）。暂无节点且仍有在处理 ⇒ `cv_workers.
+    /// wait_timeout(≤5ms)` 周期醒来重扫（victim 本地 push 不发全局 notify，
+    /// 靠本超时兜底窃取，杜绝永久睡眠）；stop/done/窃取池 push 的
+    /// `notify_all` 走快路径立即唤醒。
+    ///
+    /// 完备判定（全部本地队列空 ∧ 窃取池空 ∧ active == 0 ⇒ done）与空
+    /// 聚合机会在同一池锁临界区内原子发生（M1 契约，见 [`complete_node`]）：
+    /// 否则『末节点解锁』与『某 worker 醒来置 done』之间存在窗口，进度线程
+    /// 恰在此快照会输出 incumbent=X bound=none gap=inf 的矛盾行。
+    fn acquire_node(&self, w: usize, rng: &mut u64) -> AcquireOutcome {
+        let mut pool = self.lock_pool();
+        loop {
+            if pool.done || self.stop_code() != STOP_NONE {
+                return AcquireOutcome::Finished;
+            }
+            if let Some(node) = pool.take_local_or_steal(w, rng) {
+                pool.active += 1;
+                pool.inflight[w] = Some(node.est);
+                return AcquireOutcome::Node(node);
+            }
+            if pool.active == 0 {
+                // 全部容器空（take 失败已蕴含本地队列与窃取池皆空）且无在
+                // 处理节点：搜索完备。done 与（门控开启时的）空聚合同临界区。
+                pool.done = true;
+                self.notify_all();
+                return AcquireOutcome::Finished;
+            }
+            let (guard, _) = self
+                .cv_workers
+                .wait_timeout(pool, WORKER_WAIT_TIMEOUT)
+                .unwrap_or_else(|poisoned| {
+                    self.abort();
+                    poisoned.into_inner()
+                });
+            pool = guard;
+        }
     }
 
     // —— 节点完成转移（(5)：push 持锁点 + 两段式 gap 检查）——
 
-    /// 节点完成：压 children（如有）、释放持有槽（active−1、inflight=None）、
-    /// 持锁聚合 db 快照、解锁后两段式 gap 检查。
+    /// 节点完成：children 压入 owner 本地队列队首、释放持有槽（active−1、
+    /// inflight=None）、（门控开启时）持锁聚合 db 快照、解锁后两段式 gap 检查。
+    ///
+    /// 完备判定（全部本地队列空 ∧ 窃取池空 ∧ active == 0 ⇒ done）与空聚合
+    /// 在**同一池锁临界区**内原子发生（M1）：否则『末节点解锁』与『某
+    /// worker 醒来置 done』之间存在窗口，进度线程恰在此快照会输出
+    /// incumbent=X bound=none gap=inf 的矛盾行。
+    ///
+    /// 聚合门控：仅 (mipgap 有限正值 || degrade 预算存在) 才做 O(开放节点)
+    /// 全量聚合；关闭时 db=None 传入 maybe_gap/maybe_degrade——两者对 None
+    /// 各自早退（maybe_gap 的 limit 判空/非正防御、maybe_degrade 的预算判空
+    /// 与 AutoDegrade::decide 步骤 3 界缺失防御），语义不变。
     fn complete_node(
         &self,
         w: usize,
@@ -387,17 +550,29 @@ impl Shared {
         sense: Sense,
         mipgap: Option<f64>,
     ) {
+        let need_db = matches!(mipgap, Some(g) if g.is_finite() && g > 0.0)
+            || self.degrade_budget_secs.is_some();
         let db = {
             let mut pool = self.lock_pool();
-            let grew = !children.is_empty();
-            pool.nodes.append(&mut children);
+            // 子代压自己队首（保同亲 LIFO）：按序 push_front ⇒ owner 队首弹出
+            // 顺序与旧全局池『append 后尾弹出』逐子节点一致（children 末元素
+            // 先探索）。本地队列 push **不发全局 notify**——等待 worker 经
+            // wait_timeout 周期扫 victim 队尾窃取；若此处 notify_one，被唤醒
+            // 的睡者会与 owner 争夺刚压入的近亲子代，恰好破坏亲和机制。
+            for child in children.drain(..) {
+                pool.locals[w].push_front(child);
+            }
             pool.active -= 1;
             pool.inflight[w] = None;
-            if grew {
-                // push ⇒ 唤醒一个等待 worker（完成者自身也会回头取节点）。
-                self.cv_workers.notify_one();
+            if pool.all_empty() && pool.active == 0 {
+                // 全部容器空且无在处理节点：搜索完备。done 与上方（门控开启
+                // 时的）空聚合同临界区，进度线程要么在窗口前快照（容器/在
+                // 处理非空 ⇒ bound 必非空聚合），要么看到 done 直接退出——
+                // 矛盾行窗口被关闭。
+                pool.done = true;
+                self.notify_all();
             }
-            pool_db_aggregate(&pool, sense)
+            need_db.then(|| pool_db_aggregate(&pool, sense)).flatten()
         };
         self.maybe_gap(sense, mipgap, db);
         self.maybe_degrade(sense, db);
@@ -478,19 +653,20 @@ impl Shared {
         }
     }
 
-    /// 退出路径（(6)）：仍持有则释放（active−1、inflight=None）；
-    /// stop ≠ 0 或（空且 active == 0）⇒ done + 双 cv notify_all；
-    /// 否则非空 ⇒ cv_workers.notify_one。
+    /// 退出路径：仍持有则释放（active−1、inflight=None）；
+    /// stop ≠ 0 或（全部容器空且 active == 0）⇒ done + 双 cv notify_all；
+    /// 否则窃取池非空 ⇒ cv_workers.notify_one（本地队列不为空不唤醒——
+    /// 等待 worker 经 wait_timeout 自调度窃取）。
     fn worker_release(&self, w: usize) {
         let mut pool = self.lock_pool();
         if pool.inflight[w].is_some() {
             pool.active -= 1;
             pool.inflight[w] = None;
         }
-        if self.stop_code() != STOP_NONE || (pool.nodes.is_empty() && pool.active == 0) {
+        if self.stop_code() != STOP_NONE || (pool.all_empty() && pool.active == 0) {
             pool.done = true;
             self.notify_all();
-        } else if !pool.nodes.is_empty() {
+        } else if !pool.steal.is_empty() {
             self.cv_workers.notify_one();
         }
     }
@@ -508,14 +684,24 @@ impl Shared {
     }
 }
 
-/// 池对偶界聚合：池内 est ∪ inflight Some 槽（调用前滤除非有限值）。
+/// 池对偶界聚合（**全量口径**，complete_node（门控后）与截断终界/进度行
+/// 共用的唯一实现）：**所有本地队列的全部节点 est ∪ 窃取池全部 est ∪
+/// inflight Some 槽**，先滤除非有限值，取方向极值。全量扫描保证不低估
+/// 开放节点极值（gap 判定只可能被推迟、不偏提前终止——保守方向）；任何
+/// 『只看各容器尾』的口径都漏掉容器内部节点与窃取池，属禁止项。
 fn pool_db_aggregate(pool: &PoolState, sense: Sense) -> Option<f64> {
     aggregate_bound(
         sense,
-        pool.nodes
+        pool.locals
             .iter()
-            .map(|n| n.est)
+            .flat_map(|q| q.iter().map(|n| n.est))
             .filter(|e| e.is_finite())
+            .chain(
+                pool.steal
+                    .iter()
+                    .map(|n| n.est)
+                    .filter(|e| e.is_finite()),
+            )
             .chain(
                 pool.inflight
                     .iter()
@@ -525,12 +711,26 @@ fn pool_db_aggregate(pool: &PoolState, sense: Sense) -> Option<f64> {
     )
 }
 
+/// 终局停止码合成（M3，纯函数）：`limit_hit` 是 LP 迭代上限剪枝的粘滞标记
+/// （镜像顺序 limit_hit），**不**截断树搜索；探索完备（stop 仍 NONE）而标记
+/// 置位 ⇒ 映射 STOP_NODE（NodeLimit 类 ⇒ 终态诚实 LimitReached，bound 取
+/// 剩余池聚合——完备后为空 ⇒ None，与顺序侧栈空聚合同口径）。粘滞 stop
+/// （Gap/Degrade/NodeLimit/TimeLimit）优先于 limit_hit。
+fn effective_stop_code(stop: u8, limit_hit: bool) -> u8 {
+    if stop == STOP_NONE && limit_hit {
+        STOP_NODE
+    } else {
+        stop
+    }
+}
+
 // ===========================================================================
 // 并行分支定界主入口
 // ===========================================================================
 
-/// 并行分支定界。前置：`config.threads >= 2`；`branch_rule`/`node_rule`
-/// 非默认值 ⇒ `Err(Internal)`。
+/// 并行分支定界。前置：`config.threads >= 2`；`node_rule` 非默认值 ⇒
+/// `Err(Internal)`。分支规则任意（MostFractional/Pseudocost：Pseudocost 下
+/// worker 各持本地 [`Pseudocosts`]，无全局锁）。
 pub fn parallel_branch_and_bound(
     problem: &Problem,
     opts: &BbOptions,
@@ -544,14 +744,19 @@ pub fn parallel_branch_and_bound(
             config.threads
         )));
     }
-    if opts.branch_rule != BranchRule::MostFractional || opts.node_rule != NodeRule::DepthFirst {
+    if opts.node_rule != NodeRule::DepthFirst {
         return Err(MilpError::Internal(
-            "parallel_branch_and_bound 前置失败：仅支持默认分支/节点规则（MostFractional/DepthFirst）".to_string(),
+            "parallel_branch_and_bound 前置失败：仅支持默认节点规则（DepthFirst）".to_string(),
         ));
     }
     let int_vars = problem.integer_vars();
     let sense = problem.sense;
+    // 整数目标门控（cutoff 剪枝 + est 弹出剪枝共用；纯问题属性，算一次）。
+    let obj_integral = objective_is_integral(problem);
     let mut stats = BbStats::default();
+    // 割丢弃回退（根割 IterationLimit 重建 Simplex）前累计的 LP 迭代数：
+    // 终局统计以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
+    let mut base_iters: u64 = 0;
     let mut simplex = Simplex::new(problem, tol)?;
     let bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
@@ -591,19 +796,37 @@ pub fn parallel_branch_and_bound(
                 CutOptions::default(),
                 &tol,
             )?;
-            stats.cuts = applied;
-            recorded_cuts = cuts_list
-                .into_iter()
-                .map(|cut| (cut.terms, cut.rhs))
-                .collect();
-            if let Some(status) = root_terminal_status(st) {
-                terminal = Some(status);
-            }
-            if terminal.is_none() {
-                // 取回割后的根 LP 解（记账性 resolve，不计节点）。
-                sol = simplex.resolve(&bounds);
+            if st == LpStatus::IterationLimit {
+                // 割后 resolve 触发迭代上限：割循环停在非 Optimal 态，不可作
+                // 为树搜索根态，也不作整树终态——丢弃全部根割（recorded_cuts
+                // 保持空 ⇒ worker 不重放），重建无割 Simplex + solve 恢复
+                // Optimal 根态后继续启发式与树搜索。正确性：无割原始松弛的
+                // 可行域 ⊇ 含割版本（有效割不切任何整数可行解）⇒ 回退后的
+                // 完备搜索覆盖全部整数可行解，最坏等同于关割行为。
+                // 记账完整：重建前迭代累计进 base_iters；割已丢，stats.cuts
+                // 如实清零。
+                base_iters = base_iters.saturating_add(simplex.iterations());
+                stats.cuts = 0;
+                simplex = Simplex::new(problem, tol)?;
+                sol = simplex.solve(&bounds);
                 if let Some(status) = root_terminal_status(sol.status) {
                     terminal = Some(status);
+                }
+            } else {
+                stats.cuts = applied;
+                recorded_cuts = cuts_list
+                    .into_iter()
+                    .map(|cut| (cut.terms, cut.rhs))
+                    .collect();
+                if let Some(status) = root_terminal_status(st) {
+                    terminal = Some(status);
+                }
+                if terminal.is_none() {
+                    // 取回割后的根 LP 解（记账性 resolve，不计节点）。
+                    sol = simplex.resolve(&bounds);
+                    if let Some(status) = root_terminal_status(sol.status) {
+                        terminal = Some(status);
+                    }
                 }
             }
         }
@@ -651,7 +874,7 @@ pub fn parallel_branch_and_bound(
 
     // —— 根终局直返 ——
     if let Some(status) = terminal {
-        stats.lp_iterations = simplex.iterations();
+        stats.lp_iterations = base_iters.saturating_add(simplex.iterations());
         stats.time_ms = wall_ms(&start);
         let (best_objective, best_values) = match incumbent {
             Some((obj, values)) => (Some(obj), Some(values)),
@@ -681,13 +904,15 @@ pub fn parallel_branch_and_bound(
     // —— 根节点 (d)/(e)/(f) 判定（私有快照版，无 trail）——
     let mut children: Vec<PoolNode> = Vec::new();
     {
-        // (d)：LP bound 不优于 incumbent ⇒ 根关闭。
+        // (d)：LP bound 不优于 incumbent 的有效剪枝界（整数目标门控含
+        // cutoff，与顺序 branch_or_close 同口径）⇒ 根关闭。
         let mut closed = false;
         if let Some((obj, _)) = incumbent.as_ref() {
             if bound_no_better(
                 sense,
                 sol.objective,
                 *obj,
+                obj_integral,
                 opts.prune_abs,
                 opts.prune_rel,
             ) {
@@ -706,8 +931,20 @@ pub fn parallel_branch_and_bound(
                 }
             }
             if !(integral && check_passed) {
-                // (f)：分支压 children（est = 根目标）。
-                children = branch_children(&int_vars, &bounds, &sol);
+                // (f)：分支压 children（est = 根目标）。根阶段用空伪代价
+                // 统计做规则化选择（Pseudocost 空表 = f⁻·f⁺ 乘积规则；worker
+                // 各自冷启动本地统计——根的观测无法带给 worker，可靠性探测
+                // 在根阶段无收益故不做，worker 从深度 1 节点起探测）。
+                let root_pc = Pseudocosts::new(problem.vars.len());
+                children = branch_children(
+                    &int_vars,
+                    &bounds,
+                    &sol,
+                    opts,
+                    &root_pc,
+                    tol.integrality,
+                    1,
+                );
             }
         }
     }
@@ -726,9 +963,11 @@ pub fn parallel_branch_and_bound(
     shared.write_incumbent(incumbent.clone());
     shared.reserved.store(1, Ordering::SeqCst);
     shared.performed.store(1, Ordering::SeqCst);
-    shared
-        .last_improve_node
-        .store(u64::from(incumbent.is_some()), Ordering::SeqCst);
+    // 自适应 stall 锚点对齐顺序路径（AdaptiveState::new 的
+    // last_improvement_node = 0）：根启发式供应的 incumbent 只刷新时刻锚点
+    // （last_improve_millis，镜像顺序侧仅更新 last_improvement_secs），**不**
+    // 记作节点 1 处的改进——否则 stall(400) 阈值在并行侧晚一个节点触发，
+    // 与顺序侧的控制器决策序列分叉。
     if incumbent.is_some() {
         shared.last_improve_millis.store(
             u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -737,11 +976,15 @@ pub fn parallel_branch_and_bound(
     }
     shared.lock_controller().notify_root_done(1);
 
-    // —— 根子节点入池【持锁】+ 两段式 gap/降级检查（spawn 之前）——
+    // —— 根子节点入窃取池【持锁】+ 两段式 gap/降级检查（spawn 之前）——
     if !children.is_empty() {
         let db = {
             let mut pool = shared.lock_pool();
-            pool.nodes.append(&mut children);
+            // 根子节点入窃取池（尾弹出 ⇒ 首个 worker 取到的子节点与旧全局
+            // 池 append+尾弹出一致）；窃取池 push 走 notify_all 快路径（此刻
+            // 尚无 waiter，纯协议统一——spawn 后各 worker 直接从池尾取得）。
+            pool.steal.append(&mut children);
+            shared.cv_workers.notify_all();
             pool_db_aggregate(&pool, sense)
         };
         shared.maybe_gap(sense, config.mipgap_percent, db);
@@ -750,7 +993,7 @@ pub fn parallel_branch_and_bound(
 
     // 根 gap/降级触发 ⇒ 直接收尾，不 spawn。
     if matches!(shared.stop_code(), STOP_GAP | STOP_DEGRADE) {
-        stats.lp_iterations = simplex.iterations();
+        stats.lp_iterations = base_iters.saturating_add(simplex.iterations());
         stats.time_ms = wall_ms(&start);
         let (best_objective, best_values) = match incumbent {
             Some((obj, values)) => (Some(obj), Some(values)),
@@ -777,8 +1020,8 @@ pub fn parallel_branch_and_bound(
     }
 
     // 根即闭合（无子节点）⇒ 完备收尾，无需 spawn。
-    if shared.lock_pool().nodes.is_empty() {
-        stats.lp_iterations = simplex.iterations();
+    if shared.lock_pool().all_empty() {
+        stats.lp_iterations = base_iters.saturating_add(simplex.iterations());
         stats.time_ms = wall_ms(&start);
         let (best_objective, best_values) = match incumbent {
             Some((obj, values)) => (Some(obj), Some(values)),
@@ -828,6 +1071,7 @@ pub fn parallel_branch_and_bound(
                     shared_ref,
                     worker_opts,
                     tol,
+                    obj_integral,
                     mipgap,
                     adaptive,
                     time_budget_secs,
@@ -842,9 +1086,10 @@ pub fn parallel_branch_and_bound(
             }
         }
         // 逐个 join：worker panic ⇒ Internal（不外泄 panic）。
+        // 迭代汇总与 crate 其余统计同口径用 saturating（溢出饱和而非静默回绕）。
         for handle in handles {
             match handle.join() {
-                Ok(iters) => worker_iters = worker_iters.wrapping_add(iters),
+                Ok(iters) => worker_iters = worker_iters.saturating_add(iters),
                 Err(_) => join_failed = true,
             }
         }
@@ -861,9 +1106,9 @@ pub fn parallel_branch_and_bound(
 
     // —— 组装（Gap 用粘滞证据，绝不在 join 后重新聚合）——
     stats.nodes = shared.performed.load(Ordering::SeqCst);
-    stats.lp_iterations = simplex
-        .iterations()
-        .wrapping_add(worker_iters);
+    stats.lp_iterations = base_iters
+        .saturating_add(simplex.iterations())
+        .saturating_add(worker_iters);
     stats.time_ms = wall_ms(&start);
     let (best_objective, best_values) = {
         let guard = shared
@@ -878,7 +1123,10 @@ pub fn parallel_branch_and_bound(
             None => (None, None),
         }
     };
-    let (stop_out, bound, gap) = match shared.stop_code() {
+    let (stop_out, bound, gap) = match effective_stop_code(
+        shared.stop_code(),
+        shared.limit_hit.load(Ordering::SeqCst),
+    ) {
         code @ (STOP_GAP | STOP_DEGRADE) => {
             let evidence = *shared.lock_gap_evidence();
             (
@@ -942,6 +1190,7 @@ fn worker_run(
     shared: &Shared,
     opts: BbOptions,
     tol: Tolerances,
+    obj_integral: bool,
     mipgap: Option<f64>,
     adaptive: bool,
     time_budget_secs: Option<f64>,
@@ -964,31 +1213,37 @@ fn worker_run(
             return 0;
         }
     }
+    // 本地伪代价统计（仅 Pseudocost 规则读写；worker 各持一份，无全局锁——
+    // 冷启动由 probe_reliability 在浅层节点供应可靠观测）。
+    let mut pc = Pseudocosts::new(problem.vars.len());
+    // 窃取扫描随机起点（确定性 SplitMix64，按 worker 错峰种子）。
+    let mut steal_rng = (w as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     loop {
-        // —— 取节点（持池锁；空且 active > 0 且未 done ⇒ cv_workers.wait）——
-        let node = {
-            let mut pool = shared.lock_pool();
-            loop {
-                if shared.stop_code() != STOP_NONE {
-                    drop(pool);
-                    shared.worker_release(w);
-                    return simplex.iterations();
-                }
-                if let Some(node) = pool.nodes.pop() {
-                    pool.active += 1;
-                    pool.inflight[w] = Some(node.est);
-                    break node;
-                }
-                if pool.active == 0 {
-                    // 池空且无在处理节点：搜索完备。
-                    pool.done = true;
-                    shared.notify_all();
-                    drop(pool);
-                    return simplex.iterations();
-                }
-                pool = shared.wait_workers(pool);
+        // —— 取节点（单一大锁：本地队首 → 窃取池尾 → 随机起点扫各 victim
+        //     队尾偷单个；全空且 active==0 ⇒ done；暂无且 active>0 ⇒
+        //     cv_workers.wait_timeout(≤5ms) 周期醒来重扫）——
+        let mut node = match shared.acquire_node(w, &mut steal_rng) {
+            AcquireOutcome::Node(node) => node,
+            AcquireOutcome::Finished => {
+                shared.worker_release(w);
+                return simplex.iterations();
             }
         };
+        // —— est 弹出剪枝（仅整数目标启用，与顺序侧 pop 后跳过同口径）：
+        //    父节点 LP 目标 est 已不优于当前 incumbent 的有效剪枝界 ⇒ 该
+        //    子树不可能再出严格更优解，直接丢弃。位于 reserve fetch_add
+        //    之前：不 reserve、不 performed、不 resolve——杜绝『同
+        //    node_limit 下 t4 报 NodeLimit 而 t1 Optimal』的口径分裂。锁序
+        //    与既有 Infeasible 剪枝路径一致（complete_node：池锁内归还槽位
+        //    → 释放 → 两段式 gap/降级检查）。——
+        if obj_integral {
+            if let Some(obj) = shared.read_incumbent_obj() {
+                if bound_no_better(sense, node.est, obj, true, opts.prune_abs, opts.prune_rel) {
+                    shared.complete_node(w, Vec::new(), sense, mipgap);
+                    continue;
+                }
+            }
+        }
         // —— 预约制上限检查（成功弹出后；触发即丢节点：不 resolve、不计
         //    performed——镜像顺序『pop 后检查、触发即丢』语义）——
         let reserve = shared.reserved.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1018,21 +1273,45 @@ fn worker_run(
                 shared.worker_release(w);
                 return simplex.iterations();
             }
-            // (c) IterationLimit ⇒ 置 stop=NodeLimit（粘滞）。
+            // (c) IterationLimit ⇒ 剪枝本节点 + 置 limit_hit 粘滞标记（镜像
+            //     顺序 PruneLimit ⇒ {limit_hit = true; continue}）：树继续
+            //     探索其余节点，终态仍诚实映射 LimitReached——两路径终态与
+            //     探索范围一致，不再以粘滞 stop 截断整树。
             LpStatus::IterationLimit => {
-                shared.set_stop(STOP_NODE);
+                shared.limit_hit.store(true, Ordering::SeqCst);
                 shared.complete_node(w, Vec::new(), sense, mipgap);
                 continue;
             }
             LpStatus::Optimal => {}
         }
+        // 伪代价观测（与顺序侧主循环完全同口径）：子节点 LP 目标相对父 est
+        // 的方向化增益 ÷ 该方向分数距离（node.var/tighten_lb/frac_dir 即父
+        // 分支决策记账三元组）；非 Optimal 子节点已在上方剪枝路径 continue，
+        // 此处必为 Optimal。
+        if opts.branch_rule == BranchRule::Pseudocost {
+            let gain = match sense {
+                Sense::Maximize => node.est - sol.objective,
+                Sense::Minimize => sol.objective - node.est,
+            };
+            if gain.is_finite() && gain > 0.0 && node.frac_dir > tol.integrality {
+                pc.record(node.var, node.tighten_lb, gain / node.frac_dir);
+            }
+        }
         // —— (d)/(e)/adaptive/(f) ——
         let mut sol = sol;
         let mut children: Vec<PoolNode> = Vec::new();
         let mut closed = false;
-        // (d)：LP bound 不优于 incumbent（读锁取当前值）⇒ 节点关闭。
+        // (d)：LP bound 不优于 incumbent 的有效剪枝界（整数目标门控含
+        // cutoff，与顺序 branch_or_close 同口径；读锁取当前值）⇒ 节点关闭。
         if let Some(obj) = shared.read_incumbent_obj() {
-            if bound_no_better(sense, sol.objective, obj, opts.prune_abs, opts.prune_rel) {
+            if bound_no_better(
+                sense,
+                sol.objective,
+                obj,
+                obj_integral,
+                opts.prune_abs,
+                opts.prune_rel,
+            ) {
                 closed = true;
             }
         }
@@ -1072,12 +1351,16 @@ fn worker_run(
                     None => false,
                 };
                 // dive 扰动了基：真实界 resolve 回取（记账性，不计节点）。
+                // P0-2：节点 LP 的可行性/最优性已由 dive 前的 resolve 证实，
+                // 回取状态不参与节点判定——Infeasible 属 dive 扰基后的数值
+                // 伪影，弃用结果继续分支（对齐顺序侧 branch_or_close 的
+                // `let _ = resolve` 语义），**绝不据此 closed=true 丢子树**
+                //（曾在此丢失含最优解的子树窗口）；Unbounded 保留诚实 Err。
                 let back = simplex.resolve(&node.bounds);
-                match back.status {
-                    LpStatus::Optimal => sol = back,
-                    LpStatus::Infeasible => closed = true,
-                    LpStatus::IterationLimit => shared.set_stop(STOP_NODE),
-                    LpStatus::Unbounded => {
+                match dive_back_action(back.status) {
+                    DiveBackAction::Refresh => sol = back,
+                    DiveBackAction::Discard => {}
+                    DiveBackAction::Fail => {
                         shared.record_error(nonroot_unbounded_error());
                         shared.set_stop(STOP_NODE);
                         shared.worker_release(w);
@@ -1089,7 +1372,32 @@ fn worker_run(
         }
         // (f)：分支压 children（est = 本节点目标）。
         if !closed {
-            children = branch_children(int_vars, &node.bounds, &sol);
+            // P1-4 可靠性冷启动探测（与顺序侧同一 pub(crate) 辅助：本地
+            // Pseudocosts + 同口径预算/深度门控，无锁；探测只读界并恢复，
+            // 不参与节点判定，子树不丢）。
+            if opts.branch_rule == BranchRule::Pseudocost {
+                probe_reliability(
+                    sense,
+                    &mut node.bounds,
+                    int_vars,
+                    &sol.x,
+                    sol.objective,
+                    tol,
+                    &opts,
+                    &mut pc,
+                    &mut simplex,
+                    node.depth as usize,
+                );
+            }
+            children = branch_children(
+                int_vars,
+                &node.bounds,
+                &sol,
+                &opts,
+                &pc,
+                tol.integrality,
+                node.depth + 1,
+            );
         }
         // —— 节点完成转移 + 两段式 gap 检查 ——
         shared.complete_node(w, children, sense, mipgap);
@@ -1179,32 +1487,45 @@ fn root_terminal_status(status: LpStatus) -> Option<SolveStatus> {
     }
 }
 
+/// dive 后记账性回取 resolve 的状态分流（纯函数，语义供单元钉死）。
+///
+/// 节点 LP 的可行性/最优性由 dive **前**的 resolve 证实；回取只为把扰动的
+/// 基拉回本节点界，其状态不参与节点判定：
+/// - Optimal ⇒ 用回取解刷新 `sol`（同界重解，目标一致）；
+/// - Infeasible ⇒ **弃用**：dive 扰基后对偶单纯形 Phase-1 的数值伪影，
+///   不是本节点真实属性——保留 dive 前的 LP 解继续分支，绝不 closed 丢
+///   子树（对齐顺序侧 branch_or_close 的 `let _ = resolve` 语义）；
+/// - IterationLimit ⇒ 同上弃用（不截断树）；
+/// - Unbounded ⇒ 数值异常（父有界时收紧/dive 不可能引出无界）⇒ 诚实 Err。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiveBackAction {
+    /// Optimal：用回取解刷新本节点 LP 解。
+    Refresh,
+    /// Infeasible / IterationLimit：弃用回取状态，继续按原 LP 解分支。
+    Discard,
+    /// Unbounded：数值异常，整树诚实终止。
+    Fail,
+}
+
+fn dive_back_action(status: LpStatus) -> DiveBackAction {
+    match status {
+        LpStatus::Optimal => DiveBackAction::Refresh,
+        LpStatus::Infeasible | LpStatus::IterationLimit => DiveBackAction::Discard,
+        LpStatus::Unbounded => DiveBackAction::Fail,
+    }
+}
+
 /// 非根节点 LP 无界的数值错误（镜像 branch_bound 同名语义）。
 fn nonroot_unbounded_error() -> MilpError {
     MilpError::Numerical("node LP unbounded after bounded root".to_string())
 }
 
 // ===========================================================================
-// 节点判定纯函数（自 branch_bound.rs 逐字移植的私有副本，测试向量钉死）
+// 节点判定纯函数（bound_no_better / is_integral 原逐字私有副本已删除，
+// 改导入 crate::branch_bound 的 pub(crate) 共享实现——整数目标 cutoff
+// （effective_prune_bound 合成）三调用点同口径，杜绝第三份分叉；本模块
+// 保留测试向量钉共享函数。select_branch_var 仍为本模块快照版路径专用副本。）
 // ===========================================================================
-
-/// (d) 剪枝判定（按原始 sense 方向）：
-/// Max: bound ≤ inc + prune_abs + prune_rel·|inc|；Min 镜像。
-fn bound_no_better(sense: Sense, bound: f64, inc: f64, prune_abs: f64, prune_rel: f64) -> bool {
-    let slack = prune_abs + prune_rel * inc.abs();
-    match sense {
-        Sense::Maximize => bound <= inc + slack,
-        Sense::Minimize => bound >= inc - slack,
-    }
-}
-
-/// 整数性判定：全部 int_var 满足 |x−round(x)| ≤ integrality。
-fn is_integral(int_vars: &[usize], x: &[f64], integrality: f64) -> bool {
-    int_vars.iter().all(|&j| match x.get(j) {
-        Some(v) => (v - v.round()).abs() <= integrality,
-        None => false,
-    })
-}
 
 /// MostFractional 分支变量选择：max min(f, 1−f)（f = x−⌊x⌋），并列取最小下标。
 fn select_branch_var(int_vars: &[usize], x: &[f64]) -> Option<(usize, f64)> {
@@ -1247,22 +1568,55 @@ fn tighten_child_snapshot(bounds: &mut Bounds, var: usize, tighten_lb: bool, bou
     true
 }
 
-/// 分支压栈（(f)）：MostFractional 选变量，生成上下行两个子节点
-/// （上行先压、下行后压——LIFO 弹出时下行先探索，与顺序栈序一致）；
-/// est = 本节点 resolve 目标（对子树有效的乐观界）。
-fn branch_children(int_vars: &[usize], bounds: &Bounds, sol: &LpSolution) -> Vec<PoolNode> {
+/// 分支压栈（(f)）：按 `opts.branch_rule` 选变量（Pseudocost 用调用方本地
+/// [`Pseudocosts`]——worker 各持一份，无全局锁；根阶段用空统计做规则化
+/// 选择），生成上下行两个子节点（默认上行先产、下行后产——owner 本地
+/// 队列按序 push_front 后队首弹出时下行先探索，与顺序栈序一致；P1-5
+/// best-estimate 压栈序与顺序侧 branch_or_close 同口径翻转）；est = 本节点
+/// resolve 目标（对子树有效的乐观界）；var/tighten_lb/frac_dir 供子节点
+/// resolve 后按顺序侧同口径做伪代价被动记账。
+fn branch_children(
+    int_vars: &[usize],
+    bounds: &Bounds,
+    sol: &LpSolution,
+    opts: &BbOptions,
+    pc: &Pseudocosts,
+    frac_tol: f64,
+    child_depth: u32,
+) -> Vec<PoolNode> {
     // 无可分支变量为内部不可达防御（不剪枝即丢弃节点）。
-    let Some((var, val)) = select_branch_var(int_vars, &sol.x) else {
+    let Some((var, val)) = (match opts.branch_rule {
+        BranchRule::MostFractional => select_branch_var(int_vars, &sol.x),
+        BranchRule::Pseudocost => pc.select(int_vars, &sol.x, frac_tol),
+    }) else {
         return Vec::new();
     };
     let floor = val.floor();
+    let frac = val - floor;
+    // P1-5 best-estimate 子代压栈序（与顺序侧 branch_or_close 完全同口径）：
+    // 两方向均有伪代价观测（n_obs ≥ 1）且上行估计退化严格更小时，上行后
+    // 压 ⇒ 池尾弹出先探索；否则保持现序（下行先探索）。仅改变入池序，
+    // 两分支域划分完备性与池互斥弹出『每节点恰处理一次』不变。
+    let explore_up_first = pc.n_obs(var) > 0
+        && pc.est_gain(var, true, 1.0 - frac) < pc.est_gain(var, false, frac);
+    let up = (true, floor + 1.0, 1.0 - frac);
+    let down = (false, floor, frac);
+    let order = if explore_up_first {
+        [down, up]
+    } else {
+        [up, down]
+    };
     let mut children = Vec::new();
-    for (tighten_lb, bound) in [(true, floor + 1.0), (false, floor)] {
+    for (tighten_lb, bound, frac_dir) in order {
         let mut child = bounds.clone();
         if tighten_child_snapshot(&mut child, var, tighten_lb, bound) {
             children.push(PoolNode {
                 bounds: child,
                 est: sol.objective,
+                var,
+                tighten_lb,
+                frac_dir,
+                depth: child_depth,
             });
         }
     }
@@ -1325,6 +1679,40 @@ mod tests {
         format!("{}/instances/{name}.milp", env!("CARGO_MANIFEST_DIR"))
     }
 
+    /// 测试用池节点：est/深度可控（var 复用作压力测试的节点 id）。
+    fn test_node(est: f64, depth: u32) -> PoolNode {
+        PoolNode {
+            bounds: Bounds {
+                lb: vec![0.0],
+                ub: vec![1.0],
+            },
+            est,
+            var: est as usize,
+            tighten_lb: false,
+            frac_dir: 0.5,
+            depth,
+        }
+    }
+
+    /// 测试用池状态：locals 按 est 序构造（Vec 首元素 = 队首）。
+    fn test_pool(
+        locals: Vec<Vec<f64>>,
+        steal: Vec<f64>,
+        inflight: Vec<Option<f64>>,
+        active: usize,
+    ) -> PoolState {
+        PoolState {
+            locals: locals
+                .into_iter()
+                .map(|ests| ests.into_iter().map(|e| test_node(e, 1)).collect())
+                .collect(),
+            steal: steal.into_iter().map(|e| test_node(e, 1)).collect(),
+            active,
+            done: false,
+            inflight,
+        }
+    }
+
     /// 并行配置（自适应关、无进度行）。
     fn pconfig(threads: usize, mipgap: Option<f64>) -> ParallelConfig {
         ParallelConfig {
@@ -1337,15 +1725,17 @@ mod tests {
         }
     }
 
-    /// dive 钉死问题（heuristics.rs:241-263）：max 10x1+x2 s.t. 20x1+3x2≤43，
-    /// x∈[0,10] 整数；根 LP 21.5，根 dive 得 21。
+    /// dive 钉死问题（heuristics.rs:241-263）：max 10x1+x2+0.5 s.t.
+    /// 20x1+3x2≤43，x∈[0,10] 整数；根 LP 22.0，根 dive 得 21.5。
+    /// offset=0.5 有意非整数化（整数目标 cutoff/est 弹出剪枝门控判否，
+    /// 保住 gap/降级/node-limit 路径覆盖；见 branch_bound.rs 同名 fixture）。
     fn dive_problem() -> Problem {
         let mut p = Problem::new("dive", Sense::Maximize);
         p.add_var("x1", VarType::Integer).unwrap();
         p.add_var("x2", VarType::Integer).unwrap();
         p.set_var_bounds(0, 0.0, 10.0).unwrap();
         p.set_var_bounds(1, 0.0, 10.0).unwrap();
-        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.0).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 1.0)], 0.5).unwrap();
         p.add_constraint(None, vec![(0, 20.0), (1, 3.0)], RelOp::Le, 43.0)
             .unwrap();
         p
@@ -1372,13 +1762,66 @@ mod tests {
         }
     }
 
+    /// （P0-2 回归）dive 回取状态分流：节点 LP 可行性已由 dive 前 resolve
+    /// 证实——回取 Infeasible 是扰基数值伪影，必须 Discard（弃用结果继续
+    /// 分支，**不得 closed 丢子树**；曾在此丢失含最优解的子树窗口）；
+    /// IterationLimit 同 Discard；Optimal ⇒ Refresh；Unbounded ⇒ Fail。
+    #[test]
+    fn dive_back_action_discards_infeasible_artifact() {
+        assert_eq!(
+            dive_back_action(LpStatus::Infeasible),
+            DiveBackAction::Discard,
+            "回取 Infeasible = 数值伪影 ⇒ 弃用结果，不 closed、不丢子树"
+        );
+        assert_eq!(dive_back_action(LpStatus::IterationLimit), DiveBackAction::Discard);
+        assert_eq!(dive_back_action(LpStatus::Optimal), DiveBackAction::Refresh);
+        assert_eq!(dive_back_action(LpStatus::Unbounded), DiveBackAction::Fail);
+    }
+
+    /// （P0-2 行为级）dive 后回取 Infeasible 场景子树不丢：hard-knapsack-12
+    /// 自适应 dive 路径 + threads=4 重复求解恒收敛真最优 523（若回取伪影
+    /// 据此 closed，最优解所在子树被丢即失最优；重复下必现）。
+    #[test]
+    fn dive_back_infeasible_never_loses_subtree_stress() {
+        let weights = [
+            7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0, 31.0, 37.0, 41.0, 43.0, 47.0,
+        ];
+        let values = [
+            11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0,
+        ];
+        let mut p = Problem::new("hard-knapsack-12", Sense::Maximize);
+        for i in 0..12 {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.set_objective((0..12).map(|i| (i, values[i])).collect(), 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            (0..12).map(|i| (i, weights[i])).collect(),
+            RelOp::Le,
+            172.0,
+        )
+        .unwrap();
+        let config = pconfig(4, None);
+        let config = ParallelConfig {
+            adaptive_heuristics: true,
+            ..config
+        };
+        for rep in 0..50 {
+            let out = parallel_branch_and_bound(&p, &BbOptions::default(), &config, tol())
+                .unwrap_or_else(|e| panic!("rep {rep} 求解失败：{e}"));
+            assert_eq!(out.stop, None, "rep {rep} 应完备");
+            assert_close(out.best_objective.unwrap(), 523.0);
+        }
+    }
+
     /// (a) 根 gap 触发（spawn 之前完成 ⇒ 与线程数无关地确定）：
-    /// mipgap=3.0 ⇒ gap≈2.381% ≤ 3 ⇒ stop=Gap、best=21、bound=21.5（证据）、
-    /// gap_percent=≈2.38。
+    /// mipgap=3.0 ⇒ gap≈2.326% ≤ 3 ⇒ stop=Gap、best=21.5、bound=22.0（证据）、
+    /// gap_percent=≈2.33。
     #[test]
     fn gap_triggers_at_root_before_spawn() {
         let p = dive_problem();
-        let expected_gap = 100.0 * 0.5 / 21.0;
+        let expected_gap = 100.0 * 0.5 / 21.5;
         for threads in [2usize, 4] {
             let out = parallel_branch_and_bound(
                 &p,
@@ -1389,8 +1832,8 @@ mod tests {
             .unwrap();
             assert_eq!(out.root_terminal, None, "threads = {threads}");
             assert_eq!(out.stop, Some(ParallelStop::Gap), "threads = {threads}");
-            assert_close(out.best_objective.unwrap(), 21.0);
-            assert_close(out.bound.unwrap(), 21.5);
+            assert_close(out.best_objective.unwrap(), 21.5);
+            assert_close(out.bound.unwrap(), 22.0);
             let g = out.gap_percent.unwrap();
             assert!(
                 (g - expected_gap).abs() <= 1e-9,
@@ -1400,8 +1843,8 @@ mod tests {
         }
     }
 
-    /// (a) mipgap=2.0 ⇒ 根 gap≈2.381% > 2 不触发 ⇒ 树完备：
-    /// stop=None、best=21、bound=Some(21)、gap=Some(0.0)。
+    /// (a) mipgap=2.0 ⇒ 根 gap≈2.326% > 2 不触发 ⇒ 树完备：
+    /// stop=None、best=21.5、bound=Some(21.5)、gap=Some(0.0)。
     #[test]
     fn gap_not_triggered_completes() {
         let p = dive_problem();
@@ -1414,15 +1857,16 @@ mod tests {
             )
             .unwrap();
             assert_eq!(out.root_terminal, None, "threads = {threads}");
-            assert_eq!(out.stop, None, "threads = {threads}：2.381% > 2% 不触发");
-            assert_close(out.best_objective.unwrap(), 21.0);
-            assert_close(out.bound.unwrap(), 21.0);
+            assert_eq!(out.stop, None, "threads = {threads}：2.326% > 2% 不触发");
+            assert_close(out.best_objective.unwrap(), 21.5);
+            assert_close(out.bound.unwrap(), 21.5);
             assert_eq!(out.gap_percent, Some(0.0), "完备且有 incumbent ⇒ 0.0");
         }
     }
 
     /// (b) node_limit=2：child1 预约号 r=2（处理，performed=2）、child2 r=3
-    /// （>2 丢弃 + stop=NodeLimit）——与哪颗子节点被预约无关地确定。
+    /// （>2 丢弃 + stop=NodeLimit）——与哪颗子节点被预约无关地确定
+    ///（offset=0.5 非整数目标 ⇒ est 弹出剪枝关闭，口径与机制引入前一致）。
     #[test]
     fn node_limit_two_stops_deterministically() {
         let p = dive_problem();
@@ -1436,7 +1880,7 @@ mod tests {
             assert_eq!(out.stop, Some(ParallelStop::NodeLimit), "threads = {threads}");
             assert_close(
                 out.best_objective.unwrap(),
-                21.0,
+                21.5,
             );
             assert_eq!(out.stats.nodes, 2, "根 + 恰一颗子节点");
         }
@@ -1548,40 +1992,274 @@ mod tests {
         assert_eq!(out.stats.nodes, 1);
     }
 
-    /// (d) inflight None 槽不参与聚合（单元级：直接构造池状态）。
+    /// (d) 全量口径聚合（单元级：直接构造池状态）：遍历**所有本地队列的
+    /// 全部节点 + 窃取池全部 + inflight Some 槽**取方向极值；inflight
+    /// None 槽/非有限值剔除。极值节点位于本地队列**中部**与窃取池时必须
+    /// 取到——『各队列尾+inflight』口径会漏掉队中/池中节点（低估开放节点
+    /// 极值使 gap 偏小，属不保守方向），本向量钉死防口径回归。
     #[test]
-    fn pool_aggregation_skips_none_and_nonfinite_inflight() {
-        let pool = PoolState {
-            nodes: vec![
-                PoolNode {
-                    bounds: Bounds {
-                        lb: vec![0.0],
-                        ub: vec![1.0],
-                    },
-                    est: 21.5,
-                },
-                PoolNode {
-                    bounds: Bounds {
-                        lb: vec![0.0],
-                        ub: vec![1.0],
-                    },
-                    est: 3.0,
-                },
-            ],
-            active: 1,
-            done: false,
-            inflight: vec![None, Some(2.0), Some(f64::NAN)],
-        };
+    fn pool_aggregation_full_scan_skips_none_and_nonfinite() {
+        let pool = test_pool(
+            // 本地队列 0：[front=5.0, middle=21.5, back=3.0]；队列 1 空。
+            vec![vec![5.0, 21.5, 3.0], Vec::new()],
+            // 窃取池：[7.0]。
+            vec![7.0],
+            vec![None, Some(2.0), Some(f64::NAN)],
+            1,
+        );
+        // Max 极值 21.5 在队列中部：队尾口径只能取 max(3.0, 7.0, 2.0) = 7.0。
         assert_eq!(pool_db_aggregate(&pool, Sense::Maximize), Some(21.5));
         assert_eq!(pool_db_aggregate(&pool, Sense::Minimize), Some(2.0));
         // 全空 ⇒ None。
-        let empty = PoolState {
-            nodes: Vec::new(),
-            active: 0,
-            done: false,
-            inflight: vec![None, None],
-        };
+        let empty = test_pool(
+            vec![Vec::new(), Vec::new()],
+            Vec::new(),
+            vec![None, None],
+            0,
+        );
         assert_eq!(pool_db_aggregate(&empty, Sense::Maximize), None);
+    }
+
+    /// 取节点顺序契约：① 本地队首（LIFO，最新子代）→ ② 窃取池尾（LIFO）
+    /// → ③ victim 队尾偷单个（最老 deferred 分支；owner 的近亲前沿不动）。
+    #[test]
+    fn take_local_then_steal_pool_then_victim_tail() {
+        let mut pool = test_pool(
+            vec![vec![11.0, 12.0], vec![31.0, 32.0]],
+            vec![21.0, 22.0],
+            vec![None, None],
+            0,
+        );
+        let mut rng = 0xDEAD_BEEFu64;
+        // w=0：本地队首优先（11 = 最后 push_front 的最新子代）。
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 11.0);
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 12.0);
+        // 本地空 ⇒ 窃取池尾（22 先于 21，LIFO）。
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 22.0);
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 21.0);
+        // 窃取池空 ⇒ victim w=1 队尾（32 = 最老 deferred 分支；任何随机起点
+        // 扫描下唯一非空 victim 必被命中，结果确定）。
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 32.0);
+        assert_eq!(pool.take_local_or_steal(0, &mut rng).unwrap().est, 31.0);
+        // 全容器空 ⇒ None。
+        assert!(pool.take_local_or_steal(0, &mut rng).is_none());
+        assert!(pool.all_empty());
+    }
+
+    /// complete_node：子代压 owner 本地队首且探索序与旧全局池口径一致
+    /// （children 末元素先探索）；done 判定要求**全部本地队列 ∧ 窃取池皆空**
+    /// （漏任一容器会提前 done 丢树）。
+    #[test]
+    fn complete_node_pushes_children_to_owner_front_and_done_requires_all_empty() {
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        // 种子入窃取池，w=0 取得（active/inflight 锁内记账）。
+        shared.lock_pool().steal.push(test_node(9.0, 0));
+        let mut rng = 1u64;
+        let node = match shared.acquire_node(0, &mut rng) {
+            AcquireOutcome::Node(n) => n,
+            AcquireOutcome::Finished => panic!("窃取池有节点，不应判定结束"),
+        };
+        assert_eq!(node.est, 9.0);
+        assert_eq!(shared.lock_pool().active, 1);
+        // 完成：子代 [up, down] 压 owner 队首 ⇒ owner 下一弹出 = down（与旧
+        // 全局池 append[up,down]+尾弹出完全同探索序）。
+        shared.complete_node(
+            0,
+            vec![test_node(1.0, 1), test_node(2.0, 1)],
+            Sense::Maximize,
+            None,
+        );
+        {
+            let pool = shared.lock_pool();
+            assert_eq!(pool.active, 0);
+            assert!(!pool.done, "子代在 owner 本地队列 ⇒ 未完备");
+            assert_eq!(pool.locals[0].len(), 2);
+        }
+        {
+            let mut pool = shared.lock_pool();
+            let first = pool.take_local_or_steal(0, &mut rng).unwrap();
+            let second = pool.take_local_or_steal(0, &mut rng).unwrap();
+            assert_eq!(first.est, 2.0, "children 末元素先探索（down-first 保持）");
+            assert_eq!(second.est, 1.0);
+        }
+        // 模拟 w=0 在处理最后一颗节点（叶子）：无子代完成 ⇒ 同临界区 done。
+        {
+            let mut pool = shared.lock_pool();
+            pool.active = 1;
+            pool.inflight[0] = Some(2.0);
+        }
+        shared.complete_node(0, Vec::new(), Sense::Maximize, None);
+        assert!(shared.lock_pool().done, "全容器空且 active==0 ⇒ done");
+    }
+
+    /// 窃取原子性压力（多 worker 窄树耗尽场景）：真实 Shared/PoolState +
+    /// 4 线程驱动 acquire_node/complete_node（worker_run 同一代码路径），
+    /// 确定性满二叉树（depth < 7 分裂）。守恒断言：每个创建的节点恰被处理
+    /// 一次（无重复、无丢失 = 255 = 2^8−1），全部线程经 Finished 退出且
+    /// done 置位——等待/窃取协议无永久睡眠、无提前 done、无节点损耗。
+    #[test]
+    fn steal_atomicity_stress_node_conservation() {
+        const THREADS: usize = 4;
+        const MAX_DEPTH: u32 = 7;
+        let shared = Shared::new(THREADS, DegradePolicy::default(), None, Instant::now());
+        // 种子节点（id=0, depth=0）入窃取池。
+        shared.lock_pool().steal.push(test_node(0.0, 0));
+        let processed: Arc<StdMutex<Vec<u64>>> = Arc::new(StdMutex::new(Vec::new()));
+        std::thread::scope(|scope| {
+            for w in 0..THREADS {
+                let processed = processed.clone();
+                let shared = &shared;
+                scope.spawn(move || {
+                    let mut rng = (w as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+                    loop {
+                        match shared.acquire_node(w, &mut rng) {
+                            AcquireOutcome::Finished => {
+                                shared.worker_release(w);
+                                break;
+                            }
+                            AcquireOutcome::Node(node) => {
+                                processed
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .push(node.var as u64);
+                                let id = node.var as u64;
+                                let children = if node.depth < MAX_DEPTH {
+                                    vec![
+                                        test_node((id * 2 + 1) as f64, node.depth + 1),
+                                        test_node((id * 2 + 2) as f64, node.depth + 1),
+                                    ]
+                                } else {
+                                    Vec::new()
+                                };
+                                shared.complete_node(w, children, Sense::Maximize, None);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        assert!(shared.lock_pool().done, "窄树耗尽后必须置 done（永久睡眠/提前退出回归）");
+        let mut ids = processed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        ids.sort_unstable();
+        let expected: Vec<u64> = (0..(1u64 << (MAX_DEPTH + 1)) - 1).collect();
+        assert_eq!(ids.len(), expected.len(), "处理总数守恒（无丢失）");
+        assert_eq!(ids, expected, "每节点恰处理一次（无重复、无丢失）");
+    }
+
+    /// 等待协议（防永久睡眠）：本地空 + 窃取池空且仍有在处理节点时，
+    /// 等待 worker 经 wait_timeout(≤5ms) 周期醒来，偷到 victim 后续
+    /// push_front 的本地节点【victim 不发任何 notify】——窃取目标是
+    /// victim 队尾（最老），owner 的最新子代留在队首不动。
+    #[test]
+    fn wait_timeout_steals_victim_local_push_without_notify() {
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        // w=0 在处理（active=1）⇒ w=1 取不到节点时进入 wait_timeout。
+        {
+            let mut pool = shared.lock_pool();
+            pool.active = 1;
+            pool.inflight[0] = Some(1.0);
+        }
+        let (est, latency) = std::thread::scope(|scope| {
+            let shared = &shared;
+            let handle = scope.spawn(move || {
+                let mut rng = 42u64;
+                match shared.acquire_node(1, &mut rng) {
+                    AcquireOutcome::Node(n) => n.est,
+                    AcquireOutcome::Finished => panic!("active=1 时不应判定结束"),
+                }
+            });
+            // 让 waiter 进入等待（覆盖 OS 调度余量）后，victim w=0 压两个
+            // 子代到队首【不发全局 notify——协议规定本地 push 静默】。
+            std::thread::sleep(Duration::from_millis(50));
+            let push_t0 = Instant::now();
+            {
+                let mut pool = shared.lock_pool();
+                pool.locals[0].push_front(test_node(5.0, 2)); // 较老（队尾）
+                pool.locals[0].push_front(test_node(6.0, 2)); // 最新（队首）
+            }
+            let est = handle.join().unwrap();
+            (est, push_t0.elapsed())
+        });
+        assert_eq!(est, 5.0, "窃取者取 victim 队尾（最老 deferred 分支）");
+        assert!(
+            latency < Duration::from_secs(2),
+            "wait_timeout 必须周期醒来窃取（实测 {latency:?}）——永久睡眠回归"
+        );
+    }
+
+    /// 等待协议快路径：窃取池 push 走 notify_all，等待 worker 立即被唤醒
+    /// 取得节点（不依赖 wait_timeout 超时兜底）。
+    #[test]
+    fn steal_pool_push_notifies_waiters_immediately() {
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        {
+            let mut pool = shared.lock_pool();
+            pool.active = 1;
+            pool.inflight[0] = Some(1.0);
+        }
+        let (est, latency) = std::thread::scope(|scope| {
+            let shared = &shared;
+            let handle = scope.spawn(move || {
+                let mut rng = 7u64;
+                match shared.acquire_node(1, &mut rng) {
+                    AcquireOutcome::Node(n) => n.est,
+                    AcquireOutcome::Finished => panic!("active=1 时不应判定结束"),
+                }
+            });
+            std::thread::sleep(Duration::from_millis(50));
+            let push_t0 = Instant::now();
+            shared.lock_pool().steal.push(test_node(77.0, 1));
+            shared.cv_workers.notify_all();
+            let est = handle.join().unwrap();
+            (est, push_t0.elapsed())
+        });
+        assert_eq!(est, 77.0);
+        assert!(
+            latency < Duration::from_secs(2),
+            "notify_all 快路径必须唤醒等待 worker（实测 {latency:?}）"
+        );
+    }
+
+    /// t4 与 t1 同界收敛（bench 真实算例）：knapsack-200/500（.opt 为 DP
+    /// 独立真值）与 mknap-3x100，threads=4 并行完备搜索（重复 3 次覆盖
+    /// 窃取调度的节点归属漂移）与 t1 顺序路径最优值逐次一致。mknap-5x300
+    /// （90s 量级）归 bench 集成回归，不入单测。
+    #[test]
+    fn t4_matches_t1_objectives_on_bench_knapsacks() {
+        const CASES: &[(&str, f64)] = &[
+            ("knapsack-200", 3409.0),
+            ("knapsack-500", 8975.0),
+            ("mknap-3x100", 2331.0),
+        ];
+        for &(name, expected) in CASES {
+            let path = format!(
+                "{}/../bench/instances/{name}.milp",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let problem = load_instance(Path::new(&path))
+                .unwrap_or_else(|e| panic!("算例 {name} 加载失败：{e}"));
+            let seq = branch_and_bound(&problem, &BbOptions::default(), tol())
+                .unwrap_or_else(|e| panic!("算例 {name} 顺序求解失败：{e}"));
+            assert_eq!(seq.status, SolveStatus::Optimal, "算例 {name}");
+            assert_close(seq.best_objective.unwrap(), expected);
+            for rep in 0..3 {
+                let out = parallel_branch_and_bound(
+                    &problem,
+                    &BbOptions::default(),
+                    &pconfig(4, None),
+                    tol(),
+                )
+                .unwrap_or_else(|e| panic!("算例 {name} rep{rep} 求解失败：{e}"));
+                assert_eq!(out.stop, None, "算例 {name} rep{rep} 应完备");
+                assert_close(
+                    out.best_objective.unwrap(),
+                    seq.best_objective.unwrap(),
+                );
+            }
+        }
     }
 
     /// hard-knapsack-12（12 变量 0-1 背包，与 WP4 落盘文件同参）：
@@ -1661,8 +2339,9 @@ mod tests {
     }
 
     /// 首行进度（R6）：根阶段结束汇合点无条件发射——根 gap 触发（不
-    /// spawn）时恰好一行，字段口径 nodes=1 / incumbent=21 / bound=21.5 /
-    /// gap=2.38%。
+    /// spawn）时恰好一行，字段口径 nodes=1 / incumbent=21.5 / bound=22.0 /
+    /// gap=2.33%（offset=0.5 非整数目标 ⇒ cutoff 关闭，根不闭合、gap 路径
+    /// 照常触发）。
     #[test]
     fn first_progress_line_emitted_at_root_junction() {
         let p = dive_problem();
@@ -1692,7 +2371,7 @@ mod tests {
             lines[0]
         );
         assert!(
-            lines[0].contains("nodes=1 incumbent=21.000000 bound=21.500000 gap=2.38%"),
+            lines[0].contains("nodes=1 incumbent=21.500000 bound=22.000000 gap=2.33%"),
             "字段口径：{}",
             lines[0]
         );
@@ -1755,16 +2434,24 @@ mod tests {
         );
     }
 
-    // —— 移植纯函数的测试向量（自 branch_bound.rs 既有向量钉死）——
+    // —— 共享纯函数的测试向量（原逐字副本已删除，向量改钉
+    //    crate::branch_bound 的 pub(crate) 共享实现）——
 
-    /// (d) 剪枝比较按原始 sense 方向（Max/Min 镜像）。
+    /// (d) 剪枝比较按原始 sense 方向（Max/Min 镜像；integral=false 退化
+    /// 口径——与 branch_bound.rs 同名向量一致，钉共享函数不分叉）。
     #[test]
     fn bound_prune_respects_sense() {
         let (pa, pr) = (1e-9, 1e-9);
-        assert!(bound_no_better(Sense::Maximize, 10.0, 10.0, pa, pr));
-        assert!(!bound_no_better(Sense::Maximize, 10.5, 10.0, pa, pr));
-        assert!(bound_no_better(Sense::Minimize, 2.0, 2.0, pa, pr));
-        assert!(!bound_no_better(Sense::Minimize, 1.5, 2.0, pa, pr));
+        assert!(bound_no_better(Sense::Maximize, 10.0, 10.0, false, pa, pr));
+        assert!(!bound_no_better(Sense::Maximize, 10.5, 10.0, false, pa, pr));
+        assert!(bound_no_better(Sense::Minimize, 2.0, 2.0, false, pa, pr));
+        assert!(!bound_no_better(Sense::Minimize, 1.5, 2.0, false, pa, pr));
+        // 整数目标 cutoff 口径（共享 effective_prune_bound 合成）：
+        // est ∈ (inc+slack, inc+1−ε] ⇒ 剪枝；est = inc+1 恰在网格 ⇒ 保留。
+        assert!(bound_no_better(Sense::Maximize, 21.5, 21.0, true, pa, pr));
+        assert!(!bound_no_better(Sense::Maximize, 22.0, 21.0, true, pa, pr));
+        assert!(bound_no_better(Sense::Minimize, 29.5, 30.0, true, pa, pr));
+        assert!(!bound_no_better(Sense::Minimize, 29.0, 30.0, true, pa, pr));
     }
 
     /// MostFractional 选择与并列最小下标破键。
@@ -1823,9 +2510,92 @@ mod tests {
         assert!(!tighten_child_snapshot(&mut b, 1, true, 1.0), "1 > ub 区间空");
     }
 
+    /// 并行 t=2 与 t=1 同 node_limit 同终态/objective（est 弹出剪枝在
+    /// reserve 之前 ⇒ 不 reserve、不 performed：陈旧前沿不烧节点预算——
+    /// 杜绝『同 node_limit 下 t4 报 NodeLimit 而 t1 Optimal』的口径分裂）。
+    ///
+    /// 载体与 branch_bound::chain_knapsack 同构：1 大件（w=7,v=10）+ 8 个
+    /// 相同小件（w=2,v=1），容量 12；整数目标（cutoff 启用），穷举最优 12。
+    /// 预算取『非整数孪生（= 旧口径）的完备需求』——该值对两引擎都是充裕
+    /// 上界（无剪枝全树 ≤ 此值；cutoff 生效后 ≪ 此值）；孪生自身在同值 −1
+    /// 的预算下必截断（LimitReached），证明预算确实卡在旧口径的需求上。
+    #[test]
+    fn parallel_t2_same_node_limit_same_terminal_as_t1() {
+        let chain = |offset: f64| {
+            let n = 8usize;
+            let mut p = Problem::new("chain-knap", Sense::Maximize);
+            p.add_var("b", VarType::Binary).unwrap();
+            for i in 0..n {
+                p.add_var(&format!("s{i}"), VarType::Binary).unwrap();
+            }
+            let mut terms = vec![(0usize, 10.0)];
+            terms.extend((0..n).map(|i| (i + 1, 1.0)));
+            p.set_objective(terms, offset).unwrap();
+            let mut weights = vec![(0usize, 7.0)];
+            weights.extend((0..n).map(|i| (i + 1, 2.0)));
+            p.add_constraint(None, weights, RelOp::Le, 12.0).unwrap();
+            p
+        };
+        let plain = BbOptions {
+            root_cuts: false,
+            heuristics: false,
+            ..BbOptions::default()
+        };
+        // 旧口径（offset=0.5 孪生）的完备需求 = 预算上界（顺序侧确定性）。
+        let need_old = branch_and_bound(&chain(0.5), &plain, tol())
+            .unwrap()
+            .stats
+            .nodes;
+        let limit = need_old;
+        // 预算确实卡在旧口径需求上：−1 即截断。
+        let tight = BbOptions {
+            node_limit: limit - 1,
+            ..plain
+        };
+        let twin = branch_and_bound(&chain(0.5), &tight, tol()).unwrap();
+        assert_eq!(
+            twin.status,
+            SolveStatus::LimitReached,
+            "孪生在同预算 −1 下必截断（实际 nodes={}）",
+            twin.stats.nodes
+        );
+        // 同 node_limit：t=1（受控顺序）与 t=2（并行）同终态 Optimal、同目标。
+        let opts = BbOptions {
+            node_limit: limit,
+            ..plain
+        };
+        let t1 = crate::branch_bound::branch_and_bound_controlled(
+            &chain(0.0),
+            &opts,
+            &crate::branch_bound::SearchControl::default(),
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t1.status, SolveStatus::Optimal);
+        assert_close(t1.best_objective.unwrap(), 12.0);
+        let out = parallel_branch_and_bound(&chain(0.0), &opts, &pconfig(2, None), tol()).unwrap();
+        assert_eq!(out.root_terminal, None);
+        assert_eq!(
+            out.stop,
+            None,
+            "同预算下 t2 不得 NodeLimit（est-skip 不 reserve；实际 {:?}，nodes={}）",
+            out.stop,
+            out.stats.nodes
+        );
+        assert_close(out.best_objective.unwrap(), t1.best_objective.unwrap());
+        assert_close(out.best_objective.unwrap(), 12.0);
+        assert!(
+            out.stats.nodes <= limit,
+            "performed 含根 =1；实际 {}",
+            out.stats.nodes
+        );
+    }
+
     /// 策略级自动降级（并行路径；激进参数 start=0/plateau=0 ⇒ 首个节点
-    /// 完成即触发）：stop = AutoDegrade、携带 incumbent 21、gap 证据非负
-    /// 有限（同 STOP_GAP 口径，由 CAS 胜者写入）。
+    /// 完成即触发）：stop = AutoDegrade、携带 incumbent 21.5（offset=0.5
+    /// 非整数目标 ⇒ cutoff 关闭，树搜索路径与机制引入前一致）、gap 证据
+    /// 非负有限（同 STOP_GAP 口径，由 CAS 胜者写入）。
     #[test]
     fn parallel_auto_degrade_stops_with_incumbent() {
         let p = dive_problem();
@@ -1861,10 +2631,108 @@ mod tests {
         );
         let obj = out.best_objective.expect("降级必携带 incumbent");
         assert!(
-            (obj - 21.0).abs() <= 1e-6,
-            "incumbent = {obj}，期望根 dive 供应的 21"
+            (obj - 21.5).abs() <= 1e-6,
+            "incumbent = {obj}，期望根 dive 供应的 21.5"
         );
         let gap = out.gap_percent.expect("降级 ⇒ gap 证据必为 Some");
         assert!(gap.is_finite() && gap >= 0.0, "gap = {gap}");
+    }
+
+    /// （M2）并行自适应 stall 锚点初始化与顺序路径对齐：根启发式供应的
+    /// incumbent 不把 last_improve_node 记作节点 1——顺序侧
+    /// AdaptiveState::new 恒 0、根阶段只刷新时刻锚点；只有树内真实改进
+    ///（try_update_incumbent）才推进节点锚点。否则 stall(400) 阈值在并行
+    /// 侧晚一个节点触发，两路径的控制器决策序列分叉。
+    #[test]
+    fn parallel_stall_anchor_init_matches_sequential() {
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        assert_eq!(shared.last_improve_node.load(Ordering::SeqCst), 0);
+        // 模拟根阶段末尾的共享状态写入（incumbent 存在、节点锚点不动）。
+        shared.write_incumbent(Some((21.5, vec![2.0, 1.0])));
+        assert_eq!(
+            shared.last_improve_node.load(Ordering::SeqCst),
+            0,
+            "根 incumbent 不计为节点 1 的改进（与顺序侧 last_improvement_node = 0 对齐）"
+        );
+        // 树内真实改进按 node_no 推进锚点。
+        let inc = Incumbent {
+            objective: 22.0,
+            values: vec![2.0, 2.0],
+        };
+        assert!(shared.try_update_incumbent(Sense::Maximize, inc, 7, 0.5));
+        assert_eq!(shared.last_improve_node.load(Ordering::SeqCst), 7);
+    }
+
+    /// （M3）终局停止码合成：LP 迭代上限剪枝标记（limit_hit，镜像顺序
+    /// PruneLimit 的 limit_hit）在树探索完备（stop 仍 NONE）时映射
+    /// STOP_NODE ⇒ 终态诚实 LimitReached，不冒充完备；粘滞 stop 优先。
+    #[test]
+    fn effective_stop_code_limit_hit_composition() {
+        assert_eq!(effective_stop_code(STOP_NONE, false), STOP_NONE);
+        assert_eq!(
+            effective_stop_code(STOP_NONE, true),
+            STOP_NODE,
+            "迭代上限剪枝后探索完备 ⇒ NodeLimit 类诚实截断"
+        );
+        assert_eq!(effective_stop_code(STOP_GAP, true), STOP_GAP, "粘滞 stop 优先");
+        assert_eq!(effective_stop_code(STOP_DEGRADE, true), STOP_DEGRADE);
+        assert_eq!(effective_stop_code(STOP_TIME, true), STOP_TIME);
+        assert_eq!(effective_stop_code(STOP_NODE, false), STOP_NODE);
+    }
+
+    /// （M1 压测）并行进度行永不出 bound=none：threads=4 + 极小 log 周期
+    ///（协调线程近似忙转快照）+ hard-knapsack-12 循环 100 次，断言 0 条
+    /// bound=none 行。修复前『末节点完成解锁池锁』与『置 done』之间的窗口
+    /// 会被空聚合快照出 incumbent=X bound=none gap=inf 矛盾行（原评审
+    /// 800 次循环 3.1M 行中复现 1804 行；顺序路径同参数 0 例）；修复后
+    /// done 置位与空聚合在同一池锁临界区内原子发生，窗口关闭。
+    #[test]
+    fn parallel_progress_lines_never_report_bound_none() {
+        let weights = [
+            7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0, 31.0, 37.0, 41.0, 43.0, 47.0,
+        ];
+        let values = [
+            11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0,
+        ];
+        let mut p = Problem::new("hard-knapsack-12", Sense::Maximize);
+        for i in 0..12 {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.set_objective((0..12).map(|i| (i, values[i])).collect(), 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            (0..12).map(|i| (i, weights[i])).collect(),
+            RelOp::Le,
+            172.0,
+        )
+        .unwrap();
+        for rep in 0..100 {
+            let lines: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+            let sink = lines.clone();
+            let config = ParallelConfig {
+                threads: 4,
+                mipgap_percent: None,
+                adaptive_heuristics: true,
+                log_period_secs: Some(1e-9),
+                degrade: DegradePolicy::default(),
+                progress: Some(Arc::new(move |info: &ProgressInfo| {
+                    sink.lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(crate::search_ctrl::format_progress_line(info));
+                })),
+            };
+            let out = parallel_branch_and_bound(&p, &BbOptions::default(), &config, tol())
+                .unwrap_or_else(|e| panic!("rep {rep} 求解失败：{e}"));
+            assert_eq!(out.stop, None, "rep {rep} 应完备");
+            assert_close(out.best_objective.unwrap(), 523.0);
+            let lines = lines
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(!lines.is_empty(), "rep {rep}：极小周期下必有进度行");
+            for l in lines.iter() {
+                assert!(!l.contains("bound=none"), "rep {rep} 矛盾进度行：{l}");
+            }
+        }
     }
 }

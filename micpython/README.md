@@ -46,16 +46,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 指向仓库根
 
 ## 快速上手（与 gurobipy 对照）
 
-下面是 `examples/knapsack.py` 全文——0-1 背包（等价
-`milp/instances/knapsack-10.milp`，最优 17）：
+0-1 背包示例（改编自 `examples/knapsack.py`，等价
+`milp/instances/knapsack-10.milp`，最优 17）。**自包含、零本地辅助函数**：
+按上节构建 FFI 库后，把下面的代码保存为工作区根下的 `knapsack_demo.py`，
+在工作区根执行 `python knapsack_demo.py` 即可运行：
 
 ```python
-#!/usr/bin/env python3
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from micpython import BINARY, MAXIMIZE, Model, Status, quicksum
 
 m = Model("knapsack")
@@ -72,20 +68,20 @@ status = m.optimize()
 if status != Status.OPTIMAL:
     print("求解未达最优：status = %d（期望 OPTIMAL = %d）"
           % (status, Status.OPTIMAL))
-    sys.exit(1)
+    raise SystemExit(1)
 
 for v in x:
     print(f"{v.VarName} = {v.X:.0f}")
-print(f"objective = {format_number(m.ObjVal)}")   # 17.000000（与 milp CLI 同格式）
+print(f"objective = {m.ObjVal:.6f}")   # 17.000000（定点 6 位小数）
 
 m.dispose()
-sys.exit(0)
 ```
 
 与 gurobipy 的写法逐行对应（`Model`/`addVars`/`setObjective`/`addConstr`/
-`optimize`/`v.X`/`m.ObjVal`）；`format_number` 优先经 ABI
-`milp_ffi_format_number`（与 milp CLI 的 objective 行逐字节一致），库不可用
-时退回脚本自带的纯 Python 等价实现。
+`optimize`/`v.X`/`m.ObjVal`）。末行输出与 milp CLI 的 objective 行同格式
+（定点 6 位小数）；完整示例 `examples/knapsack.py` 另含 `format_number`
+（优先经 ABI `milp_ffi_format_number`，与 CLI 逐字节一致，库不可用时退回
+脚本自带的纯 Python 等价实现）与脚本自理的导入路径——本节从简省去。
 
 ## API 参考
 
@@ -148,7 +144,7 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 | 异常 | FFI 码 | 语义 |
 | --- | --- | --- |
 | `FfiLoadError` | — | DLL 装载失败（路径缺失/不可加载/符号缺失/ABI 不符） |
-| `ArgumentError` | 1/8/9 | 空指针（公共 API 不可达）、UTF-8 编码失败（公共 API 不可达）、参数值域/类型非法 |
+| `ArgumentError` | 1/8/9 | 空指针（公共 API 不可达）、UTF-8 编码失败（公共 API 不可达）、参数值域/类型非法；含内嵌 NUL 的名字/字符串值（Python 侧守卫，code=0）。**亦为 `ValueError` 子类**，可被 `except ValueError` 捕获 |
 | `ModelError` | 2 | 模型非法（变量重名、撞保留字、lb>ub、Binary 界越界等） |
 | `NumericalError` | 3 | 数值异常（终检失败等） |
 | `ParseError` | 4 | 解析错误（FFI 层保留映射完整性） |
@@ -162,7 +158,7 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 
 | 参数 | 类型 | 值域 | 默认 | 透传 |
 | --- | --- | --- | --- | --- |
-| `TimeLimit` | float（秒） | ≥0；`INF` 或 0 = 不限 | `INF` | `milp_ffi_set_param_real` → `BbOptions.time_limit_ms`（秒×1000 饱和；FFI 0=不限） |
+| `TimeLimit` | float（秒） | ≥0；`INF` 或 0 = 不限 | `INF` | `milp_ffi_set_param_real` → `BbOptions.time_limit_ms`（秒→毫秒四舍五入、正值下限 1ms：`0.5`→500ms；FFI 0=不限） |
 | `Threads` | int | 1..=1024 | 1 | `milp_ffi_set_param_int` → `SearchControl.threads`（1=纯顺序，≥2 并行引擎） |
 | `MIPGap` | float（**小数**） | ≥0；0 = 关闭 | 0.0 | 小数 ×100 → 百分比经 FFI → `SearchControl.mipgap_percent` |
 | `HeuristicMode` | str | `auto`/`on`/`off` | `'on'` | `milp_ffi_set_param_str`（off ⇒ heuristics=false；on/auto ⇒ true；auto 另置 adaptive_heuristics=true） |
@@ -215,6 +211,10 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 
 - **lb 必须有限**：本库不支持 −∞ 下界（`addVar(lb=-INF)` →
   `ArgumentError`）；`ub` 允许有限数或 +INF；
+- **名字/字符串值不得含内嵌 NUL**（`'\x00'`）：模型名、变量名（含
+  `addVars` 的 name 前缀）、约束名、str 参数值（如 `HeuristicMode`）
+  抛 `ArgumentError`（亦为 `ValueError`）——FFI 的 C 字符串会在首个
+  NUL 处截断而 Python 镜像保留全名，两侧将静默分叉，入口统一拦截；
 - **仅线性**：`Var*Var` / `LinExpr*LinExpr` → `TypeError`（无二次表达式）；
 - **LIMIT_REACHED 诚实语义**：只有满足最优性终止条件才返回 OPTIMAL；触发
   时间/gap/自动降级上限一律 LIMIT_REACHED（有 incumbent 时解可用，

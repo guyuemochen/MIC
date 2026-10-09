@@ -33,10 +33,13 @@
 //!   下标；出基侧全部并列候选（被阻挡基变量按其列下标、入基变量自身界翻转
 //!   按入基列下标）一律取最小下标；|主元|最大规则仅 Dantzig 阶段使用。
 //! - 比值测试同时考虑基变量上下界与入基变量自身界翻转；主元 |p| ≥ tol.pivot
-//!   才允许；入基列无任何阻挡 ⇒ Unbounded。检验数每次定价都由当前表格
-//!   重算（不增量维护，无定价漂移）；每 200 次主元用原始数据重算 B⁻¹b；
-//!   NaN/Inf 立即按数值失败处理。迭代上限 max(10_000, 20×(m+n)) ⇒
-//!   IterationLimit（诚实上报，不冒充 Optimal）。
+//!   才允许；入基列无任何阻挡 ⇒ Unbounded。检验数由当前表格在三入口
+//!   （price / dual_feasible / dual_repair 每轮迭代顶部）批量重算
+//!   （compute_rc_batch：值级等价于逐列现算，不增量维护，无定价漂移）；
+//!   每 200 次主元用原始数据重算 B⁻¹b；NaN/Inf 立即按数值失败处理。迭代
+//!   上限 max(10_000, 20×(m+n)) ⇒ IterationLimit（诚实上报，不冒充
+//!   Optimal）。主循环每迭代零分配：c_b/检验数/比值候选/消元系数/主元行
+//!   非零下标/界交换全部走容量复用暂存字段。
 //!
 //! # 表格约定（实现细节）
 //! - 列空间 = [结构列 | 松弛列 | 人工列]，人工列不外露（`column_layout`
@@ -268,6 +271,20 @@ pub struct Simplex {
     bland: bool,
     /// 距上次 B⁻¹b 重算的主元数。
     pivots_since_refresh: u64,
+    // —— 热路径暂存（容量跨迭代/跨调用复用，消除每迭代分配）——
+    /// 批量检验数暂存（全列空间长度；三入口各自入口重算，见
+    /// [`Simplex::compute_rc_batch`] 的新鲜度契约）。
+    rc_scratch: Vec<f64>,
+    /// 基成本 c_b 暂存（行数长度；由 compute_rc_batch 填充）。
+    cb_scratch: Vec<f64>,
+    /// 比值测试候选暂存（clear+push 容量复用，见 ratio_test）。
+    cand_scratch: Vec<(f64, usize, bool, f64, usize)>,
+    /// do_pivot 消元系数暂存（行数长度，覆盖写，见 do_pivot）。
+    pivot_f: Vec<f64>,
+    /// do_pivot 主元行非零下标暂存（行缩放/消元只遍历非零列，见 do_pivot）。
+    pivot_nz: Vec<usize>,
+    /// resolve 界交换暂存（swap 后保存“上次有效界”，clone_from 复用容量）。
+    prev_bounds: Bounds,
 }
 
 /// 定价结果。
@@ -290,6 +307,16 @@ enum Step {
     NoBlock,
     /// 存在被主元容差过滤掉的阻挡候选（数值不可靠）。
     FilteredBlock(String),
+}
+
+/// 对偶修复结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DualRepair {
+    /// 已恢复原始可行（基保持最优口径，随后 Phase-2 收尾应为零迭代）。
+    Repaired,
+    /// 不适用 / 超出预算 / 数值异常 ⇒ 调用方回退整基重建（语义与既有
+    /// 冷路径完全一致，快路径只加速、绝不改变结果）。
+    GiveUp,
 }
 
 impl Simplex {
@@ -396,6 +423,15 @@ impl Simplex {
             degenerate_streak: 0,
             bland: false,
             pivots_since_refresh: 0,
+            rc_scratch: Vec::new(),
+            cb_scratch: Vec::new(),
+            cand_scratch: Vec::new(),
+            pivot_f: Vec::new(),
+            pivot_nz: Vec::new(),
+            prev_bounds: Bounds {
+                lb: Vec::new(),
+                ub: Vec::new(),
+            },
         };
 
         for (ci, con) in problem.constraints.iter().enumerate() {
@@ -462,7 +498,9 @@ impl Simplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
-        self.bounds = bounds.clone();
+        // 界写入：clone_from 容量复用（替代整体 clone 的分配）。
+        self.bounds.lb.clone_from(&bounds.lb);
+        self.bounds.ub.clone_from(&bounds.ub);
         self.rebuild_initial_basis();
         let st = self.run_two_phase(true);
         self.has_run = true;
@@ -480,27 +518,47 @@ impl Simplex {
         }
         if !self.has_run {
             // 尚无可用热状态：退化为冷启动。
-            self.bounds = bounds.clone();
+            self.bounds.lb.clone_from(&bounds.lb);
+            self.bounds.ub.clone_from(&bounds.ub);
             self.rebuild_initial_basis();
             let st = self.run_two_phase(true);
             self.has_run = true;
             return self.build_solution(st);
         }
         // (1)(2) 非基贴界双向检查 + 传播。
-        let prev = self.bounds.clone();
-        self.bounds = bounds.clone();
-        self.snap_nonbasics(&prev);
-        // (3) 基变量越界检查 + Phase-1 欠账检查：任一成立则重建人工列跑
-        //     Phase-1 修复，否则直接 Phase-2。欠账 = 上次 Phase-1 未清理即
-        //     收场（不可行/上限/数值失败）或 add_row 新建了人工列：此时残基
-        //     人工变量行系数活跃，其基值即便被 (1)(2) 的 snap 传播恰好推到
-        //     ≤ tol.feasibility，Phase-2 仍会解到该行被零成本人工变量吸收的
-        //     错误 LP 上（终检降级 IterationLimit 或谎报 Optimal）。
+        // 界暂存 swap + clone_from：`prev_bounds` 换入“上次有效界”（容量跨
+        // 调用复用，消除原 mem::replace 的双克隆分配），新界 clone_from 写
+        // 入 self.bounds；snap_nonbasics 内部从 self.prev_bounds 读取 prev
+        // （语义与原局部变量一致）。
+        std::mem::swap(&mut self.bounds, &mut self.prev_bounds);
+        self.bounds.lb.clone_from(&bounds.lb);
+        self.bounds.ub.clone_from(&bounds.ub);
+        self.snap_nonbasics();
+        // (3) 基变量越界检查 + Phase-1 欠账检查：任一成立则修复。修复有
+        //     两条路：
+        //     a) **对偶修复快路径**（大规模主路径）：仅界变化引起（无
+        //        Phase-1 欠账、基中无人工列）且静态非基对偶可行 ⇒ 有界
+        //        变量对偶单纯形几次旋转恢复原始可行（基与成本未动 ⇒ 对偶
+        //        可行性保持；出基变量落到其被违反的界）。任何异常一律
+        //        GiveUp 回退 b)，快路径只加速、绝不改变语义。
+        //     b) 整基重建 + Phase-1（原路径，语义不变）：欠账 = 上次
+        //        Phase-1 未清理即收场（不可行/上限/数值失败）或 add_row
+        //        新建了人工列：此时残基人工变量行系数活跃，其基值即便被
+        //        (1)(2) 的 snap 传播恰好推到 ≤ tol.feasibility，Phase-2 仍
+        //        会解到该行被零成本人工变量吸收的错误 LP 上（终检降级
+        //        IterationLimit 或谎报 Optimal）。
         let need_repair = self.basics_violated() || self.phase1_pending;
-        if need_repair {
+        let mut dual_repaired = false;
+        if need_repair
+            && !self.phase1_pending
+            && !self.artificials_in_basis()
+            && self.dual_repair() == DualRepair::Repaired
+        {
+            dual_repaired = true;
+        } else if need_repair {
             self.rebuild_initial_basis();
         }
-        let st = self.run_two_phase(need_repair);
+        let st = self.run_two_phase(need_repair && !dual_repaired);
         self.has_run = true;
         self.build_solution(st)
     }
@@ -636,11 +694,29 @@ impl Simplex {
             art_sign
         };
 
-        // 新列：松弛列（Eq 无）与人工列（非基时才建）。
+        // 新列：松弛列（Eq 无）与人工列（非基时才建）。割松弛列**插入**在
+        // 静态段（结构+松弛）末尾、人工列段之前——若按旧口径直接取
+        // `n + slack.len()`（= 人工列段首下标），会与存量人工列撞号：新割
+        // 行基列与旧人工列共址、该列在表格中带旧行残留系数而非单位向量，
+        // 表格不再是 B⁻¹A（此前靠后续整基重建偶然兜住）。插入方式：旧行在
+        // 该位补 0（新松弛列对旧行的 B⁻¹A 系数恒 0——B⁻¹ 未动、新列在旧
+        // 行上系数为 0），人工列段整体右移一位，基中人工列下标同步 +1；
+        // layout 记账保持『slack 第 t 项 ↔ 列 n+t』的顺序对应。
+        let ncs_old = n + self.layout.slack.len();
         let has_slack = op != RelOp::Eq;
         let has_art = !use_slack_basic;
         let slack_col: Option<usize> = if has_slack {
-            let c = n + self.layout.slack.len();
+            let c = ncs_old;
+            for row in self.matrix.iter_mut() {
+                row.insert(c, 0.0);
+            }
+            self.in_basis.insert(c, false);
+            self.at_upper.insert(c, false);
+            for b in self.basis.iter_mut() {
+                if *b >= c {
+                    *b += 1; // 人工列段整体右移一位（结构/松弛列下标不变）
+                }
+            }
             self.layout.slack.push(SlackCol {
                 origin: RowOrigin::Cut(k),
                 sign: slack_sign,
@@ -662,16 +738,19 @@ impl Simplex {
         debug_assert!(basic_col != usize::MAX);
 
         let ncols_new = ncols_old + usize::from(has_slack) + usize::from(has_art);
-        // 旧行补零。
+        // 旧行补零（松弛列插入已扩一位；此处再补新人工列槽）。
         for row in self.matrix.iter_mut() {
             row.resize(ncols_new, 0.0);
         }
         self.in_basis.resize(ncols_new, false);
         self.at_upper.resize(ncols_new, false);
-        // 新表格行 = κ/σ（旧列）| 松弛列系数 slack_sign/σ | 人工列系数 1。
+        // 新表格行 = κ/σ（旧列；人工列段右移一位）| 松弛列系数 slack_sign/σ
+        // | 人工列系数 1。
+        let shift = usize::from(has_slack);
         let mut newrow = vec![0.0; ncols_new];
         for j in 0..ncols_old {
-            newrow[j] = kappa[j] / sigma_basic;
+            let dest = if j < ncs_old { j } else { j + shift };
+            newrow[dest] = kappa[j] / sigma_basic;
         }
         if let Some(c) = slack_col {
             newrow[c] = slack_sign / sigma_basic;
@@ -830,6 +909,48 @@ impl Simplex {
         rc
     }
 
+    /// 批量计算全列空间在指定阶段的检验数（写入 `rc_scratch`，同时填充
+    /// 基成本暂存 `cb_scratch`）。
+    ///
+    /// # 值级等价
+    /// 先按列填 `cost_of(j, phase)`，再按基行 i 升序、仅 c_b[i]≠0 行做
+    /// 行主序 axpy——每列的减法序列与 price 原内联循环 / [`rc_of`] 的逐列
+    /// 计算完全同序，f64 结果逐值相等（跳过 c_b==0 行是精确无操作：减 0
+    /// 不改变任何数值，含 ±0 符号位）。
+    ///
+    /// # 新鲜度契约（三入口各自在入口无条件重算）
+    /// 禁止只由 price 刷新后他处复用——do_pivot、phase 切换、add_row、
+    /// 整基重建都会使缓存陈旧。三入口：
+    /// (a) [`price`] 入口；(b) [`dual_feasible`] 入口（resolve 入口距上次
+    /// price 可能隔 phase 切换/add_row/整基重建）；(c) [`dual_repair`]
+    /// 外层循环每轮迭代顶部（上一轮 do_pivot 已改表，下一轮列扫描前必须
+    /// 重算；扫描“只对过滤列读取”是省工而非新鲜度保证，二者不得混淆）。
+    /// v1 不做表格版本号脏标记，三入口无条件重算。
+    fn compute_rc_batch(&mut self, phase: u8) {
+        let m = self.basis.len();
+        let ncols = self.ncols_static() + self.num_art;
+        self.cb_scratch.clear();
+        self.cb_scratch.resize(m, 0.0);
+        for i in 0..m {
+            self.cb_scratch[i] = self.cost_of(self.basis[i], phase);
+        }
+        self.rc_scratch.clear();
+        self.rc_scratch.resize(ncols, 0.0);
+        for j in 0..ncols {
+            self.rc_scratch[j] = self.cost_of(j, phase);
+        }
+        for i in 0..m {
+            let cb = self.cb_scratch[i];
+            if cb != 0.0 {
+                let row = &self.matrix[i];
+                let rc = &mut self.rc_scratch;
+                for j in 0..ncols {
+                    rc[j] -= cb * row[j];
+                }
+            }
+        }
+    }
+
     // ===================== 内部：初始基重建 =====================
 
     /// 按统一残差规则重建初始基：丢弃旧人工列，非基点取 x⁰ = 结构变量贴
@@ -942,12 +1063,10 @@ impl Simplex {
     /// 得分（贴下界 −rc / 贴上界 +rc）最大者、并列取最小列下标。
     /// 人工列与固定列（ub−lb ≤ feasibility）永不入基。
     fn price(&mut self, phase: u8) -> Pricing {
-        let m = self.basis.len();
         let ncs = self.ncols_static();
-        let mut c_b = vec![0.0; m];
-        for i in 0..m {
-            c_b[i] = self.cost_of(self.basis[i], phase);
-        }
+        // 新鲜度规范 (a)：入口无条件批量重算检验数（同时消除原局部 c_b
+        // vec![0.0; m] 分配，c_b 由 compute_rc_batch 写入 cb_scratch）。
+        self.compute_rc_batch(phase);
         let mut best_j = usize::MAX;
         let mut best_delta = 0.0;
         let mut best_score = f64::NEG_INFINITY;
@@ -959,12 +1078,7 @@ impl Simplex {
             if ub - lb <= self.tol.feasibility {
                 continue; // 固定列不可移动，不入基
             }
-            let mut rc = self.cost_of(j, phase);
-            for i in 0..m {
-                if c_b[i] != 0.0 {
-                    rc -= c_b[i] * self.matrix[i][j];
-                }
-            }
+            let rc = self.rc_scratch[j];
             if !rc.is_finite() {
                 return Pricing::Failed(format!("列 {j} 检验数非有限"));
             }
@@ -999,10 +1113,12 @@ impl Simplex {
     /// 主元 |p| ≥ tol.pivot 才允许出基；并列破键：Dantzig 阶段 |主元|最大、
     /// 再最小列下标；Bland 模式一律最小列下标（基变量按其列下标、界翻转按
     /// 入基列下标）。
-    fn ratio_test(&self, q: usize, delta: f64) -> Step {
+    fn ratio_test(&mut self, q: usize, delta: f64) -> Step {
         let m = self.basis.len();
         // (t, 行, hit_upper, |主元|, 破键列下标)；行 = usize::MAX 表示界翻转。
-        let mut cands: Vec<(f64, usize, bool, f64, usize)> = Vec::new();
+        // 暂存字段 clear+push：容量跨迭代复用（&self→&mut self，调用点均在
+        // &mut 上下文）。
+        self.cand_scratch.clear();
         let mut filtered_block = false;
         for i in 0..m {
             let a = self.matrix[i][q];
@@ -1027,13 +1143,15 @@ impl Simplex {
                 filtered_block = true; // 方向阻挡但主元过小，过滤
                 continue;
             }
-            cands.push((t_i, i, hit_upper, a.abs(), self.basis[i]));
+            self.cand_scratch.push((t_i, i, hit_upper, a.abs(), self.basis[i]));
         }
         // 入基变量自身界翻转（从所贴界移动到对端界）。
         let (lb, ub) = self.col_bounds(q);
         if ub.is_finite() {
-            cands.push(((ub - lb).max(0.0), usize::MAX, false, 0.0, q));
+            self.cand_scratch
+                .push(((ub - lb).max(0.0), usize::MAX, false, 0.0, q));
         }
+        let cands = &self.cand_scratch;
         if cands.is_empty() {
             return if filtered_block {
                 Step::FilteredBlock(format!(
@@ -1045,7 +1163,7 @@ impl Simplex {
             };
         }
         let mut t_min = f64::INFINITY;
-        for c in &cands {
+        for c in cands.iter() {
             if c.0 < t_min {
                 t_min = c.0;
             }
@@ -1082,17 +1200,34 @@ impl Simplex {
     /// 执行主元：入基列 q（方向 delta、步长 t），出基行 r。
     /// rhs 采用“基变量值”口径：非出基行按 −δt·f_k 更新，出基行 = 入基变量
     /// 新值；系数与 binv 做标准表格行变换。
+    ///
+    /// 热路径零分配：消元系数 f 覆盖写暂存 `pivot_f`；行缩放与消元只遍历
+    /// 主元行非零下标 `pivot_nz`（缩放前判零——零经 1/p 缩放仍为零，集合
+    /// 不变）。跳过 m[r][j]==0 列是精确无操作，仅可能翻转个别 ±0.0 的
+    /// 符号位（f64 == 比较行为不变，值级/决策级等价）。matrix/binv 消元
+    /// 内循环经 split_at_mut 同时取得可变行 k 与只读行 r（别名安全写法，
+    /// 可向量化）；matrix[k][q]=0 卫生写在非零循环外保留。
     fn do_pivot(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
         let m = self.basis.len();
         let ncols = self.matrix[r].len();
         let p = self.matrix[r][q];
-        // 行 r 缩放。
+        // 主元行非零下标（O(ncols)，缩放前收集，按列升序）。
+        self.pivot_nz.clear();
         for j in 0..ncols {
-            self.matrix[r][j] /= p;
+            if self.matrix[r][j] != 0.0 {
+                self.pivot_nz.push(j);
+            }
+        }
+        // 行 r 缩放（只遍历非零列）。
+        {
+            let row = &mut self.matrix[r];
+            for &j in self.pivot_nz.iter() {
+                row[j] /= p;
+            }
         }
         self.matrix[r][q] = 1.0;
-        for k in 0..m {
-            self.binv[r][k] /= p;
+        for v in self.binv[r].iter_mut() {
+            *v /= p;
         }
         // 出基列与入基旧值。
         let leaving = self.basis[r];
@@ -1101,25 +1236,46 @@ impl Simplex {
         } else {
             self.col_bounds(q).1
         };
-        // 消元（f_k 用未更新的 matrix[k][q]）。
-        let f: Vec<f64> = (0..m)
-            .map(|k| if k == r { 0.0 } else { self.matrix[k][q] })
-            .collect();
+        // 消元系数 f（用未更新的 matrix[k][q]）：覆盖写暂存，无分配。
+        self.pivot_f.clear();
+        self.pivot_f.resize(m, 0.0);
+        for k in 0..m {
+            if k != r {
+                self.pivot_f[k] = self.matrix[k][q];
+            }
+        }
+        // 消元（k ≠ r；f_k 用未更新的 matrix[k][q]）。
         for k in 0..m {
             if k == r {
                 continue;
             }
-            let fk = f[k];
+            let fk = self.pivot_f[k];
             if fk != 0.0 {
-                for j in 0..ncols {
-                    self.matrix[k][j] -= fk * self.matrix[r][j];
+                // matrix 行 k（可变）与行 r（只读）：k≠r，经 split_at_mut
+                // 取得不相交切片。
+                let (row_k, row_r): (&mut Vec<f64>, &Vec<f64>) = if r < k {
+                    let (left, right) = self.matrix.split_at_mut(k);
+                    (&mut right[0], &left[r])
+                } else {
+                    let (left, right) = self.matrix.split_at_mut(k + 1);
+                    (&mut left[k], &right[r - k - 1])
+                };
+                for &j in self.pivot_nz.iter() {
+                    row_k[j] -= fk * row_r[j];
                 }
-                for c in 0..m {
-                    self.binv[k][c] -= fk * self.binv[r][c];
+                let (bk, br): (&mut Vec<f64>, &Vec<f64>) = if r < k {
+                    let (left, right) = self.binv.split_at_mut(k);
+                    (&mut right[0], &left[r])
+                } else {
+                    let (left, right) = self.binv.split_at_mut(k + 1);
+                    (&mut left[k], &right[r - k - 1])
+                };
+                for (x, y) in bk.iter_mut().zip(br.iter()) {
+                    *x -= fk * *y;
                 }
                 self.rhs[k] -= delta * t * fk;
             }
-            self.matrix[k][q] = 0.0; // 数值卫生
+            self.matrix[k][q] = 0.0; // 数值卫生（保留在非零列循环之外）
         }
         self.rhs[r] = entering_old + delta * t;
         self.basis[r] = q;
@@ -1344,13 +1500,14 @@ impl Simplex {
 
     // ===================== 内部：热启动 =====================
 
-    /// 非基列贴界双向检查（相对上次有效界 `prev`）：
+    /// 非基列贴界双向检查（相对上次有效界，即 `self.prev_bounds`——由
+    /// resolve 在调用前 swap 换入）：
     /// * 收紧越界：贴上界且新 ub < 当前值 → snap 到新 ub；贴下界且新 lb >
     ///   当前值 → snap 到新 lb。
     /// * 松弛失贴：当前值严格位于新 (lb,ub) 内部 → snap 到较近界；等距并列
     ///   按 Phase-2 检验数符号选侧（rc<0 选下界、rc≥0 选上界）。
     /// 每个 snap 的 Δx_j 按 B⁻¹A_j 传播更新全部基变量值。
-    fn snap_nonbasics(&mut self, prev: &Bounds) {
+    fn snap_nonbasics(&mut self) {
         let n = self.num_structural;
         let feas = self.tol.feasibility;
         for j in 0..n {
@@ -1358,9 +1515,9 @@ impl Simplex {
                 continue;
             }
             let old_v = if self.at_upper[j] {
-                prev.ub[j]
+                self.prev_bounds.ub[j]
             } else {
-                prev.lb[j]
+                self.prev_bounds.lb[j]
             };
             let nlb = self.bounds.lb[j];
             let nub = self.bounds.ub[j];
@@ -1448,6 +1605,175 @@ impl Simplex {
 
     /// 校验 bounds 实参：lb>ub ⇒ Infeasible；长度不符/非有限界 ⇒ 数值失败
     ///（映射 IterationLimit，原因记入 numerical_error）。
+    // ===================== 内部：界变化后的对偶修复快路径 =====================
+
+    /// 基中是否存在人工列（对偶快路径前置排除：人工列在基 ⇒ 对偶可行性
+    /// 语义不成立，走重建）。
+    fn artificials_in_basis(&self) -> bool {
+        let ncs = self.ncols_static();
+        self.basis.iter().any(|&c| c >= ncs)
+    }
+
+    /// 静态非基列对偶可行性预检（min 内部口径：贴下界 rc ≥ −tol、贴上界
+    /// rc ≤ +tol；固定列不参与）。界收紧后 snap 只挪非基取值、基与成本
+    /// 未动 ⇒ 理论上恒可行；本预检是防御（snap 跨界翻转等罕见形态会使
+    /// rc 符号与所贴界失配），失败即放弃快路径。
+    fn dual_feasible(&mut self) -> bool {
+        let ncs = self.ncols_static();
+        // 新鲜度规范 (b)：入口一次批量重算（resolve 入口距上次 price 可能
+        // 隔 phase 切换/add_row/整基重建，不得复用 price 的缓存；原逐列
+        // rc_of 改为入口一次批量，&self→&mut self，调用点均在 &mut 上下文）。
+        self.compute_rc_batch(2);
+        for j in 0..ncs {
+            if self.in_basis[j] {
+                continue;
+            }
+            let (lb, ub) = self.col_bounds(j);
+            if ub - lb <= self.tol.feasibility {
+                continue; // 固定列：无对偶语义
+            }
+            let rc = self.rc_scratch[j];
+            if !rc.is_finite() {
+                return false;
+            }
+            if self.at_upper[j] {
+                if rc > self.tol.optimality {
+                    return false;
+                }
+            } else if rc < -self.tol.optimality {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 有界变量对偶单纯形修复：从当前（对偶可行、原始违约）基出发，每次
+    /// 选违反最重的基行出基（落到其被违反的界）、在对偶比值测试选出的
+    /// 入基列上做标准表格主元，直至全部基变量回到界内。
+    ///
+    /// 与 [`do_pivot`] 的口径衔接：出基变量落界 ⇒ `hit_upper` = 落上界？
+    /// 步长 t 由「出基变量值恰好到达被违反界」解出；入基列从其所贴界沿
+    /// delta 方向移动 t。迭代计数与 Phase 路径同口径累加（统计诚实）。
+    /// 任何异常（无可入列、步长非法、超预算、检验数非有限）⇒ [`DualRepair::GiveUp`]
+    /// 由调用方回退整基重建——包括「对偶无界 ⇒ 原始不可行」的情形也保守
+    /// 回退（不可行判定仍由 Phase-1 给出，快路径绝不抢答）。
+    fn dual_repair(&mut self) -> DualRepair {
+        const BUDGET_BASE: u32 = 2_000;
+        const DEGEN_BLAND: u32 = 32;
+        if !self.dual_feasible() {
+            return DualRepair::GiveUp;
+        }
+        let m = self.basis.len();
+        let ncs = self.ncols_static();
+        let budget = BUDGET_BASE.saturating_add((m as u32).saturating_mul(50));
+        let bland_at = budget / 2;
+        let mut iters: u32 = 0;
+        let mut degen: u32 = 0;
+        loop {
+            // 新鲜度规范 (c)：外层循环每轮迭代顶部重算检验数——上一轮
+            // do_pivot 已改表，下一轮列扫描读取的 rc 必须反映当前表格
+            // （扫描“只对过滤列读取”是省工而非新鲜度保证，二者不得混淆）。
+            self.compute_rc_batch(2);
+            // (1) 选相对违反最重的基行（below = 低于 lb ⇒ 需升到 lb）。
+            //     过滤阈值用**绝对** feasibility——与入口 [`Self::basics_violated`]
+            //     （绝对 feas）同口径、严于终检的 10·feas：若用相对阈值
+            //     feas·(1+|rhs|)，大数值量级（|rhs|≈1e6 ⇒ 阈值≈1e-3）下
+            //     小越界被宣布已修复，终检随即降级 IterationLimit（可修复
+            //     状态变伪数值失败）。行间**排序**仍按界幅归一（只定优先级，
+            //     不定通过与否）。
+            let mut worst: Option<(usize, f64, bool)> = None;
+            for i in 0..m {
+                let (lb, ub) = self.col_bounds(self.basis[i]);
+                let v_lb = lb - self.rhs[i];
+                let v_ub = self.rhs[i] - ub;
+                let (viol, below) = if v_lb > v_ub { (v_lb, true) } else { (v_ub, false) };
+                // NaN 不跳过（交由选择与步长校验走 GiveUp 回退，与既有
+                // 数值异常口径一致）。
+                if viol.is_finite() && viol <= self.tol.feasibility {
+                    continue;
+                }
+                let bound = if below { lb } else { ub };
+                let norm = viol / (1.0 + bound.abs());
+                match worst {
+                    Some((_, w, _)) if w >= norm => {}
+                    _ => worst = Some((i, norm, below)),
+                }
+            }
+            let Some((r, _, below)) = worst else {
+                return DualRepair::Repaired;
+            };
+            if iters >= budget {
+                return DualRepair::GiveUp;
+            }
+            let use_bland = iters >= bland_at || degen >= DEGEN_BLAND;
+            // (2) 对偶比值测试：方向可行（below ⇒ δ·a<0，above ⇒ δ·a>0）的
+            //     非基列中选 ratio = 有符号 rc / |a| 最小者；正常期并列取
+            //     |主元| 大者（数值稳），退化期 Bland 最小列下标防循环。
+            let mut best: Option<(f64, f64, usize, f64)> = None; // (ratio, |a|, q, delta)
+            for j in 0..ncs {
+                if self.in_basis[j] {
+                    continue;
+                }
+                let (lb, ub) = self.col_bounds(j);
+                if ub - lb <= self.tol.feasibility {
+                    continue;
+                }
+                let a = self.matrix[r][j];
+                if a.abs() < self.tol.pivot {
+                    continue;
+                }
+                let delta = if self.at_upper[j] { -1.0 } else { 1.0 };
+                let da = delta * a;
+                if below && da >= 0.0 {
+                    continue;
+                }
+                if !below && da <= 0.0 {
+                    continue;
+                }
+                let rc = self.rc_scratch[j];
+                if !rc.is_finite() {
+                    return DualRepair::GiveUp;
+                }
+                let signed = if self.at_upper[j] { -rc } else { rc };
+                let ratio = (signed / a.abs()).max(0.0);
+                let better = match best {
+                    None => true,
+                    Some((br, ba, bq, _)) => {
+                        if use_bland {
+                            j < bq
+                        } else {
+                            ratio < br || (ratio == br && (a.abs() > ba || (a.abs() == ba && j < bq)))
+                        }
+                    }
+                };
+                if better {
+                    best = Some((ratio, a.abs(), j, delta));
+                }
+            }
+            let Some((_, _, q, delta)) = best else {
+                // 无方向可行列（对偶无界 ⇒ 原始不可行）：保守回退 Phase-1 判定。
+                return DualRepair::GiveUp;
+            };
+            // (3) 步长 t：出基变量恰好落到被违反的界。
+            let a = self.matrix[r][q];
+            let (lb_r, ub_r) = self.col_bounds(self.basis[r]);
+            let (target, hit_upper) = if below { (lb_r, false) } else { (ub_r, true) };
+            let t = (target - self.rhs[r]) / (-delta * a);
+            if !t.is_finite() || t < 0.0 {
+                return DualRepair::GiveUp;
+            }
+            self.do_pivot(q, r, delta, t, hit_upper);
+            iters += 1;
+            self.iter_call += 1;
+            self.iterations_total += 1;
+            if t <= self.tol.feasibility {
+                degen += 1;
+            } else {
+                degen = 0;
+            }
+        }
+    }
+
     fn validate_bounds_arg(&mut self, bounds: &Bounds) -> Option<LpStatus> {
         let n = self.num_structural;
         if bounds.lb.len() != n || bounds.ub.len() != n {
@@ -1644,6 +1970,122 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// （M6）add_row 的割松弛列不得与人工列段撞号：1 Eq + 1 Le 问题根解后
+    /// add_row，表格必须仍是 B⁻¹A——每个基列在表格中恰为单位向量（行 i
+    /// 处 1、他处 0）、基列互异、割松弛列落在静态段内。旧实现把新割松弛列
+    /// 分配在 `n + slack.len()`（= 人工列段首），与 Eq 行构建期人工列共址，
+    /// 该列在旧 Eq 行残留系数 ⇒ 非单位向量，表格 ≠ B⁻¹A（靠后续整基重建
+    /// 偶然兜住）。
+    #[test]
+    fn test_add_row_slack_column_does_not_alias_artificial_segment() {
+        // min 2x + y s.t. x + y = 3（Eq，构建期产人工列）、x − y ≤ 1（Le），
+        // x, y ∈ [0, 5] 连续。根解 (0, 3)。
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 5.0), var("y", 0.0, 5.0)],
+            vec![(0, 2.0), (1, 1.0)],
+            vec![
+                (vec![(0, 1.0), (1, 1.0)], RelOp::Eq, 3.0),
+                (vec![(0, 1.0), (1, -1.0)], RelOp::Le, 1.0),
+            ],
+        );
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let b = Bounds::from_problem(&p);
+        let sol = s.solve(&b);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        // 前置：Eq 行 ⇒ 构建期存在人工列（Phase-1 清理后列仍占用列空间），
+        // 这是撞号成立的前提。
+        assert!(s.num_art >= 1, "Eq 行问题构建期必有人工列");
+        let ncs_before = s.ncols_static();
+
+        // 根解后加割行 x ≤ 2.5（Le，当前解违反 ⇒ 走人工列路径之外的常规
+        // 松弛基路径；再补一条 Ge 割走人工列路径，双向覆盖）。
+        let k1 = s.add_row(&[(0, 1.0)], RelOp::Le, 2.5).unwrap();
+        let k2 = s.add_row(&[(1, 1.0)], RelOp::Ge, 1.5).unwrap();
+        assert_eq!((k1, k2), (0, 1), "割序号 0 起连续递增");
+
+        // 基列互异（撞号会使两行的基列共址）。
+        let mut sorted_basis = s.basis.clone();
+        sorted_basis.sort_unstable();
+        for w in sorted_basis.windows(2) {
+            assert_ne!(w[0], w[1], "基列重复（人工列共址）：basis = {:?}", s.basis);
+        }
+        // 表格 = B⁻¹A 的必要条件：每个基列是单位向量。
+        for (i, &c) in s.basis.iter().enumerate() {
+            for (r2, row) in s.matrix.iter().enumerate() {
+                let expect = if r2 == i { 1.0 } else { 0.0 };
+                assert!(
+                    (row[c] - expect).abs() <= 1e-9,
+                    "基列 {c} 非单位向量：matrix[{r2}][{c}] = {}（basis = {:?}）",
+                    row[c],
+                    s.basis
+                );
+            }
+        }
+        // 割松弛列落在静态段内（避开人工列段）；静态段因新割恰好扩 2。
+        assert_eq!(s.ncols_static(), ncs_before + 2);
+        for c in s.row_slack.iter().flatten() {
+            assert!(*c < s.ncols_static(), "松弛列 {c} 侵入人工列段");
+        }
+        // in_basis 与 basis 一致（长度 = 全列空间，基位数 = 行数）。
+        assert_eq!(
+            s.in_basis.iter().filter(|&&v| v).count(),
+            s.basis.len(),
+            "in_basis 计数须等于行数"
+        );
+        for &c in &s.basis {
+            assert!(s.in_basis[c], "基列 {c} 的 in_basis 未置位");
+        }
+
+        // 端到端：加割后 resolve 收敛到受割约束的最优解（目标 min 2x+y 在
+        // x+y=3 上 = x+3 ⇒ 唯一最优 x=0、y=3，满足割 x ≤ 2.5、y ≥ 1.5）。
+        let after = s.resolve(&b);
+        assert_eq!(after.status, LpStatus::Optimal);
+        assert_close(after.objective, 3.0);
+        assert!((after.x[0] - 0.0).abs() < 1e-7);
+        assert!((after.x[1] - 3.0).abs() < 1e-7);
+    }
+
+    /// （M7）dual_repair 行违反过滤用绝对 feasibility 口径：大数值量级
+    ///（基变量值 ≈ 1.5e6）下，收紧基变量上界 1e-4 产生的小越界必须被对偶
+    /// 修复为 Optimal。旧实现的相对阈值 feas·(1+|rhs|) ≈ 1.5e-3 会把该
+    /// 1e-4 越界宣布为已修复，终检（10·feas = 1e-8）随即降级 IterationLimit
+    ///（可修复状态变伪数值失败）。
+    #[test]
+    fn test_dual_repair_absolute_threshold_large_magnitude() {
+        // max x s.t. x + y ≤ 1.5e6，x ∈ [0, 2e6]、y ∈ [0, 1]：根解 x 基
+        //（值 1.5e6，slack 非基 0）；收紧 x.ub 至 1.5e6 − 1e-4 ⇒ 基变量
+        // 越上界 1e-4（snap 不触碰基变量）。
+        let p = prob(
+            Sense::Maximize,
+            vec![var("x", 0.0, 2.0e6), var("y", 0.0, 1.0)],
+            vec![(0, 1.0)],
+            vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.5e6)],
+        );
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let mut b = Bounds::from_problem(&p);
+        let sol = s.solve(&b);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert_close(sol.objective, 1.5e6);
+
+        b.ub[0] = 1.5e6 - 1.0e-4;
+        let warm = s.resolve(&b);
+        assert_eq!(
+            warm.status,
+            LpStatus::Optimal,
+            "1e-4 越界在 |rhs|≈1.5e6 下须被对偶修复（非伪数值失败）"
+        );
+        assert_close(warm.objective, 1.5e6 - 1.0e-4);
+        // 注：不做同界冷解对照——该合成算例的冷路径会踩中 ratio_test 的
+        // 并列带宽 feas·(1+|t_min|)（t_min≈1.5e6 ⇒ 带宽≈1.5e-3，把小 1e-4
+        // 的自身界翻转候选当作并列、按 |主元| 破键输给 Leave），属与本条
+        //（dual_repair 判据）无关的既有大数值量级现象，本用例只钉热路径。
+        assert!((warm.x[0] - (1.5e6 - 1.0e-4)).abs() < 1e-6);
+        assert!(warm.x[1] >= 0.0 && warm.x[1] <= 1.0);
     }
 
     fn assert_close(a: f64, b: f64) {
@@ -2429,5 +2871,165 @@ mod tests {
         let sol = s.resolve(&root);
         assert_eq!(sol.status, LpStatus::Optimal);
         assert_close(sol.objective, -4.0);
+    }
+
+    // ---- 热路径改造：批量检验数 / 主元零列跳过的值级等价 ----
+
+    /// 逐列参考实现（与 rc_of 的运算顺序逐字一致；支持 phase 1/2，供
+    /// phase-1 状态对照——rc_of 本体只算 phase 2）。
+    fn rc_reference(s: &Simplex, j: usize, phase: u8) -> f64 {
+        let m = s.basis.len();
+        let mut rc = s.cost_of(j, phase);
+        for i in 0..m {
+            let cb = s.cost_of(s.basis[i], phase);
+            if cb != 0.0 {
+                rc -= cb * s.matrix[i][j];
+            }
+        }
+        rc
+    }
+
+    /// compute_rc_batch 与逐列计算在全列空间逐列 == 相等（f64 == 断言：
+    /// 同序运算 ⇒ 值级相等；±0 符号位差异对 == 不可分辨，禁止按 bit 断言）。
+    fn assert_rc_batch_matches(s: &mut Simplex, phase: u8, ctx: &str) {
+        let ncols = s.ncols_static() + s.num_art;
+        s.compute_rc_batch(phase);
+        for j in 0..ncols {
+            let expect = if phase == 2 {
+                s.rc_of(j)
+            } else {
+                rc_reference(s, j, 1)
+            };
+            assert!(
+                s.rc_scratch[j] == expect,
+                "{ctx}: 列 {j} phase {phase} 批量 {} != 逐列 {}",
+                s.rc_scratch[j],
+                expect
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_rc_batch_matches_per_column_multi_state() {
+        // min x+2y s.t. x+y=5（Eq→人工列）、x>=3（正右端 Ge→人工列）、
+        // x+y<=9（Le→松弛列入基）。初始基含人工列（phase-1 真实起点，
+        // c_b≠0 行存在），随后覆盖 solve / add_row（割行+新建人工列）/
+        // resolve（热启动修复）/ do_pivot（手工改表）多状态。
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)],
+            vec![(0, 1.0), (1, 2.0)],
+            vec![
+                (vec![(0, 1.0), (1, 1.0)], RelOp::Eq, 5.0),
+                (vec![(0, 1.0)], RelOp::Ge, 3.0),
+                (vec![(0, 1.0), (1, 1.0)], RelOp::Le, 9.0),
+            ],
+        );
+        let mut s = Simplex::new(&p, tol()).ok().unwrap();
+        // 状态 1：全新初始表格（未 solve；基含人工列）。
+        assert!(s.num_art > 0);
+        assert!(s.basis.iter().any(|&c| c >= s.ncols_static()));
+        assert_rc_batch_matches(&mut s, 1, "初始表格");
+        assert_rc_batch_matches(&mut s, 2, "初始表格");
+        // 状态 2：solve 后（phase-2 最优基；人工列仍占列空间但已离基）。
+        let b = Bounds::from_problem(&p);
+        assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+        assert_rc_batch_matches(&mut s, 2, "solve 后");
+        assert_rc_batch_matches(&mut s, 1, "solve 后");
+        // 状态 3：add_row 追加两条割——Le 割（满足，松弛入基）与 Ge 割
+        // （违反当前解 y=0 → 新建人工列，phase1_pending）。
+        s.add_row(&[(1, 1.0)], RelOp::Le, 4.0).ok().unwrap();
+        s.add_row(&[(1, 1.0)], RelOp::Ge, 1.0).ok().unwrap();
+        assert!(s.phase1_pending);
+        assert_rc_batch_matches(&mut s, 2, "add_row 后（含割行+新人工列）");
+        // 状态 4：resolve（热启动 + 修复路径）。
+        assert_eq!(s.resolve(&b).status, LpStatus::Optimal);
+        assert_rc_batch_matches(&mut s, 2, "resolve 后");
+        // 状态 5：do_pivot 后（手工驱动一次退化主元改表；不再处于求解器
+        // 不变量下的任意中间态恰是批量 vs 逐列一致性最有力的对照）。
+        let ncs = s.ncols_static();
+        let m = s.basis.len();
+        let mut picked = false;
+        'outer: for q in 0..ncs {
+            if s.in_basis[q] {
+                continue;
+            }
+            for r in 0..m {
+                if s.matrix[r][q].abs() >= 1e-6 {
+                    s.do_pivot(q, r, 1.0, 0.0, false);
+                    picked = true;
+                    break 'outer;
+                }
+            }
+        }
+        assert!(picked, "应存在可用主元");
+        assert_rc_batch_matches(&mut s, 2, "do_pivot 后");
+        assert_rc_batch_matches(&mut s, 1, "do_pivot 后");
+    }
+
+    #[test]
+    fn test_do_pivot_zero_column_skip_hand_tableau() {
+        // 手算小表格：min x+2y+3z s.t. 2x+z<=8（Le）、x+y>=2（Ge 正右端）。
+        // 构建期行 0 归一 g=2 ⇒ [1, 0, 0.5 | s1=1]，rhs 4，松弛列 3 入基；
+        // 行 1（Ge，残差 2>feas）σ=+1 ⇒ [1, 1, 0 | 0 | −1 | 1]，rhs 2，
+        // 人工列 5 入基。列空间 = [x,y,z,s1,s2,a1]（宽 6）。
+        let p = prob(
+            Sense::Minimize,
+            vec![
+                var("x", 0.0, 10.0),
+                var("y", 0.0, 10.0),
+                var("z", 0.0, 10.0),
+            ],
+            vec![(0, 1.0), (1, 2.0), (2, 3.0)],
+            vec![
+                (vec![(0, 2.0), (2, 1.0)], RelOp::Le, 8.0),
+                (vec![(0, 1.0), (1, 1.0)], RelOp::Ge, 2.0),
+            ],
+        );
+        let mut s = Simplex::new(&p, tol()).ok().unwrap();
+        // 初始表格（手算断言；f64 == 口径）。
+        assert_eq!(s.matrix[0], vec![1.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
+        assert_eq!(s.matrix[1], vec![1.0, 1.0, 0.0, 0.0, -1.0, 1.0]);
+        assert_eq!(s.rhs, vec![4.0, 2.0]);
+        assert_eq!(s.binv[0], vec![1.0, 0.0]);
+        assert_eq!(s.binv[1], vec![0.0, 1.0]);
+        assert_eq!(s.basis, vec![3, 5]);
+
+        // 主元 1：q=0（x），r=0，delta=+1，t=2，hit_upper=false。
+        // p=1：行 0 不变（[1,0,0.5,1,0,0]）；f[1]=1 ⇒ 行 1 消元
+        // [1−1, 1−0, 0−0.5, 0−1, −1−0, 1−0] = [0,1,−0.5,−1,−1,1]，
+        // binv[1] = [−1,1]，rhs[1] = 2−2 = 0，rhs[0] = lb[x]+2 = 2。
+        // 主元行零列 {y, s2}：跳过是精确无操作（稠密同样得 1、−1）。
+        s.do_pivot(0, 0, 1.0, 2.0, false);
+        assert_eq!(s.matrix[0], vec![1.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
+        assert_eq!(s.matrix[1], vec![0.0, 1.0, -0.5, -1.0, -1.0, 1.0]);
+        assert_eq!(s.binv[0], vec![1.0, 0.0]);
+        assert_eq!(s.binv[1], vec![-1.0, 1.0]);
+        assert_eq!(s.rhs, vec![2.0, 0.0]);
+        assert_eq!(s.basis, vec![0, 5]);
+        assert!(s.in_basis[0]);
+        assert!(!s.in_basis[3]);
+        assert!(!s.at_upper[3]);
+
+        // 主元 2：q=2（z），r=1，delta=−1，t=3，hit_upper=true。
+        // p=−0.5：行 1 缩放 ×(−2) ⇒ [0,−2,1,2,2,−2]（零列 {x}：稠密缩放
+        // 得 −0.0，稀疏跳过保留 +0.0——== 相等）；binv[1] = [2,−2]；
+        // f[0]=0.5 ⇒ 行 0 消元 [1,0+1,0.5−0.5,1−1,0−1,0+1] = [1,1,0,0,−1,1]，
+        // binv[0] = [1−1, 0+1] = [0,1]，rhs[0] = 2+1.5 = 3.5，
+        // rhs[1] = ub[z]−3 = 7。
+        s.do_pivot(2, 1, -1.0, 3.0, true);
+        assert_eq!(s.matrix[0], vec![1.0, 1.0, 0.0, 0.0, -1.0, 1.0]);
+        assert_eq!(s.matrix[1], vec![0.0, -2.0, 1.0, 2.0, 2.0, -2.0]);
+        assert_eq!(s.binv[0], vec![0.0, 1.0]);
+        assert_eq!(s.binv[1], vec![2.0, -2.0]);
+        assert_eq!(s.rhs, vec![3.5, 7.0]);
+        assert_eq!(s.basis, vec![0, 2]);
+        assert!(!s.in_basis[5]);
+        assert!(s.in_basis[2]);
+        assert!(s.at_upper[5]);
+
+        // 改表后批量检验数仍与逐列一致（do_pivot 后状态）。
+        assert_rc_batch_matches(&mut s, 2, "手算主元后");
+        assert_rc_batch_matches(&mut s, 1, "手算主元后");
     }
 }

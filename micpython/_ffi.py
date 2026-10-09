@@ -62,9 +62,14 @@ class FfiLoadError(MicError):
     """动态库装载失败（路径不存在 / 无法加载 / 符号缺失 / ABI 版本不符）。"""
 
 
-class ArgumentError(MicError):
+class ArgumentError(MicError, ValueError):
     """FFI 码 1/8/9：空指针（公共 API 不可达）、UTF-8 编码失败（公共 API
-    不可达：str.encode 已先行抛 UnicodeEncodeError）、参数值域/类型非法。"""
+    不可达：str.encode 已先行抛 UnicodeEncodeError）、参数值域/类型非法。
+
+    亦为 ``ValueError`` 子类（B3）：『参数值非法』按 Python 惯例可被
+    ``except ValueError`` 捕获——含内嵌 NUL 的名字/字符串值即经此抛出
+    （core.py ``_check_no_nul``）。多重继承只放宽可捕获面，既有
+    ``except ArgumentError`` / ``except MicError`` 语义不变。"""
 
 
 class ModelError(MicError):

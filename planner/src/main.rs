@@ -12,8 +12,9 @@
 //! - `--steps` 与 `--time-secs` 互斥（同给 exit 1）。
 //! - `--threads N`：多起点并行 worker 数（`1 ≤ N ≤ 1024`，默认 1）。threads=1 走与
 //!   旧版**完全相同**的 `solve()` 调用路径（行为与输出逐字节一致）；N > 1 时
-//!   `solve_parallel` 派 N 个 worker 各自完整 construct+local_search（worker 0 用主
-//!   seed、i ≥ 1 用 `rng::derive_seed` 派生），结束取最优。与 `--steps`/`--time-secs`
+//!   `solve_parallel` 由父线程 validate+construct **恰一次**得同一初始解，N 个 worker
+//!   各自对该初始解独立 local_search（worker 0 用主 seed、i ≥ 1 用 `rng::derive_seed`
+//!   派生），结束取最优。与 `--steps`/`--time-secs`
 //!   无互斥，stdout 恰两行契约与 exit code 契约不变。
 //! - `--algo tabu` → `TabuSearch { tabu_size: 8 }`；
 //!   `--algo sa` 固定 `SimulatedAnnealing { start_temp: 1000.0, end_temp: 1.0 }`；
@@ -27,7 +28,7 @@
 //!   再 `Duration::try_from_secs_f64(v)`，任一不过 → stderr `error: invalid --time-secs`
 //!   + exit 1。**禁止 `Duration::from_secs_f64`**（NaN/负/非有限/溢出直接 panic，std 文档明示）。
 //! - `--steps`/`--seed`/`--samples`：解析为非负整数（u64），非法或超界
-//!   （steps > 10^9、samples > 10^6）exit 1。
+//!   （steps > 10^9、samples ∉ [1, 10^6]）exit 1。
 //!
 //! ## 输出契约
 //! 成功时 stdout **恰好两行**且在结束时输出（均取 `SearchResult.best_score`，`hard` 后无
@@ -85,7 +86,7 @@ struct Args {
     verbose: bool,
 }
 
-/// 硬界：steps ≤ 10^9、samples ≤ 10^6（超出按非法参数 exit 1）。
+/// 硬界：steps ≤ 10^9、samples ∈ [1, 10^6]（越界按非法参数 exit 1）。
 const MAX_STEPS: u64 = 1_000_000_000;
 const MAX_SAMPLES: u64 = 1_000_000;
 /// threads 合法上界（与 lib 侧 `parallel::MAX_THREADS` 数值一致，单测自查；
@@ -207,7 +208,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 let raw = flag_value(argv, &mut i, "--samples")?;
                 let v: u64 = raw
                     .parse()
-                    .map_err(|_| format!("invalid --samples '{raw}' (expected integer in [0, 10^6])"))?;
+                    .map_err(|_| format!("invalid --samples '{raw}' (expected integer in [1, 10^6])"))?;
+                if v < 1 {
+                    // 与 lib 侧运行期 `samples_per_step ≥ 1` 校验同域：解析期即拒绝 0，
+                    // 声明域与强制域一致（此前 0 可通过解析、运行期才被拒）。
+                    return Err(format!("invalid --samples '{raw}': must be >= 1"));
+                }
                 if v > MAX_SAMPLES {
                     return Err(format!("invalid --samples '{raw}': exceeds 10^6"));
                 }
@@ -438,13 +444,17 @@ mod tests {
             Some(1_000_000_000)
         );
 
-        // --samples：非负有限字面量，≤ 10^6
-        for bad in ["x", "-5", "2.5", "1000001"] {
+        // --samples：有限整数字面量，1 ≤ K ≤ 10^6（0 在解析期即拒绝）
+        for bad in ["x", "-5", "2.5", "0", "1000001"] {
             assert!(
                 parse_args(&args(&["i", "--samples", bad])).is_err(),
                 "--samples {bad:?} must be rejected"
             );
         }
+        assert_eq!(
+            parse_args(&args(&["i", "--samples", "1"])).unwrap().samples,
+            1
+        );
         assert_eq!(
             parse_args(&args(&["i", "--samples", "1000000"])).unwrap().samples,
             1_000_000
@@ -464,9 +474,23 @@ mod tests {
         );
     }
 
+    /// P6 回归：--samples 0 在**解析期**即拒绝（消息注明须 ≥1），不再拖到运行期由
+    /// lib 侧 `samples_per_step must be >= 1` 校验兜底；声明域与强制域一致。
     #[test]
-    fn algo_construct_and_usage_errors() {
-        assert!(parse_args(&args(&["i", "--algo", "SA"])).is_err(), "大小写敏感");
+    fn samples_zero_rejected_at_parse_with_ge1_message() {
+        let e = parse_args(&args(&["i", "--samples", "0"]))
+            .err()
+            .unwrap_or_else(|| panic!("--samples 0 must be rejected at parse time"));
+        assert_eq!(e, "invalid --samples '0': must be >= 1");
+        // 解析失败消息的取值域说明同步为 [1, 10^6]
+        let e = parse_args(&args(&["i", "--samples", "x"]))
+            .err()
+            .unwrap_or_else(|| panic!("--samples x must be rejected"));
+        assert_eq!(e, "invalid --samples 'x' (expected integer in [1, 10^6])");
+    }
+
+    #[test]
+    fn algo_construct_and_usage_errors() {        assert!(parse_args(&args(&["i", "--algo", "SA"])).is_err(), "大小写敏感");
         assert!(parse_args(&args(&["i", "--algo", "greedy"])).is_err());
         assert!(parse_args(&args(&["i", "--construct", "zz"])).is_err());
         assert!(parse_args(&args(&["i", "--unknown"])).is_err(), "未知旗标");

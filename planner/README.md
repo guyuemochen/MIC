@@ -99,8 +99,8 @@ planner <算例路径> [--steps N] [--time-secs F] [--seed S]
 | `--seed S` | 42 | u64 种子（SplitMix64 扩展 + xoshiro256\*\*）；多起点下为 worker 0 的种子，其余 worker 由它派生（见下「多线程与确定性」） |
 | `--algo tabu\|sa\|la` | tabu | `tabu` → `TabuSearch { tabu_size: 8 }`；`sa` **固定** `SimulatedAnnealing { start_temp: 1000.0, end_temp: 1.0 }`；`la` **固定** `LateAcceptance { history_len: 30 }`（参数取自 `localsearch` 契约的唯一定义，无调参旗标） |
 | `--construct ff\|bf` | ff | 构造启发式（FirstFit / BestFit，确定性、不耗随机数） |
-| `--samples K` | 32 | 每步采样数，**仅 tabu 读取**；sa/la 下接受但无效果（不耗随机数）；K ≤ 10^6 |
-| `--threads N` | 1 | 多起点并行 worker 数，`1 ≤ N ≤ 1024`（u64 字面量；非法/越界/重复 → `error:` + exit 1，消息风格同 `--steps`）；语义 = N 个独立 worker 从**同一初始解**各自完整 construct+local_search（种子不同），结束取最优；threads=1 走与旧版**完全相同**的 `solve()` 调用路径——行为与输出逐字节一致（结构性保证，非重新实现）；与 `--steps`/`--time-secs`/`--seed` 等任意组合（`--steps` 与 `--time-secs` 互斥规则不变）；stdout 恰两行与 exit code 契约不变。确定性见下「多线程与确定性」 |
+| `--samples K` | 32 | 每步采样数，**仅 tabu 读取**；sa/la 下接受但无效果（不耗随机数）；`1 ≤ K ≤ 10^6`（0 在**解析期**即拒绝：`error: invalid --samples '0': must be >= 1`，与 lib 侧运行期 `samples_per_step ≥ 1` 校验同域） |
+| `--threads N` | 1 | 多起点并行 worker 数，`1 ≤ N ≤ 1024`（u64 字面量；非法/越界/重复 → `error:` + exit 1，消息风格同 `--steps`）；语义 = 父线程 parse→validate→construct **恰一次**得同一初始解，N 个 worker 各自对该初始解独立 local_search（种子不同），结束取最优；threads=1 走与旧版**完全相同**的 `solve()` 调用路径——行为与输出逐字节一致（结构性保证，非重新实现）；与 `--steps`/`--time-secs`/`--seed` 等任意组合（`--steps` 与 `--time-secs` 互斥规则不变）；stdout 恰两行与 exit code 契约不变。确定性见下「多线程与确定性」 |
 | `--verbose` | 关 | 进度走 stderr：构造分、threads 数、搜索后的初始分 / 实际步数；threads>1 时另追加 winner 与各 worker 的 `best = (h, s)`。步级进度（每 5000 步当前最优）因 lib 公共 API 无逐步回调而不提供（见下「可复现性与 verbose」） |
 
 输出契约：成功时 stdout **恰两行**且在结束时输出——`hard = <i64>` 与最后一行
@@ -137,7 +137,7 @@ Mutex/RwLock/Atomic/channel，唯一共享对象是只读 `Arc<ProblemModel>` �
 父线程  parse → validate → construct（恰好一次，得同一初始解）
           │
           ├── worker 0  （主 seed 原值）──┐   各 worker 私有状态、互不通信，
-          ├── worker 1  （seed_1）      ──┤   完整 construct+local_search
+          ├── worker 1  （seed_1）      ──┤   各自对同一初始解独立 local_search
           ├── …                            ├─→ 按下标 join（0, 1, …, N−1）
           └── worker N−1（seed_{N−1}）   ──┘              │
                                                           ▼
@@ -158,8 +158,12 @@ a      = splitmix_step(i)          // x = i：x += 0x9E3779B97F4A7C15 后混合
 seed_i = splitmix_step(base ^ a)
 ```
 
-splitmix_step 是双射 ⇒ 固定 base 时 i ↦ seed_i **单射**（不同 worker 必不同种子；
-前 10000 个已用独立 Python 转写抽查互异）。参考向量（`derive_seed(42, i)`，十六进制）：
+splitmix_step 是双射 ⇒ 固定 base 时**派生种子（i ≥ 1）两两互异**（i ↦ seed_i 在
+i ≥ 1 上单射）。worker 0 的 base 原值与某派生种子理论上可碰撞：对每个 base 恰存在
+一个 i 使 seed_i == base，i 近似均匀分布 ⇒ 命中 `[1, threads)` 的概率 ~threads/2^64
+≤ 2^-54（threads ≤ 1024）；即便命中也仅使两个 worker 重复同一次搜索，min 聚合与
+逐位可复现性均不受影响（前 10000 个派生种子已用独立 Python 转写抽查互异）。
+参考向量（`derive_seed(42, i)`，十六进制）：
 
 | i | seed_i |
 | --- | --- |

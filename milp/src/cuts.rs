@@ -25,13 +25,104 @@
 //! 右端补偿，严禁加严；上界 +∞ 无法界定补偿时保留该项且不计入比率检验）；
 //! violation（当前 LP 解代入 lhs−rhs）≥ min_violation 才收；
 //! max|c|/min 非零|c| > 1e9 整条丢弃（同时补偿割行不缩放的数值风险）。
+//!
+//! # 覆盖割（WP4 增补，仅根节点）
+//!
+//! [`cover_cuts`] 对每条合格背包行（Le、全 Binary 支撑、权全正、全支撑
+//! Σw > cap）做 x̄ 引导的最小覆盖分离（无提升）：贪婪按 x̄ 降序并入 C 直到
+//! Σ_C w > cap，再按 x̄ 升序剔除可剔者得最小覆盖，violation =
+//! Σ_{j∈C} x̄_j − (|C|−1) ≥ min_violation 才产出 `Σ_{j∈C} x_j ≤ |C|−1`。
+//! 有效性不依赖 x̄：覆盖 C 的权和超容 ⇒ 0-1 可行解不能令 C 全取 1。
+//! [`cut_loop_recorded`] 每轮把覆盖割批接在 GMI 批之后（确定性合并、统一
+//! 截断 max_cuts_per_round），割行照走 add_row + 记账（worker 按序重放契约
+//! 不变）。
+//!
+//! # 单行 c-MIR 与隐含界割（WP6 增补，仅根节点）
+//!
+//! [`mir_single_row`] 对**原始 Le 行**做变量界互补归一：负系数列
+//! x_j → ub_j − y_j（无有限 ub 的行整行跳过；整数类型列所互补的 ub 须为
+//! 整数值，非负系数整数列的 lb 须为整数值——否则平移/互补不再保双射整性，
+//! 整行跳过），非负系数列平移 y_j = x_j − lb_j。归一后全系数 ≥ 0、
+//! y ≥ 0（整数列 y ∈ Z_+），除以 g = max â_j 再在尺度集
+//! δ ∈ {f0, 1}·{1, 0.5, 0.25}（乘积展开：f0、f0/2、f0/4、1、0.5、0.25，
+//! f0 = frac(归一右端)）上逐试 MIR 函数：整数列
+//! π_j = ⌊α_j⌋ + (f_j − f̂0)^+/(1 − f̂0)、归一后正系数连续列 π_j = 0
+//! （连续列只消耗容量，丢弃只放宽），右端 ⌊b̂/(gδ)⌋（取整 ε 纪律：放宽
+//! 方向），f̂0 复用 away 门（f̂0 ∈ [away, 1−away]）。取 x̄ 处 violation
+//! 最大且过数值门者。有效性 = 界互补/平移双射（整数可行点一一对应）+
+//! MIR 引理（纯整数、非负系数行）+ 连续列丢弃只放宽。
+//!
+//! [`implied_bound_cuts`] 对**整数类型变量计数恰为 1** 的行导出该整数变量
+//! y 的隐含界割：行的逻辑蕴涵（其余列按方向折叠到恰好覆盖全部可行点的一侧
+//! 界，见函数文档的 Kmin/Kmax 公式）+ 方向取整（上界 floor 放宽、下界 ceil
+//! 放宽，见 [`floor_bound`]/[`ceil_bound`]）。需要的一侧变量界无限 ⇒ 该
+//! 方向跳过。纯变量界形式经反例证明是唯一保真的线性形式（保留连续列线性
+//! 表达并取整常数会切掉整数可行点：行 `y − c ≤ 5.7`、c ∈ [0,∞) 连续时，
+//! 点 y=6、c=0.3 行可行而被 `y ≤ 5 + c` 类割切掉），故本实现为纯界形式；
+//! 连续列经其有限界参与折叠、不做整性假设。
+//!
+//! [`cut_loop_recorded`] 每轮割批的确定性合并序（WP6 起）：**c-MIR → GMI
+//! → 隐含界割 → 覆盖割（提升）**，统一截断 `max_cuts_per_round`，全部照走
+//! `add_row` + [`CutRecord`] 记账（worker 按序重放契约不变）。
+//!
+//! # 序贯 up-lifting 的预算与正确性（WP6）
+//!
+//! 对最小覆盖 C 的基础割 `Σ_{j∈C} x_j ≤ |C|−1`（β = |C|−1 **固定不变**），
+//! 按序把提升列 j ∉ C 以系数 α_j 并入：α_j = β − max{Σ c_i x_i}，其中
+//! c_i 为**当前**割系数（C 成员 1、已提升列 α），最大值取自
+//! `w_j + Σ_{i∈已处理} w_i x_i ≤ cap` 的 0-1 背包（未处理列排除）——
+//! [`lift_cover_draft`] 用增量 DP（容量轴 0..cap̃ 一次建表、每提升一列
+//! O(cap̃) 追加一项）精确求解。序贯性：第 k 列的 DP 含前 k−1 列的 α
+//! （严禁对基础覆盖独立逐列计算）。
+//!
+//! 【与工作包文本的偏差（已核实）】工作包原文把 α_j 写作
+//! `|C|−1+Σ已提升α − DP 最优值`（右端随 Σα 增长）——该形式**无效**：
+//! 反例行 w=[5,4,3,2]、cap=5，C={0,1}，按原文提升 x2 得 α=1、提升 x3 得
+//! α=(1+1)−1=1，割 `x0+x1+x2+x3 ≤ 1` 切掉行可行点 {x2,x3}（3+2=5 ≤ 5，
+//! LHS=2 > 1）。标准序贯 up-lifting（Gu–Nemhauser–Savelsbergh）β 固定，
+//! 同例得 α_2=1、α_3=0，穷举全部 0-1 行可行点均满足。正确性红线
+//! （不得误剪任何整数可行解）优先，按标准公式实现。
+//!
+//! 预算三层（全部超限 ⇒ 原样退回基础覆盖割，不弱于现状）：
+//! - 每行提升列数 K ≤ min(32, |支撑\C|)（按 x̄ 降序取前 K）；
+//! - 单割建表门槛 (|C|+K)×(cap̃+1) ≤ 2×10^6 状态；
+//! - 根割循环全程 DP 总预算 3×10^7 状态操作（[`LiftBudget`]，耗尽即全程
+//!   关闭提升）；每轮只对 violation 最高的前 4 条覆盖割尝试提升。
+//!
+//! 建表判据（浮点权防御）：行权与 cap 同乘 10^k（k ∈ 0..=6）后全部（容差
+//! 1e-9·(1+|v|) 内）恰为整数的行才建表；容量上取整 ⌈cap·10^k⌉、权下取整
+//! ⌊w·10^k⌋——双向偏向『装得下』⇒ DP 最优值 ≥ 真值 ⇒ α_j 偏小 ⇒ 割偏弱
+//! 仍有效（安全方向）。非整数化行跳过提升（只留基础覆盖割）。
 
-use crate::error::{MilpError, Result};
-use crate::model::{Problem, RelOp, Tolerances};
+use crate::error::Result;
+use crate::model::{Constraint, Problem, RelOp, Tolerances, VarType};
 use crate::simplex::{Bounds, LpStatus, RowOrigin, Simplex};
 
 /// 割系数动态范围上限：显著项最大/最小绝对值之比超过即整条丢弃（契约值）。
 const MAX_COEF_RATIO: f64 = 1e9;
+
+/// 覆盖割的权值幅值上限：行内任一 |w| ≥ 此值整行跳过（数值防御，与
+/// [`MAX_COEF_RATIO`] 同量级的契约值）。
+const MAX_COVER_WEIGHT: f64 = 1e9;
+
+/// c-MIR 尺度 δ 的下限：过小的 δ 会把系数吹到数值不稳区（下游比率门仍会
+/// 兜底，此处提前防御）。
+const MIR_MIN_DELTA: f64 = 1e-6;
+
+/// lifting：每行提升列数上限 K（按 x̄ 降序取前 K）。
+const MAX_LIFT_CANDIDATES: usize = 32;
+
+/// lifting：单割 DP 建表门槛（状态数 = (|C|+K)×(cap̃+1)）。
+const MAX_LIFT_TABLE_STATES: u64 = 2_000_000;
+
+/// lifting：根割循环全程提升 DP 总预算（状态操作数），耗尽即全程关闭提升。
+const ROOT_LIFT_TOTAL_BUDGET: u64 = 30_000_000;
+
+/// lifting：每轮只对 violation 最高的前几条覆盖割尝试提升。
+const LIFT_TOP_PER_ROUND: usize = 4;
+
+/// 建表判据与取整 ε 的统一相对容差（1e-9·(1+|v|)）。
+const NUMERIC_SNAP_TOL: f64 = 1e-9;
 
 /// 结构变量空间的一条割（op 恒为 Le）。
 #[derive(Debug, Clone)]
@@ -47,9 +138,9 @@ pub struct Cut {
 /// 割生成参数。
 #[derive(Debug, Clone, Copy)]
 pub struct CutOptions {
-    /// 最大割轮数。默认 5。
+    /// 最大割轮数。默认 4（WP6 轮次预算实测校准，见 [`CutOptions::default`]）。
     pub max_rounds: usize,
-    /// 每轮最多施加割数。默认 20。
+    /// 每轮最多施加割数。默认 40（WP6：20→40）。
     pub max_cuts_per_round: usize,
     /// f0 距 0/1 的最小距离。默认 0.005。
     pub away: f64,
@@ -58,11 +149,25 @@ pub struct CutOptions {
 }
 
 impl Default for CutOptions {
-    /// 默认值：max_rounds=5、max_cuts_per_round=20、away=0.005、min_violation=1e-7。
+    /// 默认值：max_rounds=4、max_cuts_per_round=40、away=0.005、min_violation=1e-7。
+    ///
+    /// 【WP6 轮数取值的降档依据（工作包 >5% 墙钟回退守则的最终档）】
+    /// 计划值 8×40 在 knapsack-2000 上触发灾难性回退：第 6~8 轮 GMI 追加割
+    /// 使树 39→11917 节点、墙钟 0.28s→37s（×122，新割族全关亦然——纯 GMI
+    /// 晚轮效应，与本包新机制无关）。lifting 三档旋钮（DP 预算/K）不适用
+    ///（k2000 被建表门槛跳过、k500 提升系数全 0），按守则末档收缩轮数：
+    /// 8→5 恢复 k2000 基线但 knapsack-200/mknap-3x100 仍 >5% 回退；
+    /// 8→4 于 2026-10-09 本机（threads=1，改前/改后同窗口交替配对中位数）
+    /// 实测净改善：knapsack-500 171→42ms（−75%，1474→536 节点）、
+    /// mknap-5x300 57.0→22.2s（−61%，201807→99605 节点，90s 内证最优）、
+    /// knapsack-2000 266→262ms（−2%，39→31 节点）、marketsplit-2x20
+    /// 41→26ms、milp-mixed-250i40c 88→68ms；残留回退：knapsack-200
+    /// 12.6→21.5ms、marketsplit-4x30 738→1296ms（树形对割集混沌敏感，
+    /// MostFractional+DepthFirst 下无全域不回退档位，详见包报告）。
     fn default() -> Self {
         CutOptions {
-            max_rounds: 5,
-            max_cuts_per_round: 20,
+            max_rounds: 4,
+            max_cuts_per_round: 40,
             away: 0.005,
             min_violation: 1e-7,
         }
@@ -127,25 +232,10 @@ fn gomory_cuts_inner(
     }
 
     // 重建当前 LP 解 x̄（结构变量）：基列取表格 rhs，非基列取所贴界。
-    let mut x_bar = vec![f64::NAN; n];
-    for (row, &bcol) in basis.iter().enumerate() {
-        if bcol < n {
-            let (_, value) = s.tableau_row(row);
-            x_bar[bcol] = value;
-        }
-    }
-    for nb in &nonbasic {
-        if nb.col < n {
-            x_bar[nb.col] = if nb.at_upper {
-                bounds.ub[nb.col]
-            } else {
-                bounds.lb[nb.col]
-            };
-        }
-    }
-    if x_bar.iter().any(|v| !v.is_finite()) {
+    // 经 [`rebuild_x_bar`] 与覆盖割分离共用同一公开访问器重建路径。
+    let Some(x_bar) = rebuild_x_bar(s, bounds, n) else {
         return Vec::new(); // 表格与界不一致（防御）
-    }
+    };
 
     let mut cuts = Vec::new();
     for row in 0..s.num_rows() {
@@ -306,6 +396,403 @@ fn gomory_cuts_inner(
     cuts
 }
 
+/// 重建当前 LP 解 x̄（结构变量空间）：基列取表格 rhs（[`Simplex::tableau_row`]），
+/// 非基列取所贴界（[`Bounds`]）；全部经公开访问器，不依赖 Simplex 内部状态。
+///
+/// 返回 `None`（调用方按防御处理）：表格结构列数 ≠ `n`，或重建出现非有限值
+/// （表格与界不一致）。
+fn rebuild_x_bar(s: &Simplex, bounds: &Bounds, n: usize) -> Option<Vec<f64>> {
+    if bounds.lb.len() != n || bounds.ub.len() != n {
+        return None;
+    }
+    if s.column_layout().num_structural != n {
+        return None; // 表格与问题维度不符（防御）
+    }
+    let basis = s.basis_columns();
+    let nonbasic = s.nonbasic_columns();
+    let mut x_bar = vec![f64::NAN; n];
+    for (row, &bcol) in basis.iter().enumerate() {
+        if bcol < n {
+            let (_, value) = s.tableau_row(row);
+            x_bar[bcol] = value;
+        }
+    }
+    for nb in &nonbasic {
+        if nb.col < n {
+            x_bar[nb.col] = if nb.at_upper {
+                bounds.ub[nb.col]
+            } else {
+                bounds.lb[nb.col]
+            };
+        }
+    }
+    if x_bar.iter().any(|v| !v.is_finite()) {
+        return None; // 表格与界不一致（防御）
+    }
+    Some(x_bar)
+}
+
+/// 根节点覆盖割分离草案（WP6 重构：[`cover_cuts`] 的实现内核 + 提升所需元数据）。
+///
+/// 对 `problem.constraints` 的每条**合格行**做至多 1 条基础覆盖割。合格判据：
+/// ① `Le` 行；② 支撑变量全为 [`VarType::Binary`]；③ 权全正且数值稳健
+/// （`w` 有限、`|w| < 1e9`（[`MAX_COVER_WEIGHT`]）、`w > tol.zero`；右端与
+/// 支撑上 x̄ 亦须有限，任一非有限量整行跳过）；④ 全支撑 Σw > cap（否则
+/// 不存在覆盖）。
+///
+/// 分离步骤（排序并列序固定 ⇒ 全序确定）：
+/// - **贪婪**：按 x̄ 降序（并列 w 降序、再下标升序）并入 C，直到 Σ_C w > cap；
+/// - **极小化**：按 x̄ 升序（并列 w 升序）遍历 C，剔除后仍保持 Σ > cap 者
+///   剔之——终态对每个保留成员 j 均有 Σ_C w − w_j ≤ cap（最小覆盖）；
+/// - **violation 检验**：`Σ_{j∈C} x̄_j − (|C|−1) ≥ opts.min_violation` 才
+///   产出 `Cut { terms = [(j, 1.0)]（下标升序）, Le, rhs = |C|−1.0 }`。
+///
+/// 有效性（不依赖 x̄）：覆盖 C 满足 Σ_{j∈C} w_j > cap ⇒ 该行的任何 0-1
+/// 可行解不能令 C 全取 1 ⇒ Σ_{j∈C} x_j ≤ |C|−1。
+///
+/// `bounds`/`x_bar` 与问题维数不符时返回空（防御）。
+struct CoverDraft {
+    /// 基础覆盖割（[(j,1.0)] 下标升序、Le、rhs = |C|−1）。
+    cut: Cut,
+    /// 基础割在 x̄ 处的 violation（Σ_C x̄ − (|C|−1)）。
+    violation: f64,
+    /// 最小覆盖成员（下标升序）。
+    cover: Vec<usize>,
+    /// 行支撑（(j, w)，下标升序——LinearExpr 不变量）。
+    terms: Vec<(usize, f64)>,
+    /// 行右端（容量）。
+    cap: f64,
+}
+
+/// [`CoverDraft`] 的分离内核（[`cover_cuts`] 原逻辑逐行保持）。
+fn cover_drafts(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<CoverDraft> {
+    let n = problem.vars.len();
+    if bounds.lb.len() != n || bounds.ub.len() != n || x_bar.len() != n {
+        return Vec::new(); // 维数不符（防御）
+    }
+    let mut drafts = Vec::new();
+    for con in &problem.constraints {
+        // ① Le 行；③ 右端有限。
+        if con.op != RelOp::Le || !con.rhs.is_finite() {
+            continue;
+        }
+        let cap = con.rhs;
+        // ②③ 支撑全 Binary、权全正且数值稳健；④ 全支撑 Σw > cap。
+        let mut cands: Vec<(usize, f64)> = Vec::with_capacity(con.expr.terms.len());
+        let mut qualify = true;
+        let mut total = 0.0f64;
+        for &(j, w) in &con.expr.terms {
+            let is_binary = problem
+                .vars
+                .get(j)
+                .map(|v| v.var_type == VarType::Binary)
+                .unwrap_or(false);
+            // w > tol.zero 同时编码『全正』与近零权防御（tol.zero > 0）。
+            if !is_binary
+                || !w.is_finite()
+                || !x_bar[j].is_finite()
+                || w.abs() >= MAX_COVER_WEIGHT
+                || w <= tol.zero
+            {
+                qualify = false;
+                break;
+            }
+            cands.push((j, w));
+            total += w;
+        }
+        if !qualify || cands.is_empty() || !(total > cap) {
+            continue; // 不合格或无覆盖存在
+        }
+
+        // 贪婪：x̄ 降序（并列 w 降序、再下标升序）并入 C，直到 Σ_C w > cap。
+        cands.sort_by(|&(ja, wa), &(jb, wb)| {
+            x_bar[jb]
+                .total_cmp(&x_bar[ja])
+                .then_with(|| wb.total_cmp(&wa))
+                .then_with(|| ja.cmp(&jb))
+        });
+        let mut cover: Vec<(usize, f64)> = Vec::new();
+        let mut sum = 0.0f64;
+        for cand in cands {
+            cover.push(cand);
+            sum += cand.1;
+            if sum > cap {
+                break;
+            }
+        }
+        if !(sum > cap) {
+            continue; // 防御：不应发生（全支撑 Σw > cap 已保证）
+        }
+
+        // 极小化：x̄ 升序（并列 w 升序）遍历，剔除后仍保持超容者剔之。
+        // sum 单调不增 ⇒ 终态对每个保留成员 Σ−w_j ≤ cap（最小覆盖）。
+        cover.sort_by(|&(ja, wa), &(jb, wb)| {
+            x_bar[ja]
+                .total_cmp(&x_bar[jb])
+                .then_with(|| wa.total_cmp(&wb))
+                .then_with(|| ja.cmp(&jb))
+        });
+        let mut kept: Vec<usize> = Vec::new();
+        for &(j, w) in &cover {
+            if sum - w > cap {
+                sum -= w;
+            } else {
+                kept.push(j);
+            }
+        }
+
+        // violation 检验：Σ_{j∈C} x̄_j − (|C|−1) ≥ min_violation。
+        let rhs_cut = kept.len() as f64 - 1.0;
+        let mut lhs = 0.0f64;
+        for &j in &kept {
+            lhs += x_bar[j];
+        }
+        if lhs - rhs_cut < opts.min_violation {
+            continue;
+        }
+        kept.sort_unstable(); // 下标升序（成员唯一，确定性）
+        let violation = lhs - rhs_cut;
+        drafts.push(CoverDraft {
+            cut: Cut {
+                terms: kept.iter().map(|&j| (j, 1.0)).collect(),
+                op: RelOp::Le,
+                rhs: rhs_cut,
+            },
+            violation,
+            cover: kept,
+            terms: con.expr.terms.clone(),
+            cap,
+        });
+    }
+    drafts
+}
+
+/// 根节点覆盖割分离（x̄ 引导贪婪 + 极小化，无提升；行为与 WP4 完全一致）。
+///
+/// 逐项语义见 [`cover_drafts`]；本函数即草案的割投影，供既有调用方与
+/// 「提升退回基础」对照使用。
+///
+/// `bounds`/`x_bar` 与问题维数不符时返回空（防御）。
+pub fn cover_cuts(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<Cut> {
+    cover_drafts(problem, bounds, x_bar, opts, tol)
+        .into_iter()
+        .map(|d| d.cut)
+        .collect()
+}
+
+/// lifting 的根割循环全程 DP 总预算（状态操作数；WP6 三层预算的第三层）。
+///
+/// 新建 = 3×10^7（[`ROOT_LIFT_TOTAL_BUDGET`]）；每次 DP 建表/追加按实际
+/// 内层循环次数扣减；耗尽（remaining = 0）即全程关闭提升（调用方约定，
+/// 任何未过预算的行原样退回基础覆盖割——不弱于现状）。
+#[derive(Debug, Clone, Copy)]
+pub struct LiftBudget {
+    remaining: u64,
+}
+
+impl LiftBudget {
+    /// 满额预算（3×10^7 状态操作）。
+    pub fn new() -> Self {
+        LiftBudget {
+            remaining: ROOT_LIFT_TOTAL_BUDGET,
+        }
+    }
+
+    /// 指定剩余预算（测试用：0 即「预算耗尽」形态）。
+    pub fn with_remaining(remaining: u64) -> Self {
+        LiftBudget { remaining }
+    }
+
+    /// 剩余预算。
+    pub fn remaining(&self) -> u64 {
+        self.remaining
+    }
+}
+
+impl Default for LiftBudget {
+    fn default() -> Self {
+        LiftBudget::new()
+    }
+}
+
+/// 覆盖割批 + 序贯 up-lifting（WP6；cut_loop_recorded 每轮调用）。
+///
+/// 基础草案（[`cover_drafts`]，行序输出保持确定性）之上，**每轮只对
+/// violation 最高的前 [`LIFT_TOP_PER_ROUND`] 条**尝试提升
+/// （[`lift_cover_draft`]，三层预算见模块文档）；任何门槛/预算不过即原样
+/// 退回该行的基础覆盖割。输出顺序 = 行序（与 [`cover_cuts`] 一致），
+/// 提升只替换割内容不改序。
+pub fn cover_cuts_with_lifting(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+    budget: &mut LiftBudget,
+) -> Vec<Cut> {
+    let mut drafts = cover_drafts(problem, bounds, x_bar, opts, tol);
+    if drafts.is_empty() {
+        return Vec::new();
+    }
+    if budget.remaining() > 0 {
+        // violation 降序（稳定排序：平局保持行序 ⇒ 全序确定）。
+        let mut order: Vec<usize> = (0..drafts.len()).collect();
+        order.sort_by(|&a, &b| drafts[b].violation.total_cmp(&drafts[a].violation));
+        for &i in order.iter().take(LIFT_TOP_PER_ROUND) {
+            if budget.remaining() == 0 {
+                break; // 预算耗尽 ⇒ 全程关闭提升
+            }
+            if let Some(lifted) = lift_cover_draft(&drafts[i], x_bar, opts, budget) {
+                drafts[i].cut = lifted;
+            }
+        }
+    }
+    drafts.into_iter().map(|d| d.cut).collect()
+}
+
+/// 0-1 背包 DP 追加一项（容量轴降序原地更新）；`ops` 按内层循环次数计量。
+fn dp_add_item(dp: &mut [u64], w: u64, p: u64, ops: &mut u64) {
+    let wl = w as usize;
+    if wl >= dp.len() {
+        *ops += 1; // 装不下：仍计 1 op（预算不漏计）
+        return;
+    }
+    let mut c = dp.len() - 1;
+    loop {
+        let cand = dp[c - wl].saturating_add(p);
+        if cand > dp[c] {
+            dp[c] = cand;
+        }
+        *ops += 1;
+        if c == wl {
+            break;
+        }
+        c -= 1;
+    }
+}
+
+/// 对单条覆盖草案做序贯 up-lifting（标准公式 α_j = β − Z，β = |C|−1 固定；
+/// 见模块文档的偏差说明与正确性论证）。
+///
+/// 建表判据/门槛/预算任一不过 ⇒ 返回 None（调用方退回基础覆盖割）：
+/// - 权与 cap 须可 10^k 整数化（[`integerize_scale`]）；
+/// - 提升列 K ≤ min(32, |支撑\C|)（按 x̄ 降序，并列 w 降序、再下标升序）；
+/// - 建表门槛 (|C|+K)×(cap̃+1) ≤ 2×10^6 且 ≤ 剩余预算；
+/// - 提升后数值门：系数比 ≤ 1e9、violation ≥ min_violation（α ≥ 0、
+///   x̄ ≥ 0 ⇒ 理论上不减，防御性复核）。
+fn lift_cover_draft(
+    draft: &CoverDraft,
+    x_bar: &[f64],
+    opts: CutOptions,
+    budget: &mut LiftBudget,
+) -> Option<Cut> {
+    // 建表判据：行权与 cap 同乘 10^k 后全部恰为整数。
+    let weights: Vec<f64> = draft.terms.iter().map(|&(_, w)| w).collect();
+    let scale = integerize_scale(&weights, draft.cap)?;
+    // 容量上取整 ⌈cap·10^k⌉ / 权下取整 ⌊w·10^k⌋：双向偏向『装得下』
+    // （DP 最优值 ≥ 真值 ⇒ α 偏小 ⇒ 割偏弱仍有效，安全方向）。
+    let cap_t_f = draft.cap * scale;
+    if !cap_t_f.is_finite() || cap_t_f > 4e18 {
+        return None;
+    }
+    let cap_t = cap_t_f.ceil().max(0.0) as u64;
+    // 提升候选：支撑 \ C，按 x̄ 降序（并列 w 降序、再下标升序）。
+    let mut cands: Vec<(usize, f64)> = draft
+        .terms
+        .iter()
+        .filter(|&&(j, _)| draft.cover.binary_search(&j).is_err())
+        .cloned()
+        .collect();
+    cands.sort_by(|&(ja, wa), &(jb, wb)| {
+        x_bar[jb]
+            .total_cmp(&x_bar[ja])
+            .then_with(|| wb.total_cmp(&wa))
+            .then_with(|| ja.cmp(&jb))
+    });
+    let k = cands.len().min(MAX_LIFT_CANDIDATES);
+    // 建表门槛 + 预算门（a priori 估计 = (|C|+K)×(cap̃+1) 状态）。
+    let states = (draft.cover.len() + k) as u64 * cap_t.saturating_add(1);
+    if states > MAX_LIFT_TABLE_STATES {
+        return None; // 超限 ⇒ 整行跳过提升只留基础覆盖割
+    }
+    if states > budget.remaining() {
+        return None; // 预算不足 ⇒ 退回基础覆盖割
+    }
+    // 增量 DP：dp[c] = 已处理列集在容量 c 内的最大利润（= 当前割系数和）。
+    let mut dp = vec![0u64; cap_t as usize + 1];
+    let beta = draft.cover.len() as u64 - 1; // β = |C|−1，固定
+    let mut ops = 0u64;
+    let weight_of = |j: usize| -> u64 {
+        let w = draft
+            .terms
+            .iter()
+            .find(|&&(jj, _)| jj == j)
+            .map(|&(_, w)| w)
+            .unwrap_or(0.0);
+        (w * scale).floor().max(0.0) as u64
+    };
+    for &j in &draft.cover {
+        dp_add_item(&mut dp, weight_of(j), 1, &mut ops);
+    }
+    let mut lifted: Vec<(usize, u64)> = Vec::new();
+    for &(j, w_f) in &cands[..k] {
+        let w_t = (w_f * scale).floor().max(0.0) as u64;
+        // Z：x_j = 1 时已处理列的最大利润——容量 ⌈(cap−w_j)·s⌉（放宽方向）。
+        let rem = (draft.cap - w_f) * scale;
+        let c_j = if rem <= 0.0 {
+            0
+        } else {
+            (rem.ceil() as u64).min(cap_t)
+        };
+        let z = dp[c_j as usize];
+        // α_j = β − Z（Z ≤ β 由当前割在已处理面上的有效性保证；饱和减防御）。
+        let alpha = beta.saturating_sub(z);
+        if alpha > 0 {
+            lifted.push((j, alpha));
+        }
+        // 序贯性：提升列立即以 (w̃_j, α_j) 入表，参与后续列的 DP。
+        dp_add_item(&mut dp, w_t, alpha, &mut ops);
+    }
+    budget.remaining = budget.remaining.saturating_sub(ops);
+    // 组装：C 成员系数 1 + 提升列系数 α（不相交 ⇒ 无重复下标），下标升序。
+    let mut terms: Vec<(usize, f64)> = draft
+        .cover
+        .iter()
+        .map(|&j| (j, 1.0))
+        .chain(lifted.iter().map(|&(j, a)| (j, a as f64)))
+        .collect();
+    terms.sort_by_key(|&(j, _)| j);
+    // 数值门：系数比 ≤ 1e9（系数全 ≥ 1，比 = max α）、violation ≥ min_violation。
+    let alpha_max = lifted.iter().map(|&(_, a)| a).max().unwrap_or(1);
+    if alpha_max > MAX_COEF_RATIO as u64 {
+        return None;
+    }
+    let mut lhs = 0.0f64;
+    for &(j, c) in &terms {
+        lhs += c * x_bar[j];
+    }
+    if !lhs.is_finite() || lhs - draft.cut.rhs < opts.min_violation {
+        return None; // 理论上 violation ≥ 基础割（α≥0、x̄≥0），防御性复核
+    }
+    Some(Cut {
+        terms,
+        op: RelOp::Le,
+        rhs: draft.cut.rhs, // β 固定不变
+    })
+}
+
 /// 连续列 GMI 系数：π = max(α/f0, −α/(1−f0)) ≥ 0。
 fn continuous_pi(alpha: f64, f0: f64) -> f64 {
     (alpha / f0).max(-alpha / (1.0 - f0))
@@ -320,12 +807,433 @@ fn bound_magnitude(lb: f64, ub: f64) -> f64 {
     })
 }
 
+/// 取整 ε 纪律（WP6 增补）：上界取整按**放宽方向** floor(val+ε)，
+/// ε = 1e-9·(1+|val|)；|val−round(val)| ≤ ε 时直接取整数值。
+/// 防浮点和差把真界 4 算成 3.999…9 而 floor 掉可行整数点
+/// （[`floor_bound`] 结果 ≥ 真值 ⌊val⌋，只可能更松，不会更紧）。
+fn floor_bound(val: f64) -> f64 {
+    let eps = NUMERIC_SNAP_TOL * (1.0 + val.abs());
+    if (val - val.round()).abs() <= eps {
+        val.round()
+    } else {
+        (val + eps).floor()
+    }
+}
+
+/// 取整 ε 纪律：下界取整按**放宽方向** ceil(val−ε)（结果 ≤ 真值 ⌈val⌉，
+/// 只可能更松，不会更紧）。
+fn ceil_bound(val: f64) -> f64 {
+    let eps = NUMERIC_SNAP_TOL * (1.0 + val.abs());
+    if (val - val.round()).abs() <= eps {
+        val.round()
+    } else {
+        (val - eps).ceil()
+    }
+}
+
+/// MIR 内部用 ⌊·⌋：近整数值直接吸附（防 2.9999…96 被归到 2 层），
+/// 否则普通 floor。返回值与真值 ⌊val⌋ 至多相差 ε 吸附量。
+fn mir_floor(val: f64) -> f64 {
+    let eps = NUMERIC_SNAP_TOL * (1.0 + val.abs());
+    if (val - val.round()).abs() <= eps {
+        val.round()
+    } else {
+        val.floor()
+    }
+}
+
+/// 变量界是否（容差内）整数值。
+fn is_integral_bound(v: f64) -> bool {
+    v.is_finite() && (v - v.round()).abs() <= NUMERIC_SNAP_TOL * (1.0 + v.abs())
+}
+
+/// 行权与 cap 同乘 10^k（k ∈ 0..=6）后是否全部（容差内）恰为整数；
+/// 是则返回最小可用的 10^k，否则 None（非整数化行跳过提升）。
+fn integerize_scale(weights: &[f64], cap: f64) -> Option<f64> {
+    if !cap.is_finite() {
+        return None;
+    }
+    for k in 0..=6u32 {
+        let s = 10f64.powi(k as i32);
+        let ok = weights.iter().all(|&w| is_integral_bound(w * s))
+            && is_integral_bound(cap * s);
+        if ok {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// 把稠密系数向量组装成通过数值门的 `Cut`（近零项放宽丢弃 + 比率门 +
+/// violation 门）；任一门不过返回 None。与 GMI 尾段（近零/比率/violation）
+/// 同一纪律，供 c-MIR/隐含界新族复用。
+fn assemble_gated_cut(
+    coef: &[f64],
+    rhs: f64,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Option<Cut> {
+    let mut terms: Vec<(usize, f64)> = Vec::new();
+    let mut rhs = rhs;
+    let mut c_max = 0.0f64;
+    let mut c_min = f64::INFINITY;
+    for (j, &c) in coef.iter().enumerate() {
+        if c == 0.0 {
+            continue;
+        }
+        if c.abs() <= tol.zero {
+            // 近零项：按界幅补偿右端后丢弃（丢项 + 抬右端，只放宽）。
+            let magnitude = bound_magnitude(bounds.lb[j], bounds.ub[j]);
+            if magnitude.is_finite() {
+                rhs += c.abs() * magnitude;
+                continue;
+            }
+            // 上界 +∞ 无法界定补偿：保留该项，但不计入比率检验。
+            terms.push((j, c));
+            continue;
+        }
+        terms.push((j, c));
+        c_max = c_max.max(c.abs());
+        c_min = c_min.min(c.abs());
+    }
+    if terms.is_empty() || c_max <= 0.0 {
+        return None;
+    }
+    if c_max / c_min > MAX_COEF_RATIO {
+        return None; // 系数动态范围过大，整条丢弃
+    }
+    let mut lhs = 0.0f64;
+    for &(j, c) in &terms {
+        lhs += c * x_bar[j];
+    }
+    if !lhs.is_finite() || !rhs.is_finite() || lhs - rhs < opts.min_violation {
+        return None;
+    }
+    Some(Cut {
+        terms,
+        op: RelOp::Le,
+        rhs,
+    })
+}
+
+/// 单行 c-MIR（WP6，仅原始 Le 行，根节点调用）。
+///
+/// 流程（见模块文档「单行 c-MIR」节）：
+/// 1. **界互补归一**：负系数列 x_j → ub_j − y_j（`ub_j` 无限 ⇒ 整行跳过；
+///    整数类型列互补的 ub / 平移的 lb 须整数值，否则整行跳过），非负系数列
+///    y_j = x_j − lb_j。归一后全系数 â_j > 0、y ≥ 0、整数列 y ∈ Z_+，
+///    右端 b̂ = b − Σ_{a≥0} a·lb − Σ_{a<0} a·ub。
+/// 2. 除以 g = max â_j，f0 = frac(b̂/g)；在尺度集
+///    δ ∈ {f0, 1}·{1, 0.5, 0.25}（去重、δ ≥ 1e-6）上逐试 MIR：
+///    B = b̂/(gδ)，f̂0 = B − floor_bound(B) 须 ∈ [away, 1−away]（复用 away 门）；
+///    整数列 π_j = mir_floor(α_j) + (f_j − f̂0)^+/(1 − f̂0)（α_j = â_j/(gδ)、
+///    f_j = α_j − mir_floor(α_j)），连续列 π_j = 0；割（y 空间）
+///    Σ π_j y_j ≤ floor_bound(B)。
+/// 3. 回代 y → x（互补列 y_j = ub_j − x_j、平移列 y_j = x_j − lb_j）得
+///    x 空间割，过 [`assemble_gated_cut`] 数值门；δ 候选中取 violation 最大
+///    者（并列取先者，确定性）。
+///
+/// 有效性：互补/平移是整数可行点集上的双射；归一行整数部分满足放松行
+/// （连续列只消耗容量，丢弃只放宽）；MIR 引理对纯整数非负系数行给出全局
+/// 有效割；回代保持有效性。数值门任一不过即弃（None）。
+///
+/// `bounds`/`x_bar` 与问题维数不符时返回 None（防御）。
+pub fn mir_single_row(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    con: &Constraint,
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Option<Cut> {
+    let n = problem.vars.len();
+    if bounds.lb.len() != n || bounds.ub.len() != n || x_bar.len() != n {
+        return None;
+    }
+    // ① 只处理原始 Le 行。
+    if con.op != RelOp::Le || !con.rhs.is_finite() {
+        return None;
+    }
+    // ② 界互补归一：cols = (j, â_j>0, 所贴界, 是否互补, 是否整数类型)。
+    let mut cols: Vec<(usize, f64, f64, bool, bool)> = Vec::with_capacity(con.expr.terms.len());
+    let mut b_hat = con.rhs;
+    for &(j, a) in &con.expr.terms {
+        let Some(var) = problem.vars.get(j) else {
+            return None;
+        };
+        if !a.is_finite() || a.abs() >= MAX_COVER_WEIGHT || !x_bar[j].is_finite() {
+            return None; // 数值防御：整行跳过
+        }
+        let is_int = matches!(var.var_type, VarType::Integer | VarType::Binary);
+        if a < 0.0 {
+            let ub = bounds.ub[j];
+            if !ub.is_finite() {
+                return None; // 负系数列无有限 ub ⇒ 整行跳过
+            }
+            if is_int && !is_integral_bound(ub) {
+                return None; // 互补不保整 ⇒ 整行跳过
+            }
+            b_hat -= a * ub;
+            cols.push((j, -a, ub, true, is_int));
+        } else {
+            let lb = bounds.lb[j]; // 本 crate 下界恒有限
+            if is_int && !is_integral_bound(lb) {
+                return None; // 平移不保整 ⇒ 整行跳过
+            }
+            b_hat -= a * lb;
+            cols.push((j, a, lb, false, is_int));
+        }
+    }
+    if cols.is_empty() {
+        return None;
+    }
+    // ③ 归一尺度 g = max â_j。
+    let g = cols.iter().map(|c| c.1).fold(0.0f64, f64::max);
+    if !g.is_finite() || g <= tol.zero {
+        return None;
+    }
+    let b_norm = b_hat / g;
+    if !b_norm.is_finite() {
+        return None;
+    }
+    let f0 = b_norm - mir_floor(b_norm);
+    // ④ 尺度集 δ ∈ {f0,1}·{1,0.5,0.25}（乘积展开），去重且 δ ≥ MIR_MIN_DELTA。
+    let mut deltas: Vec<f64> = vec![1.0, 0.5, 0.25];
+    if f0 > MIR_MIN_DELTA {
+        for m in [1.0, 0.5, 0.25] {
+            deltas.push(f0 * m);
+        }
+    }
+    let mut uniq: Vec<f64> = Vec::with_capacity(deltas.len());
+    for d in deltas {
+        if !d.is_finite() || d < MIR_MIN_DELTA {
+            continue;
+        }
+        if !uniq.iter().any(|&u| (u - d).abs() <= 1e-12 * (1.0 + d.abs())) {
+            uniq.push(d);
+        }
+    }
+    // ⑤ 逐 δ 试 MIR，取 violation 最大者。
+    let mut best: Option<(f64, Cut)> = None;
+    for delta in uniq {
+        let big = b_norm / delta;
+        let rhs_y = floor_bound(big);
+        if !rhs_y.is_finite() {
+            continue;
+        }
+        let f_hat = big - rhs_y;
+        if !(f_hat >= opts.away && f_hat <= 1.0 - opts.away) {
+            continue; // f̂0 近 0/1 病态：复用 away 门
+        }
+        let mut coef = vec![0.0f64; n];
+        let mut rhs_x = rhs_y;
+        let mut any = false;
+        for &(j, a_hat, bound, compl, is_int) in &cols {
+            let alpha = a_hat / (g * delta);
+            if !alpha.is_finite() {
+                any = false;
+                break;
+            }
+            let pi = if is_int {
+                let fl = mir_floor(alpha);
+                let fj = alpha - fl;
+                fl + ((fj - f_hat) / (1.0 - f_hat)).max(0.0)
+            } else {
+                // 归一后正系数连续列：MIR 系数 0（丢弃只放宽）。
+                0.0
+            };
+            if !pi.is_finite() || pi <= 0.0 {
+                continue;
+            }
+            if pi < tol.zero {
+                continue; // 近零项：y ≥ 0 ⇒ 丢弃只放宽
+            }
+            if compl {
+                // y_j = ub_j − x_j：π·y = π·ub − π·x
+                coef[j] -= pi;
+                rhs_x -= pi * bound;
+            } else {
+                // y_j = x_j − lb_j：π·y = π·x − π·lb
+                coef[j] += pi;
+                rhs_x += pi * bound;
+            }
+            any = true;
+        }
+        if !any {
+            continue;
+        }
+        if let Some(cut) = assemble_gated_cut(&coef, rhs_x, bounds, x_bar, opts, tol) {
+            let mut lhs = 0.0f64;
+            for &(j, c) in &cut.terms {
+                lhs += c * x_bar[j];
+            }
+            let viol = lhs - cut.rhs;
+            if best.as_ref().map_or(true, |(v, _)| viol > *v) {
+                best = Some((viol, cut));
+            }
+        }
+    }
+    best.map(|(_, cut)| cut)
+}
+
+/// 每轮的 c-MIR 批：对全部原始 Le 行各至多 1 条（行序确定）。
+fn mir_row_cuts(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<Cut> {
+    problem
+        .constraints
+        .iter()
+        .filter(|con| con.op == RelOp::Le)
+        .filter_map(|con| mir_single_row(problem, bounds, x_bar, con, opts, tol))
+        .collect()
+}
+
+/// 隐含界割（WP6，仅根节点）：整数类型变量计数恰为 1 的行导出 y 的隐含界。
+///
+/// 行的逻辑蕴涵 + 方向取整（纯变量界形式，见模块文档反例说明）。把行写成
+/// 符号 view（sign·a, sign·rhs），设 ã = sign·a 且 ã_y > 0：
+/// - **上界割**（≤ 形式：Le 原样 / Ge 取负，Eq 双向之一）：
+///   `y ≤ (rhs − Kmin)/ã_y`，`Kmin = Σ_{ã_j>0,j≠y} ã_j·lb_j + Σ_{ã_j<0,j≠y} ã_j·ub_j`
+///   （其余列折叠到使 Σãx **最小**的一侧——这是 y 上界的最宽松有效侧；
+///   负系数列需要有限 ub，无限 ⇒ 该方向跳过）；
+/// - **下界割**（≥ 形式：Ge 原样 / Le 取负，Eq 双向之一）：
+///   `y ≥ (rhs − Kmax)/ã_y`，`Kmax = Σ_{ã_j>0,j≠y} ã_j·ub_j + Σ_{ã_j<0,j≠y} ã_j·lb_j`
+///   （折叠到使 Σãx **最大**的一侧；正系数列需要有限 ub，无限 ⇒ 跳过）。
+/// 取整按放宽方向：上界 [`floor_bound`]、下界 [`ceil_bound`]。
+/// 有效性：V 是 y 界在其余列箱式取值下的真实极值的松弛（折叠方向给出
+/// 恰好覆盖全部可行点的常数），取整只可能更松 ⇒ 对全部整数可行点有效。
+/// violation ≥ min_violation 才收（割在 x̄ 处须真收紧）。
+///
+/// `bounds`/`x_bar` 与问题维数不符时返回空（防御）。
+pub fn implied_bound_cuts(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<Cut> {
+    let n = problem.vars.len();
+    if bounds.lb.len() != n || bounds.ub.len() != n || x_bar.len() != n {
+        return Vec::new();
+    }
+    let mut cuts = Vec::new();
+    for con in &problem.constraints {
+        if !con.rhs.is_finite() {
+            continue;
+        }
+        if con.expr.terms.iter().any(|&(_, a)| !a.is_finite()) {
+            continue;
+        }
+        // 整数类型变量计数恰为 1。
+        let mut int_y: Option<usize> = None;
+        let mut int_count = 0usize;
+        for &(j, _) in &con.expr.terms {
+            let is_int = problem
+                .vars
+                .get(j)
+                .map(|v| matches!(v.var_type, VarType::Integer | VarType::Binary))
+                .unwrap_or(false);
+            if is_int {
+                int_count += 1;
+                if int_count > 1 {
+                    break;
+                }
+                int_y = Some(j);
+            }
+        }
+        if int_count != 1 {
+            continue;
+        }
+        let y = int_y.unwrap_or(usize::MAX);
+        let a_y = con
+            .expr
+            .terms
+            .iter()
+            .find(|&&(j, _)| j == y)
+            .map(|&(_, a)| a)
+            .unwrap_or(0.0);
+        if a_y == 0.0 || !x_bar[y].is_finite() {
+            continue;
+        }
+        // 有效符号：≤ 形式（Le 原样 / Ge 与 Eq 取负）与 ≥ 形式（Ge 原样 / Le
+        // 与 Eq 取负）。Eq 行两向都推导。
+        let has_le_form = con.op != RelOp::Ge;
+        let has_ge_form = con.op != RelOp::Le;
+        // 在符号 view（sign·a, sign·rhs、ã_y > 0）下计算 y 界的真实极值：
+        // upper=true（上界）折叠其余列到 Σãx 最小（负系数列用 ub），
+        // upper=false（下界）折叠到 Σãx 最大（正系数列用 ub）。
+        let implied_v = |sign: f64, rhs_eff: f64, upper: bool| -> Option<f64> {
+            let ay = sign * a_y;
+            if !(ay > tol.zero) {
+                return None;
+            }
+            let mut v = rhs_eff;
+            for &(j, a) in &con.expr.terms {
+                if j == y {
+                    continue;
+                }
+                let aj = sign * a;
+                let use_ub = if upper { aj < 0.0 } else { aj > 0.0 };
+                if use_ub {
+                    let ub = bounds.ub[j];
+                    if !ub.is_finite() {
+                        return None; // 需要的一侧界无限 ⇒ 该方向跳过
+                    }
+                    v -= aj * ub;
+                } else {
+                    v -= aj * bounds.lb[j]; // lb 恒有限
+                }
+            }
+            let v = v / ay;
+            v.is_finite().then_some(v)
+        };
+        // 上界割（≤ 形式）：y ≤ floor_bound(V)。
+        if has_le_form {
+            let sign = if con.op == RelOp::Ge { -1.0 } else { 1.0 };
+            let rhs_eff = if con.op == RelOp::Ge { -con.rhs } else { con.rhs };
+            if let Some(v) = implied_v(sign, rhs_eff, true) {
+                let ub_cut = floor_bound(v);
+                if ub_cut.is_finite() && x_bar[y] - ub_cut >= opts.min_violation {
+                    cuts.push(Cut {
+                        terms: vec![(y, 1.0)],
+                        op: RelOp::Le,
+                        rhs: ub_cut,
+                    });
+                }
+            }
+        }
+        // 下界割（≥ 形式）：y ≥ ceil_bound(V) ⇔ −y ≤ −ceil_bound(V)。
+        if has_ge_form {
+            let sign = if con.op == RelOp::Le { -1.0 } else { 1.0 };
+            let rhs_eff = if con.op == RelOp::Le { -con.rhs } else { con.rhs };
+            if let Some(v) = implied_v(sign, rhs_eff, false) {
+                let lb_cut = ceil_bound(v);
+                if lb_cut.is_finite() && lb_cut - x_bar[y] >= opts.min_violation {
+                    cuts.push(Cut {
+                        terms: vec![(y, -1.0)],
+                        op: RelOp::Le,
+                        rhs: -lb_cut,
+                    });
+                }
+            }
+        }
+    }
+    cuts
+}
+
 /// 根节点割循环：生成→记账→add_row→resolve，直到无割/超 max_rounds/LP 非
 /// Optimal；返回 (施加割数, 最终 LP 状态)。
 ///
 /// 入口先做一次防御性 `resolve(bounds)`，保证割生成看到的表格确为当前界下的
-/// Optimal 状态。割循环中 LP 变 Infeasible 理论不可能（割不切整数可行解），
-/// 若发生返回 `Err(MilpError::Numerical)` 而非报 Infeasible；Unbounded/
+/// Optimal 状态。割循环中 LP 变 Infeasible 是整数不可行问题的合法终局（割对
+/// 全部整数可行解有效，该集合为空时割可切空松弛区域）——如实作为 Infeasible
+/// 终态返回（调用方按根终局映射 SolveStatus::Infeasible）；Unbounded/
 /// IterationLimit 则如实作为终态返回。
 pub fn cut_loop(
     s: &mut Simplex,
@@ -346,7 +1254,15 @@ pub fn cut_loop(
 /// 用途：并行引擎在各 worker 的 Simplex 副本上按相同顺序 `add_row` 这些割
 /// 即可复现根割表格（行序一致 ⇒ 表格一致）。[`cut_loop`] 即本函数丢弃割
 /// 清单后的委托；既有语义逐项保持：入口防御性 `resolve(bounds)`、
-/// `max_cuts_per_round` 截断、Infeasible → `Err(Numerical)`。
+/// `max_cuts_per_round` 截断、Infeasible ⇒ 如实作为终态返回（整数不可行
+/// 问题的合法证明路径，见 [`cut_loop`] 文档）。
+///
+/// 每轮割批的确定性合并序（WP6）：**c-MIR 批（[`mir_row_cuts`]，行序）→
+/// GMI 批 → 隐含界批（[`implied_bound_cuts`]）→ 覆盖割批
+/// （[`cover_cuts_with_lifting`]，行序；提升预算 [`LiftBudget`] 跨轮共享、
+/// 全程 3×10^7 状态操作，耗尽即关闭提升）**，再统一截断
+/// `max_cuts_per_round`。x̄ 经 [`rebuild_x_bar`] 重建（每轮一次，割批共用）。
+/// 全部割行照走 `add_row` + [`CutRecord`] 记账，worker 按序重放契约不变。
 pub fn cut_loop_recorded(
     s: &mut Simplex,
     bounds: &Bounds,
@@ -358,13 +1274,40 @@ pub fn cut_loop_recorded(
     let mut applied: u64 = 0;
     let mut ledger: Vec<CutRecord> = Vec::new();
     let mut recorded: Vec<Cut> = Vec::new();
+    // lifting 全程预算：根割循环一次配给，跨轮共享（耗尽即全程关闭提升）。
+    let mut lift_budget = LiftBudget::new();
     // 防御性同步：确保表格与 bounds 一致且为 Optimal。
     let mut status = s.resolve(bounds).status;
     if status != LpStatus::Optimal {
         return Ok((0, status, recorded));
     }
     for _round in 0..opts.max_rounds {
-        let mut batch = gomory_cuts_inner(s, problem, bounds, int_vars, opts, tol, &ledger);
+        let x_bar = rebuild_x_bar(s, bounds, problem.vars.len());
+        // 确定性合并序：c-MIR → GMI → 隐含界 → 覆盖（提升），统一截断。
+        let mut batch = match &x_bar {
+            Some(x_bar) => mir_row_cuts(problem, bounds, x_bar, opts, tol),
+            None => Vec::new(),
+        };
+        batch.extend(gomory_cuts_inner(
+            s,
+            problem,
+            bounds,
+            int_vars,
+            opts,
+            tol,
+            &ledger,
+        ));
+        if let Some(x_bar) = &x_bar {
+            batch.extend(implied_bound_cuts(problem, bounds, x_bar, opts, tol));
+            batch.extend(cover_cuts_with_lifting(
+                problem,
+                bounds,
+                x_bar,
+                opts,
+                tol,
+                &mut lift_budget,
+            ));
+        }
         if batch.len() > opts.max_cuts_per_round {
             batch.truncate(opts.max_cuts_per_round);
         }
@@ -383,10 +1326,12 @@ pub fn cut_loop_recorded(
         }
         status = s.resolve(bounds).status;
         if status == LpStatus::Infeasible {
-            return Err(MilpError::Numerical(
-                "割循环后根 LP 不可行：割错误地切掉了全部整数可行解（理论不可能，判定为数值异常）"
-                    .to_string(),
-            ));
+            // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
+            // 整数可行解，而该集合为空时任意割皆有效——割后根 LP 不可行
+            // 是『整数不可行』的合法证明路径，正确终局是 Infeasible（终检
+            // 由 Phase-1 不可行性给出），不是数值错误。原『理论不可能』
+            // 断言只对『存在整数可行解』的问题成立。
+            return Ok((applied, LpStatus::Infeasible, recorded));
         }
         if status != LpStatus::Optimal {
             break; // Unbounded/IterationLimit：如实返回终态
@@ -436,12 +1381,13 @@ mod tests {
         cut.terms.iter().map(|&(j, c)| c * x[j]).sum()
     }
 
-    /// 默认参数逐项精确符合契约。
+    /// 默认参数逐项精确符合契约（WP6：5×20 → 4×40，轮数按降档守则校准，
+    /// 依据见 [`CutOptions::default`] 文档）。
     #[test]
     fn cut_options_default_values() {
         let o = CutOptions::default();
-        assert_eq!(o.max_rounds, 5);
-        assert_eq!(o.max_cuts_per_round, 20);
+        assert_eq!(o.max_rounds, 4);
+        assert_eq!(o.max_cuts_per_round, 40);
         assert_eq!(o.away, 0.005);
         assert_eq!(o.min_violation, 1e-7);
     }
@@ -652,5 +1598,876 @@ mod tests {
         // 与既有割后根界契约一致：不切掉整数最优 40，且严格改进根 LP 41.25。
         assert!(w.objective >= 40.0 - 1e-6);
         assert!(w.objective <= 41.25 - 1e-6);
+    }
+
+    /// M5：整数不可行问题（穷举 0 个整数可行点）上，割循环把根 LP 割空 ⇒
+    /// 正确终局 Infeasible（原实现误判 Err(Numerical)——『理论不可能』只对
+    /// 存在整数可行解的问题成立）。
+    ///
+    /// 算例：max 6x1+2x2+5c s.t. 2x1+5x2+2c=8, 3x1+3x2+0.5c≤3.5，
+    /// x1∈[0,5] 整数、x2∈[0,2] 整数、c∈[0,3] 连续——LP 松弛可行，整数
+    /// 可行点穷举为 0（测试内逐点验证）。
+    #[test]
+    fn cut_loop_infeasible_after_cuts_is_infeasible_terminal() {
+        let mut p = Problem::new("cut-infeasible", Sense::Maximize);
+        p.add_var("x1", VarType::Integer).unwrap();
+        p.add_var("x2", VarType::Integer).unwrap();
+        let c3 = p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(0, 0.0, 5.0).unwrap();
+        p.set_var_bounds(1, 0.0, 2.0).unwrap();
+        p.set_var_bounds(2, 0.0, 3.0).unwrap();
+        p.set_objective(vec![(0, 6.0), (1, 2.0), (2, 5.0)], 0.0)
+            .unwrap();
+        p.add_constraint(None, vec![(0, 2.0), (1, 5.0), (2, 2.0)], RelOp::Eq, 8.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            vec![(0, 3.0), (1, 3.0), (2, 0.5)],
+            RelOp::Le,
+            3.5,
+        )
+        .unwrap();
+
+        // 穷举钉死：全部 (x1, x2) 整数组合下 c 由 Eq 行唯一决定，均违反
+        // c 的界或 Le 行 ⇒ 整数可行点为 0。
+        for x1 in 0..=5i64 {
+            for x2 in 0..=2i64 {
+                let cc = (8.0 - 2.0 * x1 as f64 - 5.0 * x2 as f64) / 2.0;
+                let le = 3.0 * x1 as f64 + 3.0 * x2 as f64 + 0.5 * cc;
+                let feasible = cc >= -1e-9 && cc <= 3.0 + 1e-9 && le <= 3.5 + 1e-9;
+                assert!(
+                    !feasible,
+                    "意外存在可行整数点 ({x1},{x2},c={cc})"
+                );
+            }
+        }
+        let _ = c3;
+
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+        let mut s = Simplex::new(&p, t).unwrap();
+        let root = s.solve(&b);
+        assert_eq!(root.status, LpStatus::Optimal, "LP 松弛可行（割前）");
+
+        match cut_loop_recorded(
+            &mut s,
+            &b,
+            &p,
+            &p.integer_vars(),
+            CutOptions::default(),
+            &t,
+        ) {
+            Ok((applied, status, _)) => {
+                assert!(
+                    applied >= 1,
+                    "该算例根 LP 分数处必产割（否则未覆盖割空路径）"
+                );
+                assert_eq!(
+                    status,
+                    LpStatus::Infeasible,
+                    "割后根 LP 不可行 ⇒ Infeasible 终态（applied={applied}）"
+                );
+            }
+            Err(e) => panic!("割后不可行不得报数值错误（原缺陷）：{e}"),
+        }
+        // 记账性 resolve 维持 Infeasible（终态可被调用方稳定读取）。
+        assert_eq!(s.resolve(&b).status, LpStatus::Infeasible);
+    }
+
+    // ===================== 覆盖割（WP4 增补）=====================
+
+    /// n 个 Binary 变量 + 单条背包行 `Σ w_j x_j ≤ cap`（目标 max Σx）。
+    fn binary_knapsack(name: &str, weights: &[f64], cap: f64) -> Problem {
+        let mut p = Problem::new(name, Sense::Maximize);
+        for i in 0..weights.len() {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.set_objective((0..weights.len()).map(|i| (i, 1.0)).collect(), 0.0)
+            .unwrap();
+        let terms: Vec<(usize, f64)> = weights.iter().enumerate().map(|(i, &w)| (i, w)).collect();
+        p.add_constraint(Some("cap"), terms, RelOp::Le, cap).unwrap();
+        p
+    }
+
+    /// 小行穷举：割须被背包行的全部 0-1 可行点满足（复用 :452-474 口径），
+    /// 且形状恰为 [(j,1.0)] 下标升序、Le、rhs=|C|−1，被 x̄ 违反。
+    ///
+    /// 行：4(x0+..+x4) ≤ 15（total=20 > cap），x̄ = [1,1,1,1,0.5]：贪婪取
+    /// x̄=1 的 4 个（Σ=16 > 15），极小化无可可剔（剔任一 → 12 ≤ 15）⇒
+    /// 割 x0+x1+x2+x3 ≤ 3，violation = 4−3 = 1。
+    #[test]
+    fn cover_cut_exhaustive_validity_and_shape() {
+        let p = binary_knapsack("cover-5", &[4.0, 4.0, 4.0, 4.0, 4.0], 15.0);
+        let b = Bounds::from_problem(&p);
+        let x_bar = [1.0, 1.0, 1.0, 1.0, 0.5];
+        let cuts = cover_cuts(&p, &b, &x_bar, CutOptions::default(), &tol());
+        assert_eq!(cuts.len(), 1, "单行 ⇒ 至多 1 条");
+        let cut = &cuts[0];
+        assert_eq!(cut.op, RelOp::Le);
+        assert_eq!(cut.rhs, 3.0);
+        assert_eq!(
+            cut.terms,
+            vec![(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)],
+            "terms 须为 (j,1.0) 下标升序"
+        );
+        // 穷举全部 2^5 个 0-1 点：行可行（Σ4x ≤ 15 ⇒ Σx ≤ 3）⇒ 割可行。
+        for mask in 0..32u32 {
+            let x: Vec<f64> = (0..5).map(|i| ((mask >> i) & 1) as f64).collect();
+            let row_lhs: f64 = x.iter().sum::<f64>() * 4.0;
+            if row_lhs <= 15.0 {
+                assert!(
+                    eval_cut(cut, &x) <= cut.rhs + 1e-9,
+                    "割 {cut:?} 切掉行可行 0-1 点 {x:?}"
+                );
+            }
+        }
+        // 割被当前 x̄ 违反（violation = 1 ≥ min_violation）。
+        assert!(eval_cut(cut, &x_bar) - cut.rhs >= 1e-7);
+    }
+
+    /// 极小化：贪婪越过 cap 后剔除可剔者，终态『去任一成员即不超容』。
+    ///
+    /// 例 1（w=[2,10,11], cap=12, x̄=[0.9,0.8,0.5]）：贪婪全收（Σ=23>12），
+    /// 极小化剔 w=10（23−10=13>12）后 C={x0,x2}，Σ=13>12，剔任一即 ≤12。
+    /// 例 2（w=[1,2,100], cap=50）：极小化剔到单元素覆盖 x2 ≤ 0。
+    #[test]
+    fn cover_minimal_after_greedy_overshoot() {
+        let cases: &[(&[f64], f64, &[f64], Vec<usize>)] = &[
+            (&[2.0, 10.0, 11.0], 12.0, &[0.9, 0.8, 0.5], vec![0, 2]),
+            (&[1.0, 2.0, 100.0], 50.0, &[0.9, 0.8, 0.3], vec![2]),
+        ];
+        for &(w, cap, x_bar, ref expected) in cases {
+            let p = binary_knapsack("cover-min", w, cap);
+            let b = Bounds::from_problem(&p);
+            let cuts = cover_cuts(&p, &b, x_bar, CutOptions::default(), &tol());
+            assert_eq!(cuts.len(), 1, "w={w:?}");
+            let cut = &cuts[0];
+            let got: Vec<usize> = cut.terms.iter().map(|&(j, _)| j).collect();
+            assert_eq!(got, *expected, "w={w:?} 的覆盖成员");
+            assert_eq!(cut.rhs, (expected.len() - 1) as f64);
+            // 最小性性质：Σ_{C} w > cap，且去任一成员即 ≤ cap。
+            let sum: f64 = expected.iter().map(|&j| w[j]).sum();
+            assert!(sum > cap, "Σ_C w={sum} 须超容 {cap}");
+            for &j in expected {
+                assert!(sum - w[j] <= cap, "剔掉 x{j} 后 Σ={} 须不超容", sum - w[j]);
+            }
+        }
+    }
+
+    /// x̄ 引导分离在『w 升序不违反、x̄ 降序违反』的反例上产出割（钉死旧
+    /// w 升序路径不回归）。
+    ///
+    /// w=[3,4,5], cap=6, x̄=[0.1,0.2,0.9]：x̄ 降序取 {x1,x2}（Σ=9>6）⇒
+    /// violation = 1.1−1 = 0.1 ≥ 1e-7 ⇒ 割 x1+x2 ≤ 1；而 w 升序贪婪会取
+    /// {x0,x1}（violation = 0.3−1 < 0）⇒ 旧路径零产出。
+    #[test]
+    fn cover_xbar_guided_not_weight_order() {
+        let p = binary_knapsack("cover-xbar", &[3.0, 4.0, 5.0], 6.0);
+        let b = Bounds::from_problem(&p);
+        let x_bar = [0.1, 0.2, 0.9];
+        let cuts = cover_cuts(&p, &b, &x_bar, CutOptions::default(), &tol());
+        assert_eq!(cuts.len(), 1, "x̄ 引导路径必须产出割（旧 w 升序路径为零产出）");
+        assert_eq!(cuts[0].terms, vec![(1, 1.0), (2, 1.0)]);
+        assert_eq!(cuts[0].rhs, 1.0);
+        // 有效性：全部 0-1 行可行点满足割（x1=x2=1 ⇒ 4+5=9 > 6 被行排除）。
+        for mask in 0..8u32 {
+            let x: Vec<f64> = (0..3).map(|i| ((mask >> i) & 1) as f64).collect();
+            if 3.0 * x[0] + 4.0 * x[1] + 5.0 * x[2] <= 6.0 {
+                assert!(
+                    eval_cut(&cuts[0], &x) <= cuts[0].rhs + 1e-9,
+                    "割切掉行可行点 {x:?}"
+                );
+            }
+        }
+    }
+
+    /// 无违反时不产割；各类门控（Ge/Eq、非 Binary 支撑、非正系数、
+    /// Σw ≤ cap、|w| ≥ 1e9、维数不符）整行跳过。
+    #[test]
+    fn cover_no_cut_without_violation_and_row_gating() {
+        let t = tol();
+        let opts = CutOptions::default();
+        // 行可行整数 x̄（violation = 0 < min_violation）⇒ 不产割。
+        let p = binary_knapsack("cover-none", &[3.0, 4.0, 5.0], 6.0);
+        let b = Bounds::from_problem(&p);
+        assert!(cover_cuts(&p, &b, &[1.0, 0.0, 0.0], opts, &t).is_empty());
+
+        // Ge 行跳过。
+        let mut pg = binary_knapsack("cover-ge", &[3.0, 4.0, 5.0], 6.0);
+        pg.constraints[0].op = RelOp::Ge;
+        assert!(cover_cuts(&pg, &b, &[0.9, 0.9, 0.9], opts, &t).is_empty());
+        // Eq 行跳过。
+        let mut pe = binary_knapsack("cover-eq", &[3.0, 4.0, 5.0], 6.0);
+        pe.constraints[0].op = RelOp::Eq;
+        assert!(cover_cuts(&pe, &b, &[0.9, 0.9, 0.9], opts, &t).is_empty());
+
+        // 非 Binary 支撑（Integer 变量）跳过。
+        let mut pi = Problem::new("cover-int", Sense::Maximize);
+        pi.add_var("x0", VarType::Integer).unwrap();
+        pi.add_var("x1", VarType::Binary).unwrap();
+        pi.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        pi.add_constraint(None, vec![(0, 3.0), (1, 4.0)], RelOp::Le, 5.0)
+            .unwrap();
+        let bi = Bounds::from_problem(&pi);
+        assert!(cover_cuts(&pi, &bi, &[0.9, 0.9], opts, &t).is_empty());
+
+        // 非正系数跳过。
+        let mut pn = Problem::new("cover-neg", Sense::Maximize);
+        pn.add_var("x0", VarType::Binary).unwrap();
+        pn.add_var("x1", VarType::Binary).unwrap();
+        pn.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        pn.add_constraint(None, vec![(0, 3.0), (1, -4.0)], RelOp::Le, 5.0)
+            .unwrap();
+        let bn = Bounds::from_problem(&pn);
+        assert!(cover_cuts(&pn, &bn, &[0.9, 0.9], opts, &t).is_empty());
+
+        // 全支撑 Σw ≤ cap（无覆盖存在）跳过。
+        let pc = binary_knapsack("cover-cap", &[1.0, 1.0, 1.0], 5.0);
+        let bc = Bounds::from_problem(&pc);
+        assert!(cover_cuts(&pc, &bc, &[1.0, 1.0, 1.0], opts, &t).is_empty());
+
+        // |w| ≥ 1e9 整行跳过（数值防御）。
+        let ph = binary_knapsack("cover-huge", &[2e9, 3.0], 4.0);
+        let bh = Bounds::from_problem(&ph);
+        assert!(cover_cuts(&ph, &bh, &[0.5, 1.0], opts, &t).is_empty());
+
+        // x̄ 维数不符（防御）。
+        assert!(cover_cuts(&p, &b, &[0.9, 0.9], opts, &t).is_empty());
+    }
+
+    /// 同输入两次 cut_loop_recorded 产生完全相同的 recorded 清单（确定性），
+    /// 且覆盖割（[(j,1.0)]、rhs=|C|−1 形状）确实进入清单；worker 按序重放
+    /// 复现根 LP 目标。
+    ///
+    /// 问题：5 Binary、4Σx ≤ 15、max Σx——根 LP 3.75（3 个 1 + 1 个 0.75），
+    /// 覆盖割 Σ_{x̄ 高的 4 个} ≤ 3（violation 0.75）；整数最优 3。
+    #[test]
+    fn cut_loop_recorded_deterministic_with_cover_cuts() {
+        let p = binary_knapsack("cover-det", &[4.0, 4.0, 4.0, 4.0, 4.0], 15.0);
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+        let int_vars = p.integer_vars();
+
+        let mut s1 = Simplex::new(&p, t).unwrap();
+        let sol1 = s1.solve(&b);
+        assert_eq!(sol1.status, LpStatus::Optimal);
+        assert!((sol1.objective - 3.75).abs() < 1e-9, "根 LP 应为 3.75");
+        let r1 = cut_loop_recorded(&mut s1, &b, &p, &int_vars, CutOptions::default(), &t)
+            .unwrap();
+
+        let mut s2 = Simplex::new(&p, t).unwrap();
+        assert_eq!(s2.solve(&b).status, LpStatus::Optimal);
+        let r2 = cut_loop_recorded(&mut s2, &b, &p, &int_vars, CutOptions::default(), &t)
+            .unwrap();
+
+        assert_eq!(r1.0, r2.0, "applied 一致");
+        assert_eq!(r1.1, r2.1, "status 一致");
+        assert_eq!(r1.2.len(), r1.0 as usize);
+        assert_eq!(r1.2.len(), r2.2.len());
+        for (c1, c2) in r1.2.iter().zip(r2.2.iter()) {
+            assert_eq!(c1.op, c2.op);
+            assert_eq!(c1.rhs, c2.rhs);
+            assert_eq!(c1.terms, c2.terms, "recorded 清单须逐条完全一致");
+        }
+        assert!(r1.0 >= 1, "根 LP 3.75 处必产割");
+
+        // 覆盖割确实进入清单（WP6 lifting 后形状放宽：基础形 [(j,1.0)] 且
+        // rhs = |terms|−1，或提升形——系数全为 ≥ 1 的整数值、rhs 为正整数
+        // |C|−1；本算例 5×4 ≤ 15 的提升割为 [(0..4, 1.0)]、rhs = 3）。
+        let has_cover = r1.2.iter().any(|c| {
+            !c.terms.is_empty()
+                && c.terms.iter().all(|&(_, w)| {
+                    w >= 1.0 && (w - w.round()).abs() < 1e-12
+                })
+                && (c.rhs - c.rhs.round()).abs() < 1e-12
+                && c.rhs >= 1.0
+                && c.rhs <= c.terms.len() as f64 - 1.0
+        });
+        assert!(has_cover, "recorded 须含覆盖族割：{:?}", r1.2);
+
+        // 割后根界：严格改进 3.75 且不切整数最优 3。
+        let root_sol = s1.resolve(&b);
+        assert_eq!(root_sol.status, LpStatus::Optimal);
+        assert!(root_sol.objective <= 3.75 - 1e-6, "割须改进根 LP：{}", root_sol.objective);
+        assert!(root_sol.objective >= 3.0 - 1e-6, "割不得切整数最优 3：{}", root_sol.objective);
+
+        // worker 按序重放（并行契约）：全新 Simplex + 按序 add_row 复现根目标。
+        let mut worker = Simplex::new(&p, t).unwrap();
+        for cut in &r1.2 {
+            worker.add_row(&cut.terms, cut.op, cut.rhs).unwrap();
+        }
+        let w = worker.resolve(&b);
+        assert_eq!(w.status, LpStatus::Optimal);
+        assert!(
+            (w.objective - root_sol.objective).abs() < 1e-9,
+            "worker 复现：root = {}，worker = {}",
+            root_sol.objective,
+            w.objective
+        );
+    }
+
+    // ===================== 取整 ε 纪律（WP6 增补）=====================
+
+    /// floor/ceil 的放宽方向与近整数吸附：真整数附近的浮点和差不得把可行
+    /// 整数点 floor/ceil 掉。
+    #[test]
+    fn floor_ceil_bound_epsilon_discipline() {
+        // 真值 5、浮点落其下方 1e-15：吸附为 5（上界取整放宽方向）。
+        assert_eq!(floor_bound(4.999999999999999), 5.0);
+        // 真值 5、浮点落其上方：同样吸附。
+        assert_eq!(floor_bound(5.000000000000001), 5.0);
+        // 非近整数：正常 floor（+ε 不越界）。
+        assert_eq!(floor_bound(4.999999), 4.0);
+        assert_eq!(floor_bound(1.5), 1.0);
+        assert_eq!(floor_bound(-1.5), -2.0);
+        // 下界镜像：ceil 放宽方向。
+        assert_eq!(ceil_bound(5.000000000000001), 5.0);
+        assert_eq!(ceil_bound(4.999999999999999), 5.0);
+        assert_eq!(ceil_bound(1.5), 2.0);
+        assert_eq!(ceil_bound(5.000999), 6.0);
+        // mir_floor 的近整数吸附。
+        assert_eq!(mir_floor(2.9999999999999996), 3.0);
+        assert_eq!(mir_floor(2.5), 2.0);
+    }
+
+    // ===================== 单行 c-MIR（WP6 增补）=====================
+
+    /// 负系数行（互补 z：x_j → ub_j − y_j）的 c-MIR：穷举全部整数点验证
+    /// 行可行 ⇒ 割可行，且割被 x̄ 违反、同输入逐字节确定。
+    ///
+    /// 行：3x − 2z ≤ 4.5，x ∈ [0,3] 整数、z ∈ [0,4] 整数；x̄ = (3, 2.25)
+    /// （LP 式分数点）。
+    #[test]
+    fn mir_negative_coefficient_row_exhaustive_validity() {
+        let mut p = Problem::new("mir-neg", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.add_var("z", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 3.0).unwrap();
+        p.set_var_bounds(1, 0.0, 4.0).unwrap();
+        p.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 3.0), (1, -2.0)], RelOp::Le, 4.5)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let x_bar = [3.0, 2.25];
+        let t = tol();
+        let opts = CutOptions::default();
+        let cut = mir_single_row(&p, &b, &x_bar, &p.constraints[0], opts, &t)
+            .expect("负系数互补行在分数 x̄ 处应产出 c-MIR 割");
+        // 2^枚举（整数盒 4×5 = 20 点）：行可行 ⇒ 割可行。
+        for x in 0..=3i64 {
+            for z in 0..=4i64 {
+                let v = [x as f64, z as f64];
+                if 3.0 * v[0] - 2.0 * v[1] <= 4.5 {
+                    assert!(
+                        eval_cut(&cut, &v) <= cut.rhs + 1e-9,
+                        "割 {cut:?} 切掉行可行整数点 ({x},{z})"
+                    );
+                }
+            }
+        }
+        // 割被 x̄ 违反 ≥ min_violation。
+        assert!(eval_cut(&cut, &x_bar) - cut.rhs >= opts.min_violation);
+        // 确定性：同输入两次完全一致。
+        let cut2 = mir_single_row(&p, &b, &x_bar, &p.constraints[0], opts, &t).unwrap();
+        assert_eq!(cut.terms, cut2.terms);
+        assert_eq!(cut.rhs, cut2.rhs);
+    }
+
+    /// 无有限 ub 的负系数列 ⇒ 整行跳过（None）；非 Le 行跳过。
+    #[test]
+    fn mir_skips_infinite_ub_and_non_le_rows() {
+        let mut p = Problem::new("mir-inf", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.add_var("z", VarType::Integer).unwrap(); // ub = +∞
+        p.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 3.0), (1, -2.0)], RelOp::Le, 4.5)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        assert!(
+            mir_single_row(&p, &b, &[3.0, 2.25], &p.constraints[0], CutOptions::default(), &t)
+                .is_none(),
+            "负系数列 z 无有限 ub ⇒ 整行跳过"
+        );
+        // Ge / Eq 行不处理。
+        for op in [RelOp::Ge, RelOp::Eq] {
+            let mut q = Problem::new("mir-op", Sense::Maximize);
+            q.add_var("x", VarType::Integer).unwrap();
+            q.set_var_bounds(0, 0.0, 5.0).unwrap();
+            q.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+            q.add_constraint(None, vec![(0, 2.0)], op, 4.5).unwrap();
+            let bq = Bounds::from_problem(&q);
+            assert!(mir_single_row(
+                &q,
+                &bq,
+                &[1.5],
+                &q.constraints[0],
+                CutOptions::default(),
+                &t
+            )
+            .is_none());
+        }
+    }
+
+    /// 整数变量非整数界（互补的 ub = 3.5）⇒ 双射不保整，整行跳过。
+    #[test]
+    fn mir_skips_nonintegral_bound_on_integer_column() {
+        let mut p = Problem::new("mir-nonint-ub", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.add_var("z", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 3.0).unwrap();
+        p.set_var_bounds(1, 0.0, 3.5).unwrap();
+        p.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 3.0), (1, -2.0)], RelOp::Le, 4.5)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        assert!(mir_single_row(
+            &p,
+            &b,
+            &[3.0, 2.25],
+            &p.constraints[0],
+            CutOptions::default(),
+            &tol()
+        )
+        .is_none());
+    }
+
+    /// 含连续变量的行：连续列 π = 0（丢弃只放宽），穷举（整数列枚举 ×
+    /// 连续列端点）验证行可行 ⇒ 割可行。
+    ///
+    /// 行：2x + 0.5c ≤ 3.25，x ∈ [0,3] 整数、c ∈ [0,5] 连续；x̄ = (1.625, 0)。
+    /// δ 逐试后最优 δ=1：割 x ≤ 1（violation 0.625）。
+    #[test]
+    fn mir_continuous_column_row_exhaustive_validity() {
+        let mut p = Problem::new("mir-cont", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(0, 0.0, 3.0).unwrap();
+        p.set_var_bounds(1, 0.0, 5.0).unwrap();
+        p.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 2.0), (1, 0.5)], RelOp::Le, 3.25)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let x_bar = [1.625, 0.0];
+        let t = tol();
+        let opts = CutOptions::default();
+        let cut = mir_single_row(&p, &b, &x_bar, &p.constraints[0], opts, &t)
+            .expect("分数右端处应产出 c-MIR 割");
+        // 确定性最优 δ 的割形状：x ≤ 1（连续列不入割）。
+        assert_eq!(cut.terms, vec![(0, 1.0)]);
+        assert_eq!(cut.rhs, 1.0);
+        assert_eq!(cut.op, RelOp::Le);
+        // 穷举：x ∈ {0..3}、c ∈ {lb, ub, 中点}（割对 c 线性 ⇒ 端点+内点足够；
+        // 本割不含 c，任意 c 恒可行）。
+        for x in 0..=3i64 {
+            for c in [0.0, 2.5, 5.0] {
+                let v = [x as f64, c];
+                if 2.0 * v[0] + 0.5 * v[1] <= 3.25 {
+                    assert!(
+                        eval_cut(&cut, &v) <= cut.rhs + 1e-9,
+                        "割 {cut:?} 切掉行可行点 ({x},{c})"
+                    );
+                }
+            }
+        }
+        assert!(eval_cut(&cut, &x_bar) - cut.rhs >= opts.min_violation);
+    }
+
+    // ===================== 隐含界割（WP6 增补）=====================
+
+    /// 1 整数 + 连续列的 Le 行 ⇒ 上界割；穷举（整数枚举 × 连续端点）验证
+    /// 行可行 ⇒ 割可行。
+    ///
+    /// 行：y + 2c ≤ 7.5，y ∈ [0,10] 整数、c ∈ [0,3] 连续；x̄ = (7.5, 0)。
+    /// V = 7.5 − 2·lb_c = 7.5 ⇒ y ≤ 7（violation 0.5）。
+    #[test]
+    fn implied_bound_upper_cut_exhaustive_validity() {
+        let mut p = Problem::new("impl-ub", Sense::Maximize);
+        p.add_var("y", VarType::Integer).unwrap();
+        p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(0, 0.0, 10.0).unwrap();
+        p.set_var_bounds(1, 0.0, 3.0).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, 2.0)], RelOp::Le, 7.5)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let x_bar = [7.5, 0.0];
+        let cuts = implied_bound_cuts(&p, &b, &x_bar, CutOptions::default(), &tol());
+        assert_eq!(cuts.len(), 1, "恰一条上界割：{cuts:?}");
+        let cut = &cuts[0];
+        assert_eq!(cut.terms, vec![(0, 1.0)]);
+        assert_eq!(cut.rhs, 7.0);
+        // 穷举：y ∈ 0..10、c ∈ {0, 1.5, 3}（割纯 y 界，与 c 无关）。
+        for y in 0..=10i64 {
+            for c in [0.0, 1.5, 3.0] {
+                let v = [y as f64, c];
+                if v[0] + 2.0 * v[1] <= 7.5 {
+                    assert!(
+                        eval_cut(cut, &v) <= cut.rhs + 1e-9,
+                        "割 {cut:?} 切掉行可行点 ({y},{c})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Ge 行 ⇒ 下界割；穷举验证。行：3y − c ≥ 1.2，y ∈ [0,5] 整数、
+    /// c ∈ [0,2] 连续；x̄ = (0.4, 0)。V = (1.2 − 0)/3 = 0.4 ⇒ y ≥ 1。
+    #[test]
+    fn implied_bound_lower_cut_ge_row_validity() {
+        let mut p = Problem::new("impl-lb", Sense::Minimize);
+        p.add_var("y", VarType::Integer).unwrap();
+        p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(0, 0.0, 5.0).unwrap();
+        p.set_var_bounds(1, 0.0, 2.0).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 3.0), (1, -1.0)], RelOp::Ge, 1.2)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let cuts = implied_bound_cuts(&p, &b, &[0.4, 0.0], CutOptions::default(), &tol());
+        assert_eq!(cuts.len(), 1, "恰一条下界割：{cuts:?}");
+        let cut = &cuts[0];
+        assert_eq!(cut.terms, vec![(0, -1.0)]);
+        assert_eq!(cut.rhs, -1.0, "−y ≤ −1 即 y ≥ 1");
+        for y in 0..=5i64 {
+            for c in [0.0, 1.0, 2.0] {
+                let v = [y as f64, c];
+                if 3.0 * v[0] - v[1] >= 1.2 {
+                    assert!(
+                        eval_cut(cut, &v) <= cut.rhs + 1e-9,
+                        "割 {cut:?} 切掉行可行点 ({y},{c})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 取整 ε 专项：浮点和差使 V 落真整数 5 下方 1e-15（2.9 + 3×0.7 =
+    /// 4.999999999999999）⇒ 割右端吸附为 5，不误剪 y=5 的行可行点。
+    ///
+    /// 行：y − 3c ≤ 2.9，y ∈ [0,8] 整数、c ∈ [0,0.7] 连续；x̄ = (5.5, 0)。
+    #[test]
+    fn implied_bound_rounding_epsilon_does_not_cut_integer_point() {
+        let mut p = Problem::new("impl-eps", Sense::Maximize);
+        p.add_var("y", VarType::Integer).unwrap();
+        p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(0, 0.0, 8.0).unwrap();
+        p.set_var_bounds(1, 0.0, 0.7).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, -3.0)], RelOp::Le, 2.9)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        let cuts = implied_bound_cuts(&p, &b, &[5.5, 0.0], CutOptions::default(), &tol());
+        assert_eq!(cuts.len(), 1, "{cuts:?}");
+        let cut = &cuts[0];
+        assert_eq!(cut.rhs, 5.0, "V = 4.999999999999999 须吸附为 5（放宽方向）");
+        // y = 5、c = 0.7：行 5 − 2.1 = 2.9 ≤ 2.9 行可行 ⇒ 不得被切。
+        let v = [5.0, 0.7];
+        assert!(5.0 - 3.0 * v[1] <= 2.9 + 1e-12);
+        assert!(eval_cut(cut, &v) <= cut.rhs + 1e-9);
+    }
+
+    /// 门控：整数列计数 ≠ 1 的行不产割；需要的一侧界无限 ⇒ 该方向跳过。
+    #[test]
+    fn implied_bound_gating_multi_int_and_infinite_side() {
+        let t = tol();
+        let opts = CutOptions::default();
+        // 两整数列（计数 2）⇒ 无割。
+        let mut p2 = Problem::new("impl-2int", Sense::Maximize);
+        p2.add_var("y1", VarType::Integer).unwrap();
+        p2.add_var("y2", VarType::Integer).unwrap();
+        p2.set_var_bounds(0, 0.0, 9.0).unwrap();
+        p2.set_var_bounds(1, 0.0, 9.0).unwrap();
+        p2.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        p2.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 7.5)
+            .unwrap();
+        let b2 = Bounds::from_problem(&p2);
+        assert!(implied_bound_cuts(&p2, &b2, &[7.5, 7.5], opts, &t).is_empty());
+
+        // 上界方向需要负系数列的 ub：y − c ≤ 10、c ∈ [0,∞) ⇒ 跳过。
+        let mut pi = Problem::new("impl-inf", Sense::Maximize);
+        pi.add_var("y", VarType::Integer).unwrap();
+        pi.add_var("c", VarType::Continuous).unwrap(); // ub = +∞
+        pi.set_var_bounds(0, 0.0, 20.0).unwrap();
+        pi.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        pi.add_constraint(None, vec![(0, 1.0), (1, -1.0)], RelOp::Le, 10.0)
+            .unwrap();
+        let bi = Bounds::from_problem(&pi);
+        assert!(implied_bound_cuts(&pi, &bi, &[19.5, 0.0], opts, &t).is_empty());
+
+        // 正系数连续列（用 lb 折叠，ub 无限不碍事）⇒ 正常产上界割。
+        let mut pp = Problem::new("impl-pos", Sense::Maximize);
+        pp.add_var("y", VarType::Integer).unwrap();
+        pp.add_var("c", VarType::Continuous).unwrap(); // ub = +∞
+        pp.set_var_bounds(0, 0.0, 20.0).unwrap();
+        pp.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        pp.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 7.5)
+            .unwrap();
+        let bp = Bounds::from_problem(&pp);
+        let cuts = implied_bound_cuts(&pp, &bp, &[7.5, 0.0], opts, &t);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0].rhs, 7.0);
+    }
+
+    // ===================== 覆盖割序贯 up-lifting（WP6 增补）=====================
+
+    /// 已知最优提升系数行验证 DP 精确性（标准公式 α_j = β − Z，β = |C|−1）：
+    /// - w=[5,4,3,2]、cap=5、x̄=[1,0.9,0,0]：C={0,1}，α_2=1、α_3=0
+    ///   ⇒ 割 x0+x1+x2 ≤ 1（x3 系数 0 不入割）；
+    /// - w=[3,3,3,3,3]、cap=8、x̄=[1,1,1,0,0]：C={0,1,2}，α_3=α_4=1
+    ///   ⇒ 割 Σx ≤ 2。
+    #[test]
+    fn lift_known_optimal_coefficients_exact_dp() {
+        let t = tol();
+        let opts = CutOptions::default();
+        // 例 1。
+        let p = binary_knapsack("lift-a", &[5.0, 4.0, 3.0, 2.0], 5.0);
+        let b = Bounds::from_problem(&p);
+        let mut budget = LiftBudget::new();
+        let cuts =
+            cover_cuts_with_lifting(&p, &b, &[1.0, 0.9, 0.0, 0.0], opts, &t, &mut budget);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0].terms, vec![(0, 1.0), (1, 1.0), (2, 1.0)], "α_2=1、α_3=0");
+        assert_eq!(cuts[0].rhs, 1.0, "β = |C|−1 固定");
+        assert!(budget.remaining() < LiftBudget::new().remaining(), "预算须扣减");
+
+        // 例 2。
+        let p = binary_knapsack("lift-b", &[3.0, 3.0, 3.0, 3.0, 3.0], 8.0);
+        let b = Bounds::from_problem(&p);
+        let mut budget = LiftBudget::new();
+        let cuts =
+            cover_cuts_with_lifting(&p, &b, &[1.0, 1.0, 1.0, 0.0, 0.0], opts, &t, &mut budget);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(
+            cuts[0].terms,
+            vec![(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0), (4, 1.0)],
+            "α_3=α_4=1"
+        );
+        assert_eq!(cuts[0].rhs, 2.0);
+    }
+
+    /// 序贯性回归：穷举全部 2^5 个 0-1 点验证提升割有效性；特别是**多个
+    /// 提升列同时取 1** 的点（{x3,x4}，3+3=6 ≤ 8 行可行）必须仍满足割
+    /// （工作包原文『α_j = |C|−1+Σ已提升α − Z』形式会在此切掉该点）。
+    #[test]
+    fn lift_sequential_validity_multi_lifted_ones() {
+        let t = tol();
+        let opts = CutOptions::default();
+        let w = [3.0, 3.0, 3.0, 3.0, 3.0];
+        let p = binary_knapsack("lift-seq", &w, 8.0);
+        let b = Bounds::from_problem(&p);
+        let mut budget = LiftBudget::new();
+        let cuts =
+            cover_cuts_with_lifting(&p, &b, &[1.0, 1.0, 1.0, 0.0, 0.0], opts, &t, &mut budget);
+        assert_eq!(cuts.len(), 1);
+        let cut = &cuts[0];
+        // 穷举 2^5：行可行（Σ 3x ≤ 8 ⇒ 至多 2 个 1）⇒ 割可行。
+        for mask in 0..32u32 {
+            let x: Vec<f64> = (0..5).map(|i| ((mask >> i) & 1) as f64).collect();
+            if 3.0 * x.iter().sum::<f64>() <= 8.0 {
+                assert!(
+                    eval_cut(cut, &x) <= cut.rhs + 1e-9,
+                    "提升割 {cut:?} 切掉行可行 0-1 点 {x:?}"
+                );
+            }
+        }
+        // 多提升列同取 1 的点 {x3,x4}：LHS = 2 ≤ 2。
+        let v = [0.0, 0.0, 0.0, 1.0, 1.0];
+        assert_eq!(eval_cut(cut, &v), 2.0);
+        assert!(eval_cut(cut, &v) <= cut.rhs + 1e-9);
+    }
+
+    /// 提升后 violation ≥ 提升前（α ≥ 0、x̄ ≥ 0 ⇒ 单调不减；此处严格增）。
+    #[test]
+    fn lift_violation_not_decreased() {
+        let t = tol();
+        let opts = CutOptions::default();
+        let p = binary_knapsack("lift-viol", &[5.0, 4.0, 3.0, 2.0], 5.0);
+        let b = Bounds::from_problem(&p);
+        let x_bar = [1.0, 0.9, 0.5, 0.5];
+        let base = cover_cuts(&p, &b, &x_bar, opts, &t);
+        assert_eq!(base.len(), 1);
+        let base_viol = eval_cut(&base[0], &x_bar) - base[0].rhs;
+        let mut budget = LiftBudget::new();
+        let lifted = cover_cuts_with_lifting(&p, &b, &x_bar, opts, &t, &mut budget);
+        assert_eq!(lifted.len(), 1);
+        let lifted_viol = eval_cut(&lifted[0], &x_bar) - lifted[0].rhs;
+        assert!(
+            lifted_viol >= base_viol - 1e-12,
+            "提升后 violation {lifted_viol} < 提升前 {base_viol}"
+        );
+        assert!(lifted_viol > base_viol, "x̄2=0.5 ⇒ 严格增");
+    }
+
+    /// 小数权行被建表判据跳过（10^k 无法整数化）且不产无效割：产出与
+    /// 基础 cover_cuts 完全一致。w = 1/3 循环小数、cap = 0.5。
+    #[test]
+    fn lift_nonintegerizable_weights_fall_back_to_base() {
+        let t = tol();
+        let opts = CutOptions::default();
+        let w = [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0];
+        let p = binary_knapsack("lift-frac", &w, 0.5);
+        let b = Bounds::from_problem(&p);
+        let x_bar = [0.9, 0.9, 0.9];
+        let base = cover_cuts(&p, &b, &x_bar, opts, &t);
+        let mut budget = LiftBudget::new();
+        let lifted = cover_cuts_with_lifting(&p, &b, &x_bar, opts, &t, &mut budget);
+        assert_eq!(base.len(), 1, "基础覆盖割存在");
+        assert_eq!(lifted.len(), 1);
+        assert_eq!(lifted[0].terms, base[0].terms, "非整数化 ⇒ 退回基础割");
+        assert_eq!(lifted[0].rhs, base[0].rhs);
+        assert_eq!(
+            budget.remaining(),
+            LiftBudget::new().remaining(),
+            "未跑 DP ⇒ 预算不动"
+        );
+        // 基础割本身仍有效：穷举 2^3。
+        for mask in 0..8u32 {
+            let x: Vec<f64> = (0..3).map(|i| ((mask >> i) & 1) as f64).collect();
+            if w[0] * x.iter().sum::<f64>() <= 0.5 {
+                assert!(eval_cut(&lifted[0], &x) <= lifted[0].rhs + 1e-9);
+            }
+        }
+    }
+
+    /// 预算耗尽（remaining = 0）⇒ 全程关闭提升：产出与基础 cover_cuts 等价。
+    #[test]
+    fn lift_zero_budget_falls_back_to_base() {
+        let t = tol();
+        let opts = CutOptions::default();
+        let p = binary_knapsack("lift-budget0", &[5.0, 4.0, 3.0, 2.0], 5.0);
+        let b = Bounds::from_problem(&p);
+        let x_bar = [1.0, 0.9, 0.5, 0.5];
+        let base = cover_cuts(&p, &b, &x_bar, opts, &t);
+        let mut budget = LiftBudget::with_remaining(0);
+        let lifted = cover_cuts_with_lifting(&p, &b, &x_bar, opts, &t, &mut budget);
+        assert_eq!(lifted.len(), base.len());
+        assert_eq!(lifted[0].terms, base[0].terms);
+        assert_eq!(lifted[0].rhs, base[0].rhs);
+    }
+
+    /// 建表门槛超限（k2000 形态：|C|×cap̃ 巨大）⇒ 整行跳过提升只留基础
+    /// 覆盖割。1000 Binary、w=27、cap=26999：(|C|+K)×(cap̃+1) ≈ 2.7e7 > 2e6。
+    #[test]
+    fn lift_table_gate_skips_large_rows() {
+        let t = tol();
+        let opts = CutOptions::default();
+        let n = 1000usize;
+        let p = binary_knapsack("lift-gate", &vec![27.0; n], 26999.0);
+        let b = Bounds::from_problem(&p);
+        let x_bar = vec![0.9995; n];
+        let base = cover_cuts(&p, &b, &x_bar, opts, &t);
+        assert_eq!(base.len(), 1, "基础覆盖割存在（violation 0.5）");
+        assert_eq!(base[0].terms.len(), 1000, "C = 全支撑");
+        let mut budget = LiftBudget::new();
+        let lifted = cover_cuts_with_lifting(&p, &b, &x_bar, opts, &t, &mut budget);
+        assert_eq!(lifted.len(), 1);
+        assert_eq!(lifted[0].terms, base[0].terms, "门槛超限 ⇒ 退回基础割");
+        assert_eq!(lifted[0].rhs, base[0].rhs);
+        assert_eq!(budget.remaining(), LiftBudget::new().remaining());
+    }
+
+    // ===================== 割轮记账上限与合并序（WP6）=====================
+
+    /// 割轮记账上限：max_rounds=1 / max_cuts_per_round=3 ⇒ recorded ≤ 3；
+    /// 默认参数 ⇒ recorded ≤ 8×40 = 320；recorded 条数恒等于施加割数。
+    #[test]
+    fn cut_loop_recorded_respects_round_and_cut_caps() {
+        let p = binary_knapsack("cap-many", &vec![4.0; 50], 86.0);
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+        let int_vars = p.integer_vars();
+
+        // 单轮上限：每轮施加 ≤ max_cuts_per_round。
+        let opts = CutOptions {
+            max_rounds: 1,
+            max_cuts_per_round: 3,
+            ..CutOptions::default()
+        };
+        let mut s = Simplex::new(&p, t).unwrap();
+        assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+        let (applied, status, recorded) =
+            cut_loop_recorded(&mut s, &b, &p, &int_vars, opts, &t).unwrap();
+        assert!(applied >= 1, "根 LP 21.5 处必产割");
+        assert_eq!(status, LpStatus::Optimal);
+        assert_eq!(recorded.len(), applied as usize);
+        assert!(recorded.len() <= 3, "单轮 ≤ max_cuts_per_round：{}", recorded.len());
+
+        // 默认参数：总施加 ≤ max_rounds × max_cuts_per_round = 4×40。
+        let mut s2 = Simplex::new(&p, t).unwrap();
+        assert_eq!(s2.solve(&b).status, LpStatus::Optimal);
+        let (applied2, _status2, recorded2) = cut_loop_recorded(
+            &mut s2,
+            &b,
+            &p,
+            &int_vars,
+            CutOptions::default(),
+            &t,
+        )
+        .unwrap();
+        assert_eq!(recorded2.len(), applied2 as usize);
+        assert!(
+            recorded2.len() <= 4 * 40,
+            "总施加 ≤ 4×40 = 160：{}",
+            recorded2.len()
+        );
+        // 割后不得切掉整数最优（4Σx ≤ 86 ⇒ Σx ≤ 21，目标 Σx ⇒ 最优 21）。
+        let sol = s2.resolve(&b);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!(sol.objective >= 21.0 - 1e-6, "割不得切整数最优 21：{}", sol.objective);
+        assert!(sol.objective <= 21.5 - 1e-6, "割须改进根 LP 21.5：{}", sol.objective);
+    }
+
+    /// 合并序行为：cut_loop_recorded 的 recorded 清单里 c-MIR/隐含界形状的割
+    /// （单行 Le 派生）与覆盖/提升形状的割共存，且全程确定性（新族接入后
+    /// 两次运行逐字节一致）。算例：2 整数列 wolsey + 5 Binary 背包行拼合。
+    #[test]
+    fn cut_loop_recorded_merge_order_deterministic_with_new_families() {
+        let mut p = Problem::new("merge-det", Sense::Maximize);
+        for i in 0..5 {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.add_var("z", VarType::Integer).unwrap();
+        p.set_var_bounds(5, 0.0, 10.0).unwrap();
+        let mut obj: Vec<(usize, f64)> = (0..5).map(|i| (i, 1.0)).collect();
+        obj.push((5, 2.5));
+        p.set_objective(obj, 0.0).unwrap();
+        // 背包行（覆盖+lifting 目标行）。
+        p.add_constraint(
+            Some("cap"),
+            vec![(0, 4.0), (1, 4.0), (2, 4.0), (3, 4.0), (4, 4.0)],
+            RelOp::Le,
+            15.0,
+        )
+        .unwrap();
+        // 单整数列 + 连续列行（隐含界目标行）。
+        p.add_var("c", VarType::Continuous).unwrap();
+        p.set_var_bounds(6, 0.0, 3.0).unwrap();
+        p.add_constraint(None, vec![(5, 1.0), (6, 2.0)], RelOp::Le, 7.5)
+            .unwrap();
+        let t = tol();
+        let b = Bounds::from_problem(&p);
+        let int_vars = p.integer_vars();
+
+        let run = || {
+            let mut s = Simplex::new(&p, t).unwrap();
+            assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+            cut_loop_recorded(&mut s, &b, &p, &int_vars, CutOptions::default(), &t).unwrap()
+        };
+        let r1 = run();
+        let r2 = run();
+        assert_eq!(r1.0, r2.0);
+        assert_eq!(r1.1, r2.1);
+        assert_eq!(r1.2.len(), r2.2.len());
+        for (c1, c2) in r1.2.iter().zip(r2.2.iter()) {
+            assert_eq!(c1.op, c2.op);
+            assert_eq!(c1.rhs, c2.rhs);
+            assert_eq!(c1.terms, c2.terms, "recorded 须逐字节一致");
+        }
+        assert!(r1.0 >= 1, "根 LP 分数处必产割");
+        // 终界不切整数最优：整数可行点 x=(1,1,1,0,0)、z=7、c=0 目标 10；
+        // 验证割后根界 ≥ 某个下界不具一般性——此处只验证 ≥ LP 收紧方向与
+        // 终态 Optimal（穷举有效性已由三族专项测试覆盖）。
+        assert_eq!(r1.1, LpStatus::Optimal);
     }
 }

@@ -97,7 +97,11 @@ impl Rng {
 ///   a      = splitmix_step(i)        // x = i 单步（x 先 += 0x9E3779B97F4A7C15 再混合）
 ///   y      = base ^ a
 ///   seed_i = splitmix_step(y)
-/// splitmix_step 为双射 ⇒ 固定 base 时 i ↦ seed_i 单射（不同 worker 必不同种子）。
+/// splitmix_step 为双射 ⇒ 固定 base 时**派生种子（i ≥ 1）两两互异**（i ↦ seed_i 在
+/// i ≥ 1 上单射）。worker 0 的 base 原值与某派生种子理论上可碰撞：对每个 base 恰
+/// 存在一个 i ∈ u64 使 seed_i == base（i 近似均匀分布），命中 [1, threads) 的概率
+/// ~threads/2^64 ≤ 2^-54（threads ≤ 1024）；即便命中也仅使两个 worker 重复同一
+/// 次搜索，min 聚合与逐位可复现性均不受影响。
 pub fn derive_seed(base: u64, worker: u64) -> u64 {
     let mut x = worker;
     let a = splitmix(&mut x);

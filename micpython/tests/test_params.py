@@ -2,8 +2,10 @@
 """参数语义测试：镜像三铁律、关断编码、gap 向量、非法值（公共 API）。
 
 gap 统一向量 hard-knapsack-12（前轮实跑钉死：CLI ``--mipgap 20`` →
-``status=gap_reached, nodes=1, gap=2.83%, best=512.000000``；``--mipgap 0``
-→ ``status=optimal, nodes=227, objective=523.000000``）。
+``status=gap_reached, nodes=1, gap=3.11%, best=511.000000``；``--mipgap 0``
+→ ``status=optimal, objective=523.000000``。2026-10 割族增强后根 LP 终
+顶点漂移：旧值 512/2.83% 出自旧 GMI 终顶点的取整复核；新割终顶点中面
+化，根 incumbent 改由割前顶点 dive 供应 = 511）。
 """
 
 import unittest
@@ -136,11 +138,11 @@ class ParamBehaviorTests(unittest.TestCase):
         self.assertEqual(m.optimize(), Status.LIMIT_REACHED,
                          '达阈值提前终止的诚实终态（非 OPTIMAL）')
         self.assertTrue(m.GapTerminated)
-        self.assertAlmostEqual(m.ObjVal, 512.0, delta=TOL,
+        self.assertAlmostEqual(m.ObjVal, 511.0, delta=TOL,
                                msg='LIMIT_REACHED 携带 incumbent')
         gap = m.MIPGapPercent
         self.assertGreater(gap, 2.0)
-        self.assertLess(gap, 4.0, '实跑 CLI 佐证 2.83%')
+        self.assertLess(gap, 4.0, '实跑 CLI 佐证 3.11%')
         self.assertEqual(m.SolCount, 1)
 
     def test_mipgap_zero_still_optimal(self):

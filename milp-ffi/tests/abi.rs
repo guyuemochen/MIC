@@ -3,7 +3,7 @@
 //! 覆盖（对应 README 契约）：
 //! ① 全流程（dive 21 / knapsack-10 17 / LP+offset 111）；
 //! ② gap 向量（hard-knapsack-12，阈值 20%，事实由 milp CLI 实跑钉死：
-//!    --mipgap 20 → gap_reached best=512 gap=2.83%；默认 → optimal 523）；
+//!    --mipgap 20 → gap_reached best=511 gap=3.11%；默认 → optimal 523）；
 //! ③ 错误路径全码；
 //! ④ 参数覆盖序列（0=关断编码钉死：TimeLimit/LogPeriodSecs 后设 0.0 真正关断）；
 //! ⑤ last_error 截断/长度/粘滞；
@@ -204,7 +204,7 @@ fn build_dive() -> *mut c_void {
 /// hard-knapsack-12（milp/instances/hard-knapsack-12.milp 等价）：
 /// 12 个 BINARY，obj=[11,20,32,44,55,70,88,99,111,122,133,144]，
 /// 重量 [7,11,13,17,19,23,29,31,37,41,43,47] ≤ 172 → 默认 OPTIMAL 523；
-/// MIPGap=20% → LIMIT_REACHED best=512 gap≈2.83%。
+/// MIPGap=20% → LIMIT_REACHED best=511 gap≈3.11%。
 fn build_hard12() -> *mut c_void {
     let obj = [
         11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0,
@@ -297,8 +297,11 @@ fn lp_with_offset_111() {
 // ② gap 向量
 // ===========================================================================
 
-/// MIPGap=20% → LIMIT_REACHED(4)、gap_terminated=1、objective≈512、
+/// MIPGap=20% → LIMIT_REACHED(4)、gap_terminated=1、objective≈511、
 /// gap_percent ∈ (2.0, 4.0)；新句柄缺省 → OPTIMAL 523、gap_terminated=0。
+/// （2026-10 割族增强后根 LP 终顶点漂移：旧 GMI 终顶点取整复核恰为 512；
+/// 新割终顶点中面化，根 incumbent 改由割前顶点 dive 供应 = 511（CLI 实跑
+/// 佐证 gap=3.11% / best=511.000000）。gap 区间断言 (2,4) 不变。）
 #[test]
 fn gap_vector_hard_knapsack_12() {
     let m = build_hard12();
@@ -307,14 +310,14 @@ fn gap_vector_hard_knapsack_12() {
     assert_eq!(status(m), 4, "LIMIT_REACHED（gap 提前终止）");
     assert_eq!(stat(m, 6), 1, "gap_terminated");
     assert!(
-        (objective(m) - 512.0).abs() <= 1e-6,
+        (objective(m) - 511.0).abs() <= 1e-6,
         "objective = {}",
         objective(m)
     );
     let g = gap_percent(m);
     assert!(g.is_finite() && g > 2.0 && g < 4.0, "gap = {g}");
     let b = bound(m);
-    assert!(b.is_finite() && b > 512.0, "bound 证据 = {b}");
+    assert!(b.is_finite() && b > 511.0, "bound 证据 = {b}");
     milp_ffi_model_destroy(m);
 
     // 同一模型、新句柄缺省参数：完整证明最优。
@@ -661,5 +664,40 @@ fn named_create_and_named_constraint() {
     solve(m);
     assert_eq!(status(m), 1);
     assert!((objective(m) - 3.5).abs() < 1e-9);
+    milp_ffi_model_destroy(m);
+}
+
+/// B2 回归：set_objective 越界失败（→2）时 sense 不得被半突变。
+///
+/// 场景（ctypes 实证同款）：MINIMIZE 模型 x∈[0,1]，先以 sense=2(MAXIMIZE)
+/// 传越界下标 7 → 返回 2；旧实现在校验前已写 problem.sense=Max。随后以
+/// sense=0（保持）合法设目标 min x 并求解——sense 若被翻为 MAX 则 x 取
+/// 上界 1.0，保持 MIN 则取下界 0.0。
+#[test]
+fn set_objective_failure_leaves_sense_untouched() {
+    let m = create(1); // MINIMIZE
+    let i = add_var(m, "x", 1, 0.0, 1.0);
+    let bad_idx = [7u32];
+    let coef = [1.0f64];
+    expect(
+        milp_ffi_set_objective(
+            m,
+            bad_idx.as_ptr(),
+            coef.as_ptr(),
+            bad_idx.len() as u32,
+            2, // MAXIMIZE：若先写 sense，失败后模型半突变
+            0.0,
+        ),
+        ERR_INVALID_MODEL,
+    );
+    // 合法重设目标（sense=0 保持现状）并求解。
+    set_objective(m, &[i], &[1.0], 0, 0.0);
+    solve(m);
+    assert_eq!(status(m), 1);
+    assert!(
+        (objective(m) - 0.0).abs() < 1e-9,
+        "MINIMIZE 必须保持：objective = {}（1.0 即 sense 已被翻为 MAXIMIZE）",
+        objective(m)
+    );
     milp_ffi_model_destroy(m);
 }

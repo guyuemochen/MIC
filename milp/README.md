@@ -102,7 +102,7 @@ objective = 17.000000
 - **行格式**：`progress t={耗时秒} nodes={已处理节点数} incumbent={当前最好解或none} bound={全局对偶界或none} gap={百分比或inf}`，例如：
 
 ```text
-progress t=0.12 nodes=42 incumbent=512.000000 bound=526.487805 gap=2.83%
+progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 ```
 
 - **gap 恒非负**：展示与触发判定统一走 `search_ctrl::gap_percent`，raw
@@ -137,22 +137,29 @@ progress t=0.12 nodes=42 incumbent=512.000000 bound=526.487805 gap=2.83%
 - **三档语义**：`off` ⇒ 关闭启发式（`BbOptions.heuristics = false`）；
   `on` ⇒ 仅根节点启发式（取整复核 + dive，即历史版本行为）；
   `auto`（默认）⇒ 根节点启发式 + **自适应**树节点 dive。
+- **根预割启发式轮**（2026-10）：割循环可能把根 LP 顶点从「单断点近整数」
+  推向「多分数中面」（界更紧但取整/潜水质量塌缩——hard-knapsack-12 割后
+  顶点上 dive 仅得 453）。root_cuts 开启时在**割前顶点**先跑一轮
+  round_and_check + dive、与割后一轮取最优：incumbent 只增不减，割生成
+  只读表格不受影响；关割路径顶点唯一，行为逐字节不变。
 - **控制器策略**（`search_ctrl::HeuristicController`，参数
-  32/50/8/0.25/0.8）：『无 incumbent ⇄ 连续 50 节点无改进（stall）⇄ 近期
-  8 次 dive 命中率 ≥ 0.25』三条件任一满足才授权 dive，叠加 **32 节点最
-  小间隔节流**与**时间预算保护**（有 `--time-limit-secs` 且已耗 80% 预算
-  并有 incumbent 时停投，把尾段留给最优性证明）。理由：一次 dive 的成本
-  ≈ `dive_max_fixes` 次 LP 重解，只在期望回报（更快拿到好 incumbent 以
-  加速剪枝）高时投资。
+  256/400/8/0.25/0.8，2026-10 随 dive 深预算化重调）：『无 incumbent ⇄
+  连续 400 节点无改进（stall）⇄ 近期 8 次 dive 命中率 ≥ 0.25』三条件任一
+  满足才授权 dive，叠加 **256 节点最小间隔节流**与**时间预算保护**（有
+  `--time-limit-secs` 且已耗 80% 预算并有 incumbent 时停投，把尾段留给
+  最优性证明）。理由：对偶热修复下单次 LP 重解 ≈ 数次迭代，一次深潜
+  （预算 4096）≈ 数百次热重解——期望回报（更快拿到好 incumbent 以加速
+  剪枝）不够高时不投资。
 - **正确性**：dive 只供应 incumbent，不改剪枝/分支语义 ⇒ `auto` 仍**精确
   最优**（目标与 `on`/`off` 一致）。
-- **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值（32/50）⇒
-  `auto ≡ on`，CLI 默认输出与历史版本逐字节一致（由验收测试钉死）。
-- **hard-knapsack-12**（227 节点）超过阈值：实测 `auto` 与 `on` 同为
-  227 节点 / objective 523——该算例根启发式已供应最优 incumbent，树中
-  途 dive 不再改进，只增加 LP 迭代数（auto 856 vs on 819）；一般而言
-  中途 dive 若改进 incumbent 可使节点数**变少**（剪枝更早），`auto` 的
-  nodes/迭代数不承诺与 `on` 相同（目标与终态恒同）。
+- **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值 ⇒ `auto ≡ on`，CLI
+  默认输出逐字节一致（由验收测试钉死）。
+- **hard-knapsack-12**：184 节点 / objective 523（2026-10 启发式增强后
+  的确定性基线——根 dive 现在能供应 incumbent；增强前根 dive 在断点链
+  上必耗尽 8 次预算而失败。根预割启发式轮加入后根 incumbent 453→511 ⇒
+  剪枝提前，235→184）。一般而言中途 dive 若改进 incumbent 可使
+  节点数**变少**（剪枝更早），`auto` 的 nodes/迭代数不承诺与 `on` 相同
+  （目标与终态恒同）。
 
 ### 策略级自动降级（auto + --time-limit-secs）
 
@@ -192,7 +199,9 @@ progress t=0.12 nodes=42 incumbent=512.000000 bound=526.487805 gap=2.83%
   解）；**双 Condvar**——`cv_workers` 供 worker 等节点、`cv_progress` 供
   协调线程按 `--log-secs` 周期发射进度行，互不唤醒；**粘滞 stop** 原子量
   （CAS 一次性置位：节点/时间上限与 gap 达标，镜像顺序路径 limit_hit
-  语义 ⇒ 截断绝不冒充完备）；**gap 证据**为触发时刻快照（CAS 胜者独占
+  语义 ⇒ 截断绝不冒充完备）；节点 LP 迭代上限与顺序 (c) 分支同口径——
+  剪枝该节点 + 置独立粘滞标记 `limit_hit`（不终止树搜索），探索完备后
+  终态仍诚实 LimitReached；**gap 证据**为触发时刻快照（CAS 胜者独占
   写入，叶级短锁）。节点上限采用**预约制**（弹出后按预约序号判定，
   与顺序路径 `nodes >= node_limit` 逐节点对齐）。
 - **借用交接（无 'static）**：`Shared` 为调用线程栈上局部结构体，worker
@@ -316,10 +325,30 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
   Unbounded（见理论近似声明）；IterationLimit ⇒ 剪枝并记 limit_hit；LP bound
   不优于 incumbent ⇒ 剪枝；整数性满足 ⇒ 取整复核（伪整数解**不得**剪枝，
   必须继续分支）；空界 ⇒ 剪枝。
-- 分支变量规则 MostFractional（max min(f, 1−f)，并列取最小下标）；剪枝条件
+- 分支变量规则 MostFractional（max min(f, 1−f)，并列取最小下标）；可选
+  [`BranchRule::Pseudocost`]（`BbOptions::branch_rule`，编程 API；无观测时
+  退化为 f⁻·f⁺ 乘积规则——目前仅顺序路径生效）；剪枝条件
   `node_bound ≤ incumbent + 1e-9×(1+|incumbent|)`。
+- **界变化后的对偶修复快路径**（2026-10，大规模主优化）：分支收紧界后若
+  基变量越界，不再整基重建 + 完整 Phase-1（冷重解），而是有界变量对偶
+  单纯形几次旋转恢复原始可行（基与成本未动 ⇒ 对偶可行性保持；出基变量
+  落到其被违反的界）。前置条件不满足（Phase-1 欠账 / 基中含人工列 /
+  对偶不可行 / 超预算 / 数值异常）一律回退冷路径，快路径只加速、绝不
+  改变语义。实测每节点 LP 迭代 123 → ~2.5（约 46×），节点吞吐约 30×。
+  一致性由 `tests/warm_cold_parity.rs` 差分钉死（界收紧序列上热解与冷解
+  逐点对比状态与目标）。
+- **深潜启发式**（2026-10）：`dive_max_fixes` 默认 8 → 4096（对偶热修复
+  使单次 resolve 成本 ≈ 数次迭代，深潜变得便宜）；预算耗尽或修复不可行
+  时退化为取整复核而非直接放弃；修复不可行先做**一步反向回退**（ceil
+  不行改 floor 再试，每变量至多一次，防振荡）。根 dive 由此在背包类
+  断点链上从必然失败变为稳定供应 incumbent。
+- 节点上限默认 2_000_000（吞吐 ↑ ~30× 后旧 10 万上限秒级打满）。
 - 终态诚实判定：栈空自然退出且有 incumbent ⇒ Optimal、无 ⇒ Infeasible；
   节点/时间上限触发 ⇒ LimitReached（附 incumbent）。
+- **基准套件**：`bench/`（`gen_instances.py` 生成，种子确定）：强相关背包
+  200/500（附 DP 独立核对最优）、多背包 3×100、指派 16×16、混合 MILP、
+  宽 LP。2026-10 优化后（对偶修复 + 深潜 + 控制器重调 256/400）：可完成
+  算例单线程 2.1–3.3×、4 线程 2.2–3.4× 加速，目标值与基线全部一致。
 
 ### 根节点 GMI 割（WP3）
 
@@ -327,8 +356,11 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
 禁止）。取基变量为整数类型结构变量的行推导，割为 `Σ π_j·d_j ≥ 1`（π_j ≥ 0）。
 **整数列前提**：整数类型结构列仅当所贴界为整数值（|bound−round| ≤
 tol.zero）时才可用整数公式，否则必须按连续列公式处理，否则割可切掉整数
-最优而错报 Optimal。数值纪律：|c_j| < tol.zero 的项只允许按放宽割的方向
+最优而报 Optimal。数值纪律：|c_j| < tol.zero 的项只允许按放宽割的方向
 丢弃，严禁加严；violation ≥ min_violation 才收；动态范围超 1e9 整条丢弃。
+割循环后根 LP 不可行是整数不可行问题的合法终局（割对全部整数可行解有效、
+该集合为空时割可切空松弛区域）——终态如实映射 Infeasible（CLI
+`status = infeasible`、退出码 2），不是数值错误。
 
 ### 预处理（WP3）
 
@@ -382,7 +414,7 @@ R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 227 节点（threads=1；并行下节点数可变） | 2^12 = 4096 穷举；实测 227 节点 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 184 节点（threads=1；并行下节点数可变） | 2^12 = 4096 穷举；实测 184 节点 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 

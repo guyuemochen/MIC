@@ -37,7 +37,11 @@
   SearchControl::default 库语义，避免 auto+TimeLimit 意外自动降级为
   LIMIT_REACHED；需要自适应行为请显式 setParam('HeuristicMode', 'auto')；
 - 两次同名 ``addVars`` 第二次抛 ``ModelError``（FFI/milp 拒绝重名变量，
-  不自作聪明去重）。
+  不自作聪明去重）；
+- 名字/字符串参数不得含内嵌 NUL（``'\\x00'``）——模型名、变量名（含
+  addVars 前缀）、约束名、str 参数值均抛 ``ArgumentError``（亦为
+  ``ValueError`` 子类）：FFI 的 C 字符串会在首个 NUL 截断而 Python 镜像
+  保留全名，两侧将静默分叉，入口统一拦截（B3）。
 """
 
 import ctypes
@@ -181,6 +185,21 @@ def _pack_terms(terms):
     idx_arr = (ctypes.c_uint32 * n)(*[int(i) for i, _ in items])
     coef_arr = (ctypes.c_double * n)(*[float(c) for _, c in items])
     return idx_arr, coef_arr, n
+
+
+def _check_no_nul(value, what):
+    """含内嵌 NUL（``'\\x00'``）的字符串入口统一拒绝（B3）。
+
+    FFI 的 C 字符串（CStr）在首个 NUL 处截断，而 Python 侧镜像保留全名
+    ——不拦截则两侧静默分叉（实证：``addVar(name='a\\x00b')`` 后 FFI 实存
+    截断名 ``'a'``，``getVarByName('a')`` 却返回 None）。抛 ``ArgumentError``
+    （亦为 ``ValueError`` 子类），消息点名入参与原因。
+    """
+    if '\x00' in value:
+        raise ArgumentError(
+            '%s 不得包含 NUL 字符（\\x00）：FFI 的 C 字符串会在首个 NUL 处'
+            '截断，Python 镜像与求解器将各持一半名字（静默分叉）。收到 %r'
+            % (what, value))
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +534,7 @@ class Model(object):
                                 % (sense,))
         if not isinstance(name, str):
             raise ArgumentError('name 需为 str，收到 %r' % (name,))
+        _check_no_nul(name, '模型名 name')
         self._model_name = name
         self._sense = sense
         self._vars = []
@@ -592,7 +612,9 @@ class Model(object):
           ——仅用于自动命名；显式撞保留字交 FFI 报错，保持单一事实源）；
         - ``obj``≠0 记入目标系数镜像（并入规则见 :meth:`setObjective`）；
         - lb 非有限 / lb>ub / Binary 界越界 / 重名 / 撞保留字由 FFI 校验
-          （码 9/2 → ArgumentError/ModelError）。
+          （码 9/2 → ArgumentError/ModelError）；
+        - name 含内嵌 NUL → ``ArgumentError``（B3：FFI C 字符串会在首个
+          NUL 截断，Python 镜像与求解器将各持一半名字，入口统一拒绝）。
         """
         if vtype not in _VTYPE_CODES:
             raise ArgumentError("vtype 必须为 'C'/'I'/'B'，收到 %r" % (vtype,))
@@ -604,6 +626,7 @@ class Model(object):
             ub_f = _as_float(ub, 'ub')
         if not isinstance(name, str):
             raise ArgumentError('name 需为 str，收到 %r' % (name,))
+        _check_no_nul(name, '变量名 name')
         if not name:
             name = self._next_auto_name()
         lib = _ffi._lib()
@@ -633,12 +656,15 @@ class Model(object):
         - **两次同名 addVars 第二次抛 ModelError**：FFI/milp 拒绝重名变量
           （消息『变量名 `x0` 重复』），micpython 不自作聪明去重——批量命名
           冲突请更换 name 前缀；
-        - ``obj`` 可为标量或长度等于 count 的序列（lb/ub/vtype 仅标量）。
+        - ``obj`` 可为标量或长度等于 count 的序列（lb/ub/vtype 仅标量）；
+        - ``name`` 前缀含内嵌 NUL → ``ArgumentError``（B3，同 addVar）。
         """
         if isinstance(count, bool) or not isinstance(count, int):
             raise ArgumentError('count 需为非负 int，收到 %r' % (count,))
         if count < 0:
             raise ArgumentError('count 需为非负 int，收到 %d' % count)
+        if isinstance(name, str):
+            _check_no_nul(name, 'addVars 的 name 前缀')
         if obj is None or isinstance(obj, (int, float)):
             obj_values = None
         elif isinstance(obj, (list, tuple)):
@@ -669,6 +695,7 @@ class Model(object):
             raise ArgumentError('约束引用了其他 Model 的变量')
         if not isinstance(name, str):
             raise ArgumentError('name 需为 str，收到 %r' % (name,))
+        _check_no_nul(name, '约束名 name')
         indices, coeffs, n = _pack_terms(constr._terms)
         name_b = name.encode('utf-8') if name else None
         lib = _ffi._lib()
@@ -682,8 +709,9 @@ class Model(object):
         """设置目标函数。
 
         - ``expr`` 可为 Var / LinExpr / 数值（数值即纯常数目标）；
-        - ``sense`` 为 MAXIMIZE/MINIMIZE 时更新方向（透传 FFI 并写
-          problem.sense），None 保持现方向；
+        - ``sense`` 为 MAXIMIZE/MINIMIZE 时更新方向（透传 FFI，成功后才写
+          problem.sense 与 Python 镜像——FFI 拒绝目标时方向零突变），
+          None 保持现方向；
         - **合并约定**：最终目标项 = 表达式项 ∪ {未被表达式覆盖的
           ``addVar(obj=...)`` 系数项}——addVar 记录的 obj 系数在每次
           setObjective 时自动并入未被显式覆盖的列（与 gurobipy 的『完全
@@ -702,11 +730,11 @@ class Model(object):
                                 % type(expr).__name__)
         if lexpr._model is not None and lexpr._model is not self:
             raise ArgumentError('目标表达式引用了其他 Model 的变量')
-        if sense is not None:
-            if sense not in (MINIMIZE, MAXIMIZE):
-                raise ArgumentError('sense 必须为 MINIMIZE(1) 或 MAXIMIZE(-1)，'
-                                    '收到 %r' % (sense,))
-            self._sense = sense
+        if sense is not None and sense not in (MINIMIZE, MAXIMIZE):
+            raise ArgumentError('sense 必须为 MINIMIZE(1) 或 MAXIMIZE(-1)，'
+                                '收到 %r' % (sense,))
+        # 目标方向本次应写入 FFI 的值：显式 sense 优先，None 保持现方向。
+        target_sense = self._sense if sense is None else sense
         terms = dict(lexpr._terms)
         for idx, coeff in self._obj_coeff.items():
             if idx not in terms:
@@ -714,7 +742,12 @@ class Model(object):
         indices, coeffs, n = _pack_terms(terms)
         lib = _ffi._lib()
         self._call(lib.milp_ffi_set_objective, indices, coeffs, n,
-                   _SENSE_CODES[self._sense], float(lexpr.constant))
+                   _SENSE_CODES[target_sense], float(lexpr.constant))
+        # 镜像仅在 FFI 返回 0 后更新（参数三铁律同款纪律）：FFI 侧
+        # set_objective 失败（如系数非有限→9）时 problem.sense 零突变
+        # （B2），Python 镜像必须同步零突变，否则两侧方向分叉。
+        if sense is not None:
+            self._sense = sense
 
     # ---- 参数（三铁律见模块 docstring）----
 
@@ -750,6 +783,7 @@ class Model(object):
             if not isinstance(value, str):
                 raise ArgumentError("HeuristicMode 需为 str（'auto'/'on'/'off'），"
                                     '收到 %r' % (value,))
+            _check_no_nul(value, "参数 HeuristicMode 的值 value")
             self._call(lib.milp_ffi_set_param_str, name_b, value.encode('utf-8'))
         # 仅 FFI 返回 0（_call 未抛）后到达：镜像写入原始 Python 值。
         self._params[name] = value
