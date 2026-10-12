@@ -809,6 +809,17 @@ pub fn parallel_branch_and_bound(
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
+            if opts.mitm_windows > 0 && incumbent.is_none() {
+                if let Some(inc) = heuristics::subset_sum_mitm(
+                    problem,
+                    &bounds,
+                    &sol.x,
+                    opts.mitm_windows,
+                    &tol,
+                ) {
+                    maybe_update_local(sense, &mut incumbent, inc);
+                }
+            }
             // dive 扰动 Simplex 内部基：割循环入口的防御性 resolve 只恢复
             // Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
             // 的备择最优基上 GMI 分离结果不同，recorded_cuts 会偏离无预割
@@ -884,6 +895,17 @@ pub fn parallel_branch_and_bound(
                 &tol,
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
+            }
+            if opts.mitm_windows > 0 && incumbent.is_none() {
+                if let Some(inc) = heuristics::subset_sum_mitm(
+                    problem,
+                    &bounds,
+                    &sol.x,
+                    opts.mitm_windows,
+                    &tol,
+                ) {
+                    maybe_update_local(sense, &mut incumbent, inc);
+                }
             }
             // dive 扰动了 Simplex 内部基：真实界 resolve 回取（记账性）。
             sol = simplex.resolve(&bounds);

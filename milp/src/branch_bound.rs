@@ -150,6 +150,11 @@ pub struct BbOptions {
     /// 节点/迭代计、绝不按墙钟（确定性；深度 > 8 的节点不探测；根节点
     /// 按探测日程全量冷启动，见 [`probe_reliability`]）。
     pub pc_reliability_probes: usize,
+    /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
+    /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
+    /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
+    ///（CLI `--mitm=off` 供消融）。
+    pub mitm_windows: usize,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
@@ -177,6 +182,7 @@ impl Default for BbOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            mitm_windows: 8,
             branch_rule_auto: true,
         }
     }
@@ -467,6 +473,24 @@ fn sequential_bb(
         ) {
             maybe_update(sense, &mut incumbent, inc);
         }
+        // 子集和 MITM（R5-retry）：全 Eq + 全 Binary 类的最后手段——
+        // round/dive（及一切 LP 驱动机制）在该类零产出（marketsplit 大规格
+        // 200 万节点零可行）；MITM 脱离 LP 信息源精确/窗口求解。仅当廉价
+        // 启发式全部 miss（incumbent 为空）才启动，非该类恒零成本跳过。
+        if opts.heuristics
+            && opts.mitm_windows > 0
+            && incumbent.is_none()
+        {
+            if let Some(inc) = heuristics::subset_sum_mitm(
+                problem,
+                &bounds,
+                &sol.x,
+                opts.mitm_windows,
+                &tol,
+            ) {
+                maybe_update(sense, &mut incumbent, inc);
+            }
+        }
         // dive 扰动了 Simplex 内部基：割循环入口的防御性 resolve(bounds) 只
         // 恢复 Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
         // 的备择最优基上 GMI 分离结果不同，割集会系统性偏离无预割路径
@@ -601,7 +625,7 @@ fn sequential_bb(
         }
     }
 
-    // —— 根启发式（可选）：round_and_check + 双策略 dive 供应初始 incumbent ——
+    // —— 根启发式（可选）：round_and_check + dive + MITM 供应初始 incumbent ——
     if opts.heuristics {
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc);
@@ -615,6 +639,17 @@ fn sequential_bb(
             &tol,
         ) {
             maybe_update(sense, &mut incumbent, inc);
+        }
+        if opts.mitm_windows > 0 && incumbent.is_none() {
+            if let Some(inc) = heuristics::subset_sum_mitm(
+                problem,
+                &bounds,
+                &sol.x,
+                opts.mitm_windows,
+                &tol,
+            ) {
+                maybe_update(sense, &mut incumbent, inc);
+            }
         }
         // dive 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性 resolve）。
         sol = simplex.resolve(&bounds);

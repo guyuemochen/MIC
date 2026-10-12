@@ -1,0 +1,55 @@
+name marketsplit-4x40
+sense min
+vars
+  x1 binary
+  x2 binary
+  x3 binary
+  x4 binary
+  x5 binary
+  x6 binary
+  x7 binary
+  x8 binary
+  x9 binary
+  x10 binary
+  x11 binary
+  x12 binary
+  x13 binary
+  x14 binary
+  x15 binary
+  x16 binary
+  x17 binary
+  x18 binary
+  x19 binary
+  x20 binary
+  x21 binary
+  x22 binary
+  x23 binary
+  x24 binary
+  x25 binary
+  x26 binary
+  x27 binary
+  x28 binary
+  x29 binary
+  x30 binary
+  x31 binary
+  x32 binary
+  x33 binary
+  x34 binary
+  x35 binary
+  x36 binary
+  x37 binary
+  x38 binary
+  x39 binary
+  x40 binary
+obj
+  1 x1 1 x2 1 x3 1 x4 1 x5 1 x6 1 x7 1 x8
+  1 x9 1 x10 1 x11 1 x12 1 x13 1 x14 1 x15 1 x16
+  1 x17 1 x18 1 x19 1 x20 1 x21 1 x22 1 x23 1 x24
+  1 x25 1 x26 1 x27 1 x28 1 x29 1 x30 1 x31 1 x32
+  1 x33 1 x34 1 x35 1 x36 1 x37 1 x38 1 x39 1 x40
+cons
+  m1: 127 x1 125 x2 156 x3 161 x4 101 x5 105 x6 103 x7 178 x8 124 x9 167 x10 154 x11 150 x12 173 x13 183 x14 188 x15 180 x16 183 x17 183 x18 150 x19 129 x20 163 x21 187 x22 107 x23 129 x24 170 x25 123 x26 107 x27 184 x28 134 x29 108 x30 144 x31 186 x32 130 x33 134 x34 179 x35 150 x36 122 x37 103 x38 105 x39 188 x40 = 2904
+  m2: 100 x1 168 x2 156 x3 154 x4 121 x5 101 x6 182 x7 178 x8 184 x9 157 x10 163 x11 107 x12 114 x13 192 x14 108 x15 124 x16 168 x17 104 x18 156 x19 171 x20 197 x21 126 x22 160 x23 102 x24 159 x25 171 x26 123 x27 174 x28 134 x29 191 x30 131 x31 148 x32 117 x33 191 x34 117 x35 112 x36 139 x37 104 x38 104 x39 149 x40 = 2766
+  m3: 165 x1 145 x2 130 x3 152 x4 178 x5 189 x6 158 x7 159 x8 192 x9 101 x10 137 x11 126 x12 105 x13 192 x14 174 x15 138 x16 117 x17 131 x18 160 x19 180 x20 189 x21 156 x22 165 x23 150 x24 134 x25 197 x26 131 x27 195 x28 194 x29 173 x30 123 x31 153 x32 184 x33 198 x34 101 x35 190 x36 199 x37 154 x38 177 x39 115 x40 = 3071
+  m4: 150 x1 160 x2 171 x3 114 x4 124 x5 114 x6 151 x7 145 x8 144 x9 183 x10 106 x11 104 x12 111 x13 173 x14 111 x15 194 x16 102 x17 123 x18 172 x19 164 x20 122 x21 138 x22 147 x23 141 x24 114 x25 110 x26 118 x27 180 x28 137 x29 185 x30 175 x31 115 x32 172 x33 132 x34 193 x35 139 x36 150 x37 177 x38 141 x39 172 x40 = 2924
+end

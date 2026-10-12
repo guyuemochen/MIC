@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -40,7 +40,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -87,6 +87,9 @@ struct Config {
     /// 数值缩放（`--scaling=on|off`，R4）；默认 on（行列迭代几何均值，
     /// 2 的幂系数；目标与解还原原尺度，输出契约不变）。
     scaling: bool,
+    /// 子集和 MITM 可行性启发式（`--mitm=on|off`，R5-retry）；默认 on
+    ///（全 Eq + 全 Binary 类的最后手段，廉价启发式 miss 时根一次求解）。
+    mitm: bool,
 }
 
 fn main() -> ExitCode {
@@ -152,6 +155,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut heuristic_mode: Option<HeuristicModeCli> = None;
     let mut branch_rule: Option<BranchRule> = None;
     let mut scaling: Option<bool> = None;
+    let mut mitm: Option<bool> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -316,6 +320,29 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             scaling = Some(v);
+        } else if arg == "--mitm" || arg.starts_with("--mitm=") {
+            if mitm.is_some() {
+                return Err(format!("`--mitm` 重复出现（{USAGE}）"));
+            }
+            let value: String = if let Some(v) = arg.strip_prefix("--mitm=") {
+                v.to_string()
+            } else {
+                let Some(v) = args.get(index + 1) else {
+                    return Err(format!("`--mitm` 缺少参数 on|off（{USAGE}）"));
+                };
+                index += 1;
+                v.clone()
+            };
+            let v = match value.as_str() {
+                "on" => true,
+                "off" => false,
+                other => {
+                    return Err(format!(
+                        "未知 --mitm 值 `{other}`（期望 on|off，{USAGE}）"
+                    ))
+                }
+            };
+            mitm = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -341,6 +368,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
+        mitm: mitm.unwrap_or(true),      // 默认 on（R5-retry）
     })
 }
 
@@ -370,6 +398,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            mitm_windows: if config.mitm { 8 } else { 0 },
         },
         use_presolve: true,
         use_scaling: config.scaling,
@@ -583,6 +612,7 @@ mod tests {
             heuristic_mode: HeuristicModeCli::Auto,
             branch_rule: None,
             scaling: true,
+            mitm: true,
         }
     }
 
