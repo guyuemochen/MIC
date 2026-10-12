@@ -80,7 +80,7 @@ use std::time::Instant;
 use crate::cuts::{self, CutOptions};
 use crate::error::{MilpError, Result};
 use crate::heuristics::{self, Incumbent};
-use crate::model::{objective_is_integral, Problem, Sense, SolveStatus, Tolerances};
+use crate::model::{objective_is_integral, Problem, RelOp, Sense, SolveStatus, Tolerances, VarType};
 use crate::search_ctrl::{
     aggregate_bound, gap_percent, AutoDegrade, DegradePolicy, DegradeSnapshot, HeuristicConfig,
     HeuristicController, HeuristicDecision, ProgressInfo, Pseudocosts, SearchSnapshot,
@@ -94,12 +94,19 @@ pub enum BranchRule {
     MostFractional,
     /// 伪代价分支（[`crate::search_ctrl::Pseudocosts`] 打分：历史增益 ×
     /// 分数度乘积；无观测时退化为 f⁻·f⁺ 乘积规则——对强退化 LP 的顶点
-    /// 漂移比 most-fractional 鲁棒，大规模树形显著更小）。**可选规则**
-    ///（2026-10-09 复测：mknap-5x300 t1 纯被动 Pseudocost 99605 节点
-    /// 14-34s 证最优 4762 vs MostFractional 591752 节点 ~52s——第三轮
-    /// 「A 包 22.8s」实为 Pseudocost 口径的同一棵 99605 节点树；但作默认
-    /// 规则时 marketsplit-4x30 t1 倒退 ~11×，故默认仍 MostFractional，
-    /// 背包/多维背包类可显式 `--branch-rule pseudocost` 受益）。
+    /// 漂移比 most-fractional 鲁棒，大规模树形显著更小）。
+    ///
+    /// 【R3 证据裁决（定档矩阵 {mostfrac, pseudo×probes=0, pseudo×probes=8}
+    /// × 5 算例 × 3 rep，t1 release，R2 落地后口径）】旧注释「作默认时
+    /// marketsplit-4x30 倒退 ~11×」与 baseline.json 隔离实验（pseudocost
+    /// −45%）的矛盾已裁决：**11× 倒退 = pseudo×probes=8 口径**（marketsplit
+    /// 0.108→1.04s ≈ 9.6×；纯被动 pseudo 反而最优 −54%——第三轮的倒退
+    /// 实为可靠性探测预算在该算例等式行结构上的白烧）；mknap-5x300 则
+    /// pseudo×probes=8 最优（−25% 证最优墙钟）。故默认走类自适应
+    /// （[`BbOptions::branch_rule_auto`] + [`detect_pseudocost_favorable`]）：
+    /// 背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数 ≤ 64）⇒
+    /// Pseudocost + probes=8，其余 ⇒ MostFractional；marketsplit（等式行）
+    /// 不命中类，探测白烧路径不进默认。
     /// 可靠性冷启动见 [`BbOptions::pc_reliability_probes`]。
     Pseudocost,
 }
@@ -140,8 +147,16 @@ pub struct BbOptions {
     /// 仅 `branch_rule = Pseudocost` 时生效：对 `n_obs < η` 的分数候选
     /// 做 down+up 双向探测（收紧→resolve→record→恢复）冷启动伪代价
     /// 统计。默认 8；0 = 纯被动（只靠子节点 resolve 被动记账）。预算按
-    /// 节点/迭代计、绝不按墙钟（确定性；深度 > 8 的节点不探测）。
+    /// 节点/迭代计、绝不按墙钟（确定性；深度 > 8 的节点不探测；根节点
+    /// 按探测日程全量冷启动，见 [`probe_reliability`]）。
     pub pc_reliability_probes: usize,
+    /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
+    /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
+    /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
+    /// ≤ 64）⇒ Pseudocost + `pc_reliability_probes ≥ 8`，否则
+    /// MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
+    /// 优先）。默认 true。
+    pub branch_rule_auto: bool,
 }
 
 impl Default for BbOptions {
@@ -162,6 +177,7 @@ impl Default for BbOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            branch_rule_auto: true,
         }
     }
 }
@@ -259,6 +275,44 @@ pub fn branch_and_bound(problem: &Problem, opts: &BbOptions, tol: Tolerances) ->
     branch_and_bound_controlled(problem, opts, &SearchControl::default(), tol, None)
 }
 
+/// Pseudocost 类自适应默认的结构检测（R3）：**全变量 Binary、全部约束为
+/// 正系数 Le 行、行数 ≤ 64** 同时成立——强结构特征覆盖 knapsack-*/mknap-*
+/// 家族（0-1 背包/多维背包）；setcover（Ge 行 + 混合符号目标语义）、
+/// marketsplit（等式行）、milp-mixed（连续列 + 等式行）均不命中，回落
+/// MostFractional。条件取强特征交集，宁缺勿滥（置信不足时回落 mostfrac，
+/// 风险提示原文）。
+pub fn detect_pseudocost_favorable(problem: &Problem) -> bool {
+    if problem.vars.is_empty() || problem.vars.iter().any(|v| v.var_type != VarType::Binary) {
+        return false; // 非「全变量 Binary」
+    }
+    if problem.constraints.is_empty() || problem.constraints.len() > 64 {
+        return false; // 行数 0（纯界问题，无分支树可言）或 > 64
+    }
+    problem.constraints.iter().all(|con| {
+        con.op == RelOp::Le && con.expr.terms.iter().all(|&(_, a)| a > 0.0)
+    })
+}
+
+/// 求解入口解析类自适应默认（R3）：`branch_rule_auto = true` 时按
+/// [`detect_pseudocost_favorable`] 翻转有效规则（命中 ⇒ Pseudocost 且
+/// `pc_reliability_probes ≥ 8`；未命中 ⇒ MostFractional），返回解析后的
+/// 具体选项（`branch_rule_auto` 置 false，幂等）；显式指定
+/// （`branch_rule_auto = false`）原样透传——覆盖优先。
+fn resolve_branch_rule_defaults(problem: &Problem, opts: &BbOptions) -> BbOptions {
+    if !opts.branch_rule_auto {
+        return *opts;
+    }
+    let mut resolved = *opts;
+    resolved.branch_rule_auto = false;
+    if detect_pseudocost_favorable(problem) {
+        resolved.branch_rule = BranchRule::Pseudocost;
+        resolved.pc_reliability_probes = resolved.pc_reliability_probes.max(8);
+    } else {
+        resolved.branch_rule = BranchRule::MostFractional;
+    }
+    resolved
+}
+
 /// 受控入口：threads ≤ 1 走纯顺序路径；threads ≥ 2 组装
 /// [`crate::parallel_bb::ParallelConfig`] 委托
 /// [`crate::parallel_bb::parallel_branch_and_bound`] 并
@@ -280,6 +334,9 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    // R3 类自适应默认：入口一次解析（顺序/并行两路共用；worker 收到的
+    // 即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
+    let opts = &resolve_branch_rule_defaults(problem, opts);
     if ctrl.threads >= 2 {
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
@@ -1066,6 +1123,10 @@ fn tighten_child(
 const PC_RELIABILITY_ETA: u32 = 4;
 /// 探测深度门：深度超过该值的节点不再探测（冷启动收益集中在浅层）。
 const PC_PROBE_MAX_DEPTH: usize = 8;
+/// 根节点全量冷启动的候选数上限（R3 探测日程）：根预算 = 2×min(分数候选
+/// 数, 该值) 次 resolve——强分支收益集中在浅层，根一次全量初始化即让
+/// 全树统计可靠；上限防止大实例（数百分数变量）根探测白烧。
+const PC_ROOT_PROBE_MAX_CANDIDATES: usize = 64;
 
 /// P1-4 可靠性强分支冷启动：对 `n_obs < η` 的分数候选（按当前伪代价得分
 /// 降序、并列最小下标——先探测规则认为最值得分支的变量）做 down+up 双向
@@ -1073,10 +1134,13 @@ const PC_PROBE_MAX_DEPTH: usize = 8;
 /// 原界（探测不留任何状态）。
 ///
 /// 预算与门控（**确定性，绝不读墙钟**——规避自适应/降级层的时间面）：
-/// - 每节点探测 resolve 次数 ≤ `opts.pc_reliability_probes`（默认 8；
-///   0 = 纯被动，调用方已按 branch_rule = Pseudocost 门控）；
+/// - **探测日程（R3）**：根节点（depth 0）全量冷启动——预算 =
+///   2×min(分数候选数, [`PC_ROOT_PROBE_MAX_CANDIDATES`])（每候选 down+up
+///   两次 resolve），一次初始化让全树统计可靠；深度 1..=8 维持每节点
+///   预算 `opts.pc_reliability_probes`（默认 8）；深度 >
+///   [`PC_PROBE_MAX_DEPTH`] 不探测；
 /// - 一个候选耗 down+up 两次 resolve（方向对称），剩余预算 < 2 即停；
-/// - 深度 > [`PC_PROBE_MAX_DEPTH`] 的节点不探测；
+/// - 0 = 纯被动（调用方已按 branch_rule = Pseudocost 门控）；
 /// - 探测 resolve 不计 nodes（记账性，同 dive 回取口径），其迭代数如实
 ///   累计在 Simplex 统计里。
 ///
@@ -1123,7 +1187,13 @@ pub(crate) fn probe_reliability(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    let mut budget = opts.pc_reliability_probes;
+    // 探测日程（R3）：根全量（候选数截到 PC_ROOT_PROBE_MAX_CANDIDATES），
+    // 深度 1-8 维持每节点预算。
+    let mut budget = if depth == 0 {
+        2 * candidates.len().min(PC_ROOT_PROBE_MAX_CANDIDATES)
+    } else {
+        opts.pc_reliability_probes
+    };
     for &(j, v, _) in &candidates {
         if budget < 2 {
             break; // 一个候选需 down+up 两次 resolve（方向对称成对探测）
@@ -1564,6 +1634,104 @@ mod tests {
     /// 默认容差。
     fn tol() -> Tolerances {
         Tolerances::default()
+    }
+
+    // ===================== R3：类自适应默认 ======================
+
+    /// （R3）结构检测：全 Binary + 全正系数 Le 行 + 行数 ≤ 64 命中
+    /// （背包类）；连续列 / 等式行 / Ge 行 / 混合符号系数 / 行数超限均回落。
+    #[test]
+    fn detect_pseudocost_favorable_classification() {
+        // 命中：2 Binary + 1 条正系数 Le 行（背包）。
+        let mut p = Problem::new("k", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 7.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0)
+            .unwrap();
+        assert!(detect_pseudocost_favorable(&p));
+        // 排除：Integer 变量（非全 Binary）。
+        let mut q = Problem::new("int", Sense::Maximize);
+        q.add_var("a", VarType::Integer).unwrap();
+        q.set_var_bounds(0, 0.0, 5.0).unwrap();
+        q.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        q.add_constraint(None, vec![(0, 2.0)], RelOp::Le, 7.0).unwrap();
+        assert!(!detect_pseudocost_favorable(&q));
+        // 排除：连续列。
+        let mut c = p.clone();
+        c.vars.push(crate::model::Variable {
+            name: "t".into(),
+            var_type: VarType::Continuous,
+            lb: 0.0,
+            ub: 5.0,
+        });
+        assert!(!detect_pseudocost_favorable(&c));
+        // 排除：Ge 行（setcover 类）。
+        let mut g = p.clone();
+        g.constraints[0].op = RelOp::Ge;
+        assert!(!detect_pseudocost_favorable(&g));
+        // 排除：Eq 行（marketsplit 类）。
+        let mut e = p.clone();
+        e.constraints[0].op = RelOp::Eq;
+        assert!(!detect_pseudocost_favorable(&e));
+        // 排除：负系数。
+        let mut n = p.clone();
+        n.constraints[0].expr.terms[0].1 = -5.0;
+        assert!(!detect_pseudocost_favorable(&n));
+        // 排除：行数 > 64。
+        let mut many = Problem::new("many", Sense::Maximize);
+        many.vars.push(crate::model::Variable {
+            name: "a".into(),
+            var_type: VarType::Binary,
+            lb: 0.0,
+            ub: 1.0,
+        });
+        many.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        for i in 0..65 {
+            many.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0 + i as f64)
+                .unwrap();
+        }
+        assert!(!detect_pseudocost_favorable(&many));
+        let mut few = many.clone();
+        few.constraints.truncate(64);
+        assert!(detect_pseudocost_favorable(&few));
+    }
+
+    /// （R3）入口解析：auto=true 命中类 ⇒ Pseudocost + probes ≥ 8；未命中 ⇒
+    /// MostFractional；显式（auto=false）原样透传（覆盖优先）。
+    #[test]
+    fn resolve_branch_rule_defaults_paths() {
+        let mut p = Problem::new("k", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 7.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0)
+            .unwrap();
+        let mut q = p.clone();
+        q.constraints[0].op = RelOp::Eq; // 非命中类
+        // auto + 命中 ⇒ Pseudocost + probes 抬到 ≥8。
+        let r = resolve_branch_rule_defaults(&p, &BbOptions::default());
+        assert_eq!(r.branch_rule, BranchRule::Pseudocost);
+        assert!(!r.branch_rule_auto); // 解析后幂等
+        assert!(r.pc_reliability_probes >= 8);
+        // auto + 未命中 ⇒ MostFractional。
+        let r2 = resolve_branch_rule_defaults(&q, &BbOptions::default());
+        assert_eq!(r2.branch_rule, BranchRule::MostFractional);
+        assert!(!r2.branch_rule_auto);
+        // 显式覆盖优先：pseudo+probes0 原样透传（纯被动不被抬升）。
+        let mut ex = BbOptions::default();
+        ex.branch_rule = BranchRule::Pseudocost;
+        ex.pc_reliability_probes = 0;
+        ex.branch_rule_auto = false;
+        let r3 = resolve_branch_rule_defaults(&p, &ex);
+        assert_eq!(r3.branch_rule, BranchRule::Pseudocost);
+        assert_eq!(r3.pc_reliability_probes, 0); // 显式 0 不被抬升
+        // 显式 mostfrac 在命中类上仍 mostfrac。
+        let mut ex2 = BbOptions::default();
+        ex2.branch_rule = BranchRule::MostFractional;
+        ex2.branch_rule_auto = false;
+        let r4 = resolve_branch_rule_defaults(&p, &ex2);
+        assert_eq!(r4.branch_rule, BranchRule::MostFractional);
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为
@@ -2349,7 +2517,9 @@ mod tests {
         // 回退）MostFractional 固定下行先探索：根下行（a≤0，LP 14）先探索
         // 记 incumbent=7 后其 est 14 留栈；上行子树继续至 b≤0 记 incumbent
         // 提升；触发时刻证据口径 ⇒ gap=46.67% ≤ 50 触发。（Pseudocost +
-        // best-estimate 序下为 50%，见 --branch-rule pseudocost。）
+        // best-estimate 序下为 50%，见 --branch-rule pseudocost。R3 类自适应
+        // 默认会把本例（全 Binary + 正系数 Le 单行）翻到 Pseudocost——本测试
+        // 钉的是 gap 机制而非默认规则，固定 MostFractional 显式覆盖。）
         let mut p = Problem::new("k2", Sense::Maximize);
         p.add_var("a", VarType::Binary).unwrap();
         p.add_var("b", VarType::Binary).unwrap();
@@ -2360,7 +2530,10 @@ mod tests {
             mipgap_percent: Some(50.0),
             ..SearchControl::default()
         };
-        let r = branch_and_bound_controlled(&p, &plain_opts(), &ctrl, tol(), None).unwrap();
+        let mut opts = plain_opts();
+        opts.branch_rule = BranchRule::MostFractional;
+        opts.branch_rule_auto = false; // 显式覆盖（R3）
+        let r = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
         assert_eq!(r.status, SolveStatus::LimitReached);
         assert!(r.gap_terminated);
         let g = crate::search_ctrl::gap_percent(

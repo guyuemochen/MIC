@@ -78,10 +78,12 @@ struct Config {
     mipgap_percent: Option<f64>,
     /// 启发式模式；默认 Auto。
     heuristic_mode: HeuristicModeCli,
-    /// 分支规则（`--branch-rule`）；默认 MostFractional（与 BbOptions::default
-    /// 同源——复核表明该口径在全部已验证基准上最优）；pseudocost 含可靠性
-    /// 冷启动（`--pc-probes` 仅 bench 探针暴露）。
-    branch_rule: BranchRule,
+    /// 分支规则（`--branch-rule`）；默认 None = 类自适应（R3：求解入口按
+    /// 结构类检测解析——全 Binary + 全正系数 Le 行 + 行数 ≤ 64 ⇒ Pseudocost
+    /// + 可靠性冷启动 8，否则 MostFractional）；显式 most_fractional/
+    /// pseudocost 覆盖优先（pseudocost 含可靠性冷启动，`--pc-probes` 仅
+    /// bench 探针暴露）。
+    branch_rule: Option<BranchRule>,
 }
 
 fn main() -> ExitCode {
@@ -308,7 +310,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
         // 节点数 ⇒ 原算例 auto ≡ on，见 README）。
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
-        branch_rule: branch_rule.unwrap_or(BranchRule::MostFractional),
+        branch_rule, // None = 类自适应默认（R3）
     })
 }
 
@@ -325,7 +327,8 @@ fn solve_options_from(config: &Config) -> SolveOptions {
     SolveOptions {
         tol: Tolerances::default(),
         bb: BbOptions {
-            branch_rule: config.branch_rule,
+            branch_rule: config.branch_rule.unwrap_or(BranchRule::MostFractional),
+            branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
             node_rule: NodeRule::DepthFirst,
             node_limit: 2_000_000,
             time_limit_ms: config
@@ -547,7 +550,7 @@ mod tests {
             log_secs: None,
             mipgap_percent: None,
             heuristic_mode: HeuristicModeCli::Auto,
-            branch_rule: BranchRule::MostFractional,
+            branch_rule: None,
         }
     }
 
@@ -838,9 +841,10 @@ mod tests {
         assert_eq!(opts.bb.dive_max_fixes, 4096);
         assert_eq!(opts.bb.prune_abs, 1e-9);
         assert_eq!(opts.bb.prune_rel, 1e-9);
-        // 默认分支规则 MostFractional（2026-10 复核后回退；Pseudocost 经
-        // --branch-rule pseudocost 显式启用，含可靠性冷启动预算 8）。
+        // 默认分支规则：类自适应（R3）——字段基线 MostFractional + auto=true
+        //（求解入口按结构类检测翻转；显式 --branch-rule 关 auto）。
         assert_eq!(opts.bb.branch_rule, BranchRule::MostFractional);
+        assert!(opts.bb.branch_rule_auto);
         assert_eq!(opts.bb.pc_reliability_probes, 8);
         assert!(opts.use_presolve);
     }

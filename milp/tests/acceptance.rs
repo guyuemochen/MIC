@@ -837,10 +837,18 @@ fn acceptance_cli_heuristic_on_identical() {
     // 缩，割前顶点补跑一轮 round_and_check + dive 后根 incumbent 511 ⇒
     // 剪枝提前，201→184（目标不变）。）
     // （2026-10 复核后默认规则回退 MostFractional：184→159。）
+    // （R3 类自适应默认：hard-knapsack-12 命中背包类检测（全 Binary +
+    // 正系数 Le 单行）⇒ 默认翻 Pseudocost+probes8（定档矩阵实测该口径
+    // 在背包类上净优：mknap-5x300 −25% 证最优墙钟；本例树形 159→196，
+    // 目标 523 恒为已知最优——钉值随默认规则演进重钉；显式复现旧行：
+    // --branch-rule most_fractional。）
     assert_eq!(
         stdout,
-        "status = optimal\nnodes = 159\nobjective = 523.000000\n",
-        "hard-knapsack-12 --heuristic-mode on 输出（默认 MostFractional 确定性基线）"
+        "status = optimal
+nodes = 196
+objective = 523.000000
+",
+        "hard-knapsack-12 --heuristic-mode on 输出（R3 类自适应默认确定性基线）"
     );
 }
 

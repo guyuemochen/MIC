@@ -76,7 +76,7 @@ const USAGE: &str = "用法：profile_stats <算例路径> [--threads N] [--time
 const MAX_THREADS: usize = 1024;
 
 /// 命令行配置（默认值 = CLI 默认的测量复刻：threads=1、无时限、mostfrac、
-/// pc-probes=0、root-cuts on）。
+/// pc-probes=8（复刻库默认）、root-cuts on）。
 #[derive(Debug)]
 struct Config {
     /// 算例文件路径。
@@ -85,9 +85,11 @@ struct Config {
     threads: usize,
     /// 时间上限秒（None = 不限）；经 saturating_mul(1000) 映射毫秒。
     time_limit_secs: Option<u64>,
-    /// 分支规则旗标；默认 mostfrac（CLI 默认 MostFractional）。
-    branch_rule: BranchRule,
-    /// Pseudocost 可靠性探针数；默认 0 = 纯被动。B 合入前非 0 即报错退出。
+    /// 分支规则旗标；默认 None = 类自适应（R3，复刻 CLI 默认；求解入口按
+    /// 结构类检测解析）。显式 mostfrac/pseudo 覆盖优先。
+    branch_rule: Option<BranchRule>,
+    /// Pseudocost 可靠性探针数；默认 8（复刻 BbOptions::pc_reliability_probes
+    /// 库默认；0 = 纯被动）。R3 接线到 BbOptions（此前误留包 B 未合入守卫）。
     pc_probes: usize,
     /// 根割开关；默认 on（CLI 默认 root_cuts=true）。
     root_cuts: bool,
@@ -102,16 +104,6 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    // B 合入前守卫：pc_reliability_probes 字段尚不存在，非 0 值必然静默无效——
-    // 直接拒绝，避免 bench 拿到假数据（B 合入后由 B 接线并移除此守卫）。
-    if config.pc_probes != 0 {
-        eprintln!(
-            "error: `--pc-probes {}` 需要 BbOptions::pc_reliability_probes（包 B 尚未合入）；\
-             B 合入前仅接受 0（纯被动 Pseudocost）",
-            config.pc_probes
-        );
-        return ExitCode::from(1);
-    }
     let problem = match load_instance(Path::new(&config.instance_path)) {
         Ok(problem) => problem,
         Err(error) => {
@@ -303,8 +295,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         instance_path,
         threads: threads.unwrap_or(1),
         time_limit_secs,
-        branch_rule: branch_rule.unwrap_or(BranchRule::MostFractional),
-        pc_probes: pc_probes.unwrap_or(0),
+        branch_rule, // None = 类自适应（R3，复刻 CLI 默认）
+        pc_probes: pc_probes.unwrap_or(8),
         root_cuts: root_cuts.unwrap_or(true),
     })
 }
@@ -319,7 +311,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
 fn solve_options_from(config: &Config) -> SolveOptions {
     SolveOptions {
         bb: BbOptions {
-            branch_rule: config.branch_rule,
+            branch_rule: config.branch_rule.unwrap_or(BranchRule::MostFractional),
+            branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
+            pc_reliability_probes: config.pc_probes,
             root_cuts: config.root_cuts,
             time_limit_ms: config
                 .time_limit_secs
