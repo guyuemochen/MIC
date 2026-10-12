@@ -928,9 +928,11 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
         seq.objective
     );
     assert!(seq.stats.nodes > 1, "搜索越过根节点（实际 {} 节点）", seq.stats.nodes);
-    // 割丢弃如实（该算例当前必然触发回退；若割行为变化导致不再触发，
-    // 本断言随 A+B 叠加实测重钉）。
-    assert_eq!(seq.stats.cuts, 0, "回退丢弃根割 ⇒ cuts 如实清零");
+    // 割保留如实（R8 重钉：割循环收紧预算 + 回滚语义——失败轮弃增量割、
+    // 已提交割保留，不再触发 branch_bound 的整树回退。旧钉值 0 对应
+    // 『回退丢弃全部根割』，R8 后实测 cuts=23（已提交割数）、树 45→13
+    // 节点；目标 276 恒为已知最优不变）。
+    assert_eq!(seq.stats.cuts, 23, "回滚语义：已提交割保留（R8 重钉）");
 
     // 记账完整：lp_iterations 含重建前迭代（根 LP + 割循环）。
     let opts_nocuts = SolveOptions {

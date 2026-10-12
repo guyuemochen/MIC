@@ -1706,6 +1706,9 @@ pub fn cut_loop_recorded(
         if batch.is_empty() {
             break;
         }
+        let applied_before = applied;
+        let ledger_before = ledger.len();
+        let recorded_before = recorded.len();
         for cut in batch {
             let index = s.add_row(&cut.terms, RelOp::Le, cut.rhs)?;
             ledger.push(CutRecord {
@@ -1716,7 +1719,19 @@ pub fn cut_loop_recorded(
             recorded.push(cut);
             applied = applied.saturating_add(1);
         }
+        // R8（③）：割循环 resolve 收紧预算——暖启动（对偶修复快路径）下
+        // 收敛轮实测 ~1.5k 迭代，退化爬行轮放任到默认上限会白烧（setcover
+        // 算例第 5 轮 10000 迭代打满后整树回退丢全部割）。预算 = 已提交割
+        // 行数感知的收紧式 max(3000, 12×(m+n))；超限走下方回滚而非终态
+        // 传播。Infeasible 信号**不受影响**（Phase-1 判定在预算内完成，
+        // 不可行终局照旧第一时间返回——预算不吞真实不可行）。
+        let m_now = s.num_rows();
+        let n_now = problem.vars.len();
+        s.set_iter_limit_hint(Some(
+            3_000u64.max(12u64.saturating_mul((m_now + n_now) as u64)),
+        ));
         status = s.resolve(bounds).status;
+        s.set_iter_limit_hint(None);
         if status == LpStatus::Infeasible {
             // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
             // 整数可行解，而该集合为空时任意割皆有效——割后根 LP 不可行
@@ -1725,8 +1740,27 @@ pub fn cut_loop_recorded(
             // 断言只对『存在整数可行解』的问题成立。
             return Ok((applied, LpStatus::Infeasible, recorded));
         }
+        if status == LpStatus::IterationLimit {
+            // R8（③）回滚语义：本轮增量割使 resolve 超收紧预算——弃本轮
+            // 增量割，重建冷 Simplex + 重放**已提交**割 + resolve，恢复到
+            // 本轮前的 Optimal 根态后正常收尾（status = Optimal）。既有割
+            // 的根界保留（树搜索受益），不再以 limit_reached 无解终态传播。
+            // 回滚后状态与上一轮末逐字节一致（确定性冷重建路径 + 同割集），
+            // 终态必为 Optimal；防御性保留非 Optimal 映射（不冒充）。
+            ledger.truncate(ledger_before);
+            recorded.truncate(recorded_before);
+            applied = applied_before;
+            let mut rebuilt = Simplex::new(problem, *tol)?;
+            for rec in ledger.iter() {
+                rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
+            }
+            let st = rebuilt.resolve(bounds).status;
+            *s = rebuilt;
+            status = st;
+            break;
+        }
         if status != LpStatus::Optimal {
-            break; // Unbounded/IterationLimit：如实返回终态
+            break; // Unbounded：如实返回终态
         }
     }
     Ok((applied, status, recorded))

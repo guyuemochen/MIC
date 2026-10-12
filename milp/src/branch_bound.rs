@@ -441,13 +441,30 @@ fn sequential_bb(
     // 根 solve 非 Optimal ⇒ 不进割循环与启发式（gomory_cuts 的前提是 Optimal
     // 表格），直接按 (a)/(b)/(c) 终局。
     if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+        // R8（③）终态 incumbent 提取：根 solve 以 IterationLimit 收场时，
+        // Phase-2 中断点的基是**原始可行**的（比值测试每步保持 rhs 在界内、
+        // Phase-1 已完成），x 非最优但可行——round_and_check（原始问题逐约
+        // 杆 + 整数性复核，不依赖表格语义）通过则作为 incumbent 随
+        // LimitReached 携带返回：终态诚实不变（仍 limit_reached），但不再
+        // 以零 incumbent 传播（setcover-300x600/400x800 类根 LP 上限锁的
+        // 失败模式）。Infeasible/Unbounded 不提取（不可行信号不得吞）；提取
+        // 失败（分数点取整违反约束）如实保持无 incumbent。
+        let extracted = if status == SolveStatus::LimitReached
+            && sol.status == LpStatus::IterationLimit
+            && opts.heuristics
+        {
+            heuristics::round_and_check(problem, &bounds, &sol.x, &tol)
+        } else {
+            None
+        };
         // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
         if let Some(h) = hooks {
             emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
         }
+        let extracted_pair = extracted.map(|inc| (inc.objective, inc.values));
         return Ok(finish(
             status,
-            None,
+            extracted_pair,
             &mut stats,
             &simplex,
             start,

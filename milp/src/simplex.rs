@@ -50,9 +50,14 @@
 //!   （price / dual_feasible / dual_repair 每轮迭代顶部）批量重算
 //!   （compute_rc_batch：值级等价于逐列现算，不增量维护，无定价漂移）；
 //!   每 200 次主元用原始数据重算 B⁻¹b；NaN/Inf 立即按数值失败处理。迭代
-//!   上限 max(10_000, 20×(m+n)) ⇒ IterationLimit（诚实上报，不冒充
-//!   Optimal）。主循环每迭代零分配：c_b/检验数/比值候选/消元系数/主元行
-//!   非零下标/界交换全部走容量复用暂存字段。
+//!   上限 max(10_000, 20×(m+n))（割循环内经 set_iter_limit_hint 收紧为
+//!   max(3_000, 12×(m+n))，R8）⇒ IterationLimit（诚实上报，不冒充
+//!   Optimal）。Bland 释放（R8）：停滞触发的 Bland 在非退化步（目标真
+//!   改善 ⇒ 已脱离触发退化区）+ 驻留满 8 步后回 Dantzig 定价（每次调用
+//!   最多 64 次重入，预算耗尽后 Bland 永久驻留——无循环定理的终止路径
+//!   恒在场）——Bland 的最小下标入基在宽表上单步进展极小，纯 Bland 爬行
+//!   实测打满迭代上限（setcover 类根 LP）。主循环每迭代零分配：c_b/检验
+//!   数/比值候选/消元系数/主元行非零下标/界交换全部走容量复用暂存字段。
 //!
 //! # 表格约定（实现细节）
 //! - 列空间 = [结构列 | 松弛列 | 人工列]，人工列不外露（`column_layout`
@@ -86,6 +91,19 @@ use crate::model::{Problem, RelOp, Sense, Tolerances};
 
 /// 连续退化迭代阈值：超过后切入 Bland 模式（反循环）。
 const DEGENERATE_STREAK_LIMIT: u32 = 50;
+/// Bland 释放的最小驻留步数（R8）：Bland 驻留至少该步数且出现非退化步
+///（目标真改善，证明已脱离当前退化区）后回到 Dantzig 定价。Bland 的
+/// 最小下标入基在宽表（setcover 类 ncols ≫ m）上单步进展极小——纯退化
+/// 停滞触发 Bland 后永久驻留会在 3×(m+n) 后爬行至迭代上限（setcover
+/// 300x600/400x800 根 LP 实测：Phase-2 以 bland=true 打满 18000/24000
+/// 上限、零 incumbent 传播）。释放规则只作用于**停滞触发**的 Bland；
+/// 总迭代触发（iter_call > 3×(m+n)）的 Bland 永久生效（原有保底语义
+/// 不变），且每次调用最多释放 [`BLAND_REARM_MAX`] 次——重入预算耗尽后
+/// Bland 永久驻留，保证 Bland 无循环定理的终止路径恒在场。
+const BLAND_DWELL: u32 = 8;
+/// 每次 solve/resolve 调用的 Bland 释放重入预算（R8）：耗尽后停滞触发的
+/// Bland 也永久驻留（终止保底）。
+const BLAND_REARM_MAX: u32 = 64;
 /// 主元计数刷新间隔：每累计本次主元次数重算一次 B⁻¹b 抑制漂移。
 const REFRESH_INTERVAL: u64 = 200;
 /// Bland 触发的总迭代因子：本次调用总迭代 > BLAND_TOTAL_FACTOR×(m+n) 触发。
@@ -332,8 +350,22 @@ pub struct Simplex {
     iter_call: u64,
     /// 自上次有效改善起的连续退化迭代数。
     degenerate_streak: u32,
-    /// Bland 模式（本次调用内永久生效）。
+    /// Bland 模式。R8 起分两种：总迭代触发的永久 Bland（`bland_permanent`，
+    /// 本次调用内不释放）与停滞触发的可释放 Bland（非退化步 + 驻留满
+    /// [`BLAND_DWELL`] 后回 Dantzig，重入预算 [`BLAND_REARM_MAX`]）。
     bland: bool,
+    /// 总迭代触发（iter_call > 3×(m+n)）的永久 Bland 置位。
+    bland_permanent: bool,
+    /// Bland 已驻留步数（释放的驻留门）。
+    bland_dwell: u32,
+    /// 单次调用迭代上限提示（R8，割循环收紧用；None = 默认公式）。
+    /// 割循环每轮 resolve 是暖启动（对偶修复快路径，收敛轮实测 ~1.5k 迭代），
+    /// 新割行引发的 Bland 爬行若放任到默认上限 max(10k, 20(m+n)) 会白烧
+    /// （setcover-100x150 第 5 轮实测 10000 迭代打满后整树回退）。收紧后
+    /// 失败轮更早中止，由 cuts.rs 的回滚语义保留已提交割。
+    iter_limit_hint: Option<u64>,
+    /// 本次调用已释放 Bland 的重入次数。
+    bland_rearms: u32,
     /// 距上次 B⁻¹b 重算的主元数。
     pivots_since_refresh: u64,
     // —— 热路径暂存（容量跨迭代/跨调用复用，消除每迭代分配）——
@@ -491,6 +523,10 @@ impl Simplex {
             iter_call: 0,
             degenerate_streak: 0,
             bland: false,
+            bland_permanent: false,
+            bland_dwell: 0,
+            bland_rearms: 0,
+            iter_limit_hint: None,
             pivots_since_refresh: 0,
             rc_scratch: Vec::new(),
             cb_scratch: Vec::new(),
@@ -1882,12 +1918,17 @@ impl Simplex {
     fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
         let m = self.basis.len();
         let n = self.num_structural;
-        let limit: u64 = 10_000.max(20u64.saturating_mul((m + n) as u64));
+        let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
+        let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
         loop {
             if self.iter_call >= limit {
                 return PhaseOutcome::LimitReached;
             }
+            // 初始 false 仅在 Flip/Leave 两臂都被覆盖（其余臂直接 return），
+            // 尾部释放检查读取的是本步结果——初始值语法上必需但语义上不达。
+            #[allow(unused_assignments)]
+            let mut t_nondegenerate = false;
             let (q, delta) = match self.price(phase) {
                 Pricing::Failed(msg) => return PhaseOutcome::Failed(msg),
                 Pricing::Optimal => return PhaseOutcome::Optimal,
@@ -1904,6 +1945,7 @@ impl Simplex {
                     );
                 }
                 Step::Flip { t } => {
+                    t_nondegenerate = t > self.tol.feasibility;
                     self.do_flip(q, delta, t);
                     self.count_step(t);
                 }
@@ -1915,6 +1957,7 @@ impl Simplex {
                             self.tol.pivot
                         ));
                     }
+                    t_nondegenerate = t > self.tol.feasibility;
                     self.do_pivot(q, row, delta, t, hit_upper);
                     self.count_step(t);
                     self.pivots_since_refresh = self.pivots_since_refresh.saturating_add(1);
@@ -1929,9 +1972,35 @@ impl Simplex {
             if self.rhs.iter().any(|v| !v.is_finite()) {
                 return PhaseOutcome::Failed("基变量值出现 NaN/Inf".to_string());
             }
-            if self.degenerate_streak > DEGENERATE_STREAK_LIMIT || self.iter_call > bland_total {
+            if self.iter_call > bland_total {
+                // 总迭代触发：永久 Bland（保底终止路径，不释放）。
+                self.bland = true;
+                self.bland_permanent = true;
+            } else if self.degenerate_streak > DEGENERATE_STREAK_LIMIT {
+                // 停滞触发：可释放 Bland（见 BLAND_DWELL 文档——setcover 类
+                // 宽表上纯 Bland 爬行实测打满迭代上限）。
                 self.bland = true;
             }
+            self.bland_release_step(t_nondegenerate);
+        }
+    }
+
+    /// Bland 释放记账（R8，run_phase 每步尾部调用）：`t_nondegenerate` =
+    /// 本步非退化（目标真改善）。驻留满 [`BLAND_DWELL`] 且非退化 ⇒ 回
+    /// Dantzig 定价（重入预算内）；永久 Bland（总迭代触发）与预算耗尽后
+    /// 不释放——Bland 无循环定理的终止路径恒在场。
+    fn bland_release_step(&mut self, t_nondegenerate: bool) {
+        if self.bland
+            && self.bland_dwell >= BLAND_DWELL
+            && t_nondegenerate
+            && self.bland_rearms < BLAND_REARM_MAX
+        {
+            self.bland = false;
+            self.bland_permanent = false;
+            self.bland_rearms += 1;
+            self.bland_dwell = 0;
+        } else if self.bland {
+            self.bland_dwell = self.bland_dwell.saturating_add(1);
         }
     }
 
@@ -2375,7 +2444,16 @@ impl Simplex {
         self.iter_call = 0;
         self.degenerate_streak = 0;
         self.bland = false;
+        self.bland_permanent = false;
+        self.bland_dwell = 0;
+        self.bland_rearms = 0;
         self.pivots_since_refresh = 0;
+    }
+
+    /// 设置单次调用迭代上限提示（R8，割循环专用；None 恢复默认公式）。
+    /// 只影响后续 solve/resolve 调用的上限判定，不影响其他语义。
+    pub fn set_iter_limit_hint(&mut self, hint: Option<u64>) {
+        self.iter_limit_hint = hint;
     }
 
     /// 构造 LpSolution：提取 x（基本值在容差内夹回界）、按 x 重算目标
