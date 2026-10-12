@@ -436,9 +436,11 @@ fn acceptance_cli_default_output_identical() {
         // 规则换 Pseudocost（含可靠性冷启动探测）后节点数随分支/压栈序
         // 变化（A+B 叠加实测钉值），目标 40 精确不变。
         // （WP6 包 A 复核：本包根割改动（4×40 + c-MIR/隐含界/提升）后实测
-        // 仍为 7；禁用新割复算（同轮数纯 GMI+覆盖）亦为 7 ⇒ 该值对割族
-        // 不敏感，钉值稳定。）
-        ("milp-wolsey-2", "status = optimal\nnodes = 7\nobjective = 40.000000\n", 0),
+        // 仍为 7；禁用新割复算（同轮数纯 GMI+覆盖）亦为 7 ⇒ 该值当时对
+        // 割族不敏感。R2-retry 聚合 MIR（「表格行⊕原始行」GMI 化）入批后
+        // 根割界直接收紧到整数最优 40 ⇒ 根节点即证最优（nodes 7→1），
+        // 目标 40 恒为已知整数最优不变——钉值随本轮割族增强重钉。）
+        ("milp-wolsey-2", "status = optimal\nnodes = 1\nobjective = 40.000000\n", 0),
         ("milp-mixed-5", "status = optimal\nnodes = 1\nobjective = 29.000000\n", 0),
         ("infeasible-tiny", "status = infeasible\n", 2),
         ("unbounded-tiny", "status = unbounded\n", 3),
@@ -590,12 +592,13 @@ fn acceptance_cli_progress_log_format() {
     // milp-wolsey-2：根 dive 现在成功（深预算 + 一步回退）⇒ 首行即有
     // incumbent（2026-10 启发式增强前为 none/gap=inf——当时 8 次修复
     // 预算在断点链上必耗尽；数值 34→37 随根割族增强漂移，A+B 叠加实测
-    // 钉值）。
+    // 钉值；R2-retry 聚合 MIR 入批后根割界收紧到整数最优 40 ⇒ 首行
+    // incumbent 37→40，仍为已知整数最优、随本轮割族增强重钉）。
     let (code, stdout) = cli(&[&instance_path("milp-wolsey-2"), "--log-secs", "5"]);
     assert_eq!(code, Some(0), "{stdout}");
     let tail = first_progress_tail(&stdout);
     assert!(
-        tail.contains(" incumbent=37.000000 "),
+        tail.contains(" incumbent=40.000000 "),
         "milp-wolsey-2 首行 incumbent：{stdout}"
     );
     assert!(

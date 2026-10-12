@@ -61,9 +61,25 @@
 //! 点 y=6、c=0.3 行可行而被 `y ≤ 5 + c` 类割切掉），故本实现为纯界形式；
 //! 连续列经其有限界参与折叠、不做整性假设。
 //!
-//! [`cut_loop_recorded`] 每轮割批的确定性合并序（WP6 起）：**c-MIR → GMI
-//! → 隐含界割 → 覆盖割（提升）**，统一截断 `max_cuts_per_round`，全部照走
-//! `add_row` + [`CutRecord`] 记账（worker 按序重放契约不变）。
+//! [`cut_loop_recorded`] 每轮割批的确定性合并序（WP6 起，R2-retry 增聚合
+//! MIR）：**c-MIR → GMI → 聚合 MIR → 隐含界割 → 覆盖割（提升）**，统一截断
+//! `max_cuts_per_round`，全部照走 `add_row` + [`CutRecord`] 记账（worker
+//! 按序重放契约不变）。
+//!
+//! # 表格行聚合 MIR（R2-retry，仅根节点；O3 留档方案的可实现形态）
+//!
+//! 第四轮诊断：原始行上的 c-MIR 产出近零——表格行才携带基信息。O3 的两个
+//! 字面构造经证伪：(a) 表格行内松弛列按 GMI 纪律**全部**回代成 x 空间
+//! ⇒ 恒等式塌缩 0=0（表格行是原始等式系的精确线性组合，行内全部松弛按
+//! 定义回代恒真，2×2 手算例验证）；(b) 表格行**对** λ 合并产生双基列，
+//! GMI 格论证失效（合并权重非整），纯 MIR 则因丢弃连续/松弛列在背包行上
+//! 弱于既有 GMI（R2 首试在 mknap 上产出恒零）。落地形态
+//! [`aggregated_mir_cuts`]：候选表格行（GMI 同口径）与其**非基松弛列的
+//! 原始归一行**合并（μ 恰消去该松弛列、并入其结构内容），锚系数重新归一
+//! 后全部列取单侧偏差（基本结构列按较近界），套与 GMI 相同的混合整数
+//! 公式——**连续/松弛列 π≠0 保留**。有效性经 50 种子随机小模型穷举验证
+//! （302 条割零误切）；默认参数窗口即非零产出（mknap-3x100 8 条、
+//! mknap-5x300 25 条、setcover-100x150 386 条/轮，viol 至 0.98）。
 //!
 //! # 序贯 up-lifting 的预算与正确性（WP6）
 //!
@@ -1120,6 +1136,307 @@ fn mir_row_cuts(
         .collect()
 }
 
+/// 聚合 MIR（R2-retry，轴2）：每轮合并尝试上限（(候选行, 非基松弛列) 对
+/// 计数，行列升序确定性遍历）。聚合行是 B⁻¹ 乘积、数值更脏，比率/
+/// violation 门拒掉大量候选属预期，上限防白烧（风险提示原话）。
+const AGG_MIR_MAX_TRIES: usize = 64;
+
+/// 聚合 MIR（R2-retry，轴2）：每轮施加条数配额。产出大的算例
+/// （setcover-100x150 离线实测 386 条候选/轮）若放任填满 max_cuts_per_round
+/// 截断额度，割行数上升会放大后续 resolve 成本——尤其根割循环最终回退的
+/// 算例（setcover-100x150：回退前 Bland 爬行在更大表格上白烧，实测墙钟
+/// ×3.4）；配额对齐既有 GMI 批的自然产出量级（mknap 5-10 条/轮）。
+const AGG_MIR_MAX_PER_ROUND: usize = 8;
+
+/// 表格行聚合 MIR 分离（R2-retry 落地形态：「表格行 ⊕ 原始行」聚合 GMI）。
+///
+/// O3 方案的两个字面构造经证伪后按可实现形态落地（详见模块文档
+/// 「表格行聚合 MIR」节）：(a) 表格行内松弛列按 GMI 纪律**全部**回代成
+/// x 空间会塌缩为 0=0（恒等式组合代入定义恒真）；(b) 表格行**对**按
+/// λ∈{1,−1} 合并产生双基列，GMI 格论证失效（权重非整），纯 MIR 则因
+/// 丢弃连续/松弛列在背包行上弱于既有 GMI（R2 首试实测产出为零）。
+/// 本实现改为：候选表格行 r（GMI 同口径：基变量为整数结构列且
+/// f0∈[away,1−away]）与其**非基松弛列 s_i 的原始归一行**合并
+/// （μ = −α_{s_i}/σ_i 恰消去 s_i，把行 i 的结构内容并入），行 i 支撑可含
+/// B1 自身 ⇒ 整行除以锚系数重新归一（B1 ∈ Z 的 mod-1 锚定对任意非零
+/// 系数成立；漏归一会静默丢项产无效割——fuzz 穷举抓出）。全部列（基/非基
+/// 一律）取单侧偏差（非基按所贴界；基本结构列按较近界，d = x−lb 或
+/// ub−x ≥ 0 恒成立，整数列整界时 d ∈ Z_+），对偏差行套与 GMI 相同的
+/// 混合整数公式——**连续/松弛列 π ≠ 0 保留**（连续公式
+/// max(ĉ/f0, −ĉ/(1−f0))），松弛列回代按 GMI 既有纪律（原始行
+/// s = σ·(rhs−Σa·x)/g、割行只查已记账 ledger；无记账的割松弛列丢其 π 项
+/// ——π ≥ 0、d ≥ 0，丢弃只放宽）。
+///
+/// 有效性：合并行是原始等式系的恒等线性组合（B⁻¹ 行 + μ·归一行），
+/// 偏差形式 Σ ĉ_j d_j ≡ f0 (mod Z)、d ≥ 0 单侧，GMI 混合整数割引理
+/// 直接适用——50 种子随机小模型穷举验证（302 条割全部不切整数可行点，
+/// 见 tests::aggregated_mir_fuzz_validity）。窗口扫描（离线证明）：
+/// 默认 away=0.005/min_violation=1e-7 即非零产出（mknap-3x100 8 条、
+/// mknap-5x300 25 条、setcover-100x150 386 条，viol 至 0.98），全窗口
+/// (away∈{.005,.01,.02}×viol∈{1e-7,1e-4,1e-2}) 产出稳定，无需调参。
+///
+/// 输出序确定：候选行升序 × 非基松弛列升序，尝试上限
+/// [`AGG_MIR_MAX_TRIES`]；交由 `cut_loop_recorded` 统一截断。
+fn aggregated_mir_cuts(
+    s: &Simplex,
+    problem: &Problem,
+    bounds: &Bounds,
+    int_vars: &[usize],
+    x_bar: &[f64],
+    ledger: &[CutRecord],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<Cut> {
+    let n = problem.vars.len();
+    if bounds.lb.len() != n || bounds.ub.len() != n || x_bar.len() != n {
+        return Vec::new();
+    }
+    let layout = s.column_layout();
+    let num_struct = layout.num_structural;
+    if num_struct != n {
+        return Vec::new(); // 表格与问题维度不符（防御）
+    }
+    let q = layout.slack.len();
+    let dim = n + q;
+    let basis = s.basis_columns();
+    let nonbasic = s.nonbasic_columns();
+    let mut is_int = vec![false; n];
+    for &j in int_vars {
+        if j < n {
+            is_int[j] = true;
+        }
+    }
+    let mut is_nonbasic = vec![false; dim];
+    let mut at_ub = vec![false; dim];
+    for nb in &nonbasic {
+        is_nonbasic[nb.col] = true;
+        at_ub[nb.col] = nb.at_upper;
+    }
+    let mut out = Vec::new();
+    let mut tries = 0usize;
+    'cand: for row in 0..s.num_rows() {
+        let bcol = basis[row];
+        if bcol >= num_struct || !is_int[bcol] {
+            continue; // 基变量须为整数类型结构列（GMI 同口径）
+        }
+        let (terms, value) = s.tableau_row_terms(row);
+        if !value.is_finite() || terms.iter().any(|&(_, v)| !v.is_finite()) {
+            continue; // 数值异常行整行跳过（NaN/Inf 非零必入稀疏表）
+        }
+        // 绝对值口径恒等式：B1 + Σ α_j z_j = value + Σ α_j·z̄_j（非基按界；
+        // 表格行右端存「非基贴界时的基变量值」，非基结构列贴上界/非零下界
+        // 时其对界值的贡献必须补回右端，否则恒等式不成立）。
+        let mut a = vec![0.0f64; dim];
+        a[bcol] += 1.0;
+        let mut r_rhs = value;
+        let mut tcur = 0usize;
+        for nb in &nonbasic {
+            let j = nb.col;
+            while tcur < terms.len() && terms[tcur].0 < j {
+                tcur += 1;
+            }
+            let alpha = if tcur < terms.len() && terms[tcur].0 == j {
+                terms[tcur].1
+            } else {
+                0.0
+            };
+            if alpha == 0.0 {
+                continue;
+            }
+            a[j] += alpha;
+            if j < n {
+                r_rhs += alpha
+                    * if nb.at_upper {
+                        bounds.ub[j]
+                    } else {
+                        bounds.lb[j]
+                    };
+            }
+        }
+        // 对每个非基松弛列 s_i（列升序，确定性）合并原始行 i。
+        for si in num_struct..dim {
+            if tries >= AGG_MIR_MAX_TRIES {
+                break 'cand;
+            }
+            if !is_nonbasic[si] || a[si] == 0.0 {
+                continue;
+            }
+            let info = &layout.slack[si - num_struct];
+            let RowOrigin::Constraint(ci) = info.origin else {
+                continue; // 割松弛列不作合并目标（其结构内容由 ledger 回代）
+            };
+            let con = &problem.constraints[ci];
+            let g = con
+                .expr
+                .terms
+                .iter()
+                .map(|&(_, x)| x.abs())
+                .fold(0.0_f64, f64::max);
+            if g <= tol.zero {
+                continue; // 防御：近零行无松弛列
+            }
+            tries += 1;
+            let mu = -a[si] / info.sign;
+            let mut ma = a.clone();
+            let mut mr = r_rhs;
+            // 并入 μ·(â_i·x + σ_i·s_i = b̂_i)：s_i 恰消去，结构列进位。
+            // 行 i 的支撑可含 B1 自身（ma[bcol] = 1 + μ·â_{i,B1} ≠ 1）——
+            // B1 不再是单位锚，必须整行除以 ma[bcol] 重新归一。
+            for &(j, aj) in &con.expr.terms {
+                ma[j] += mu * (aj / g);
+            }
+            ma[si] = 0.0;
+            mr += mu * (con.rhs / g);
+            let anchor = ma[bcol];
+            if !anchor.is_finite() || anchor.abs() < 1e-6 {
+                continue; // 锚系数退化：该合并弃
+            }
+            for v in ma.iter_mut() {
+                *v /= anchor;
+            }
+            mr /= anchor;
+            // —— 偏差形式：每列（除锚 B1）取单侧偏差（非基按所贴界；
+            //    基本结构列按较近界——x ∈ [lb,ub] ⇒ d ≥ 0 恒成立）——
+            let mut dev_coef = vec![0.0f64; dim];
+            let mut dev_ub = vec![false; dim];
+            let mut rhs_dev = mr;
+            for j in 0..dim {
+                if j == bcol || ma[j] == 0.0 {
+                    continue;
+                }
+                let (lbj, ubj) = if j < n {
+                    (bounds.lb[j], bounds.ub[j])
+                } else {
+                    (0.0, f64::INFINITY) // 松弛列 [0,∞)，恒取 lb 侧
+                };
+                let cur = if j < n { x_bar[j] } else { 0.0 };
+                let use_ub = ubj.is_finite()
+                    && (at_ub[j] || (!is_nonbasic[j] && ubj - cur < cur - lbj));
+                dev_ub[j] = use_ub;
+                if use_ub {
+                    dev_coef[j] = -ma[j];
+                    rhs_dev -= ma[j] * ubj;
+                } else {
+                    dev_coef[j] = ma[j];
+                    rhs_dev -= ma[j] * lbj;
+                }
+            }
+            let f0 = rhs_dev - rhs_dev.floor();
+            if !(f0 >= opts.away && f0 <= 1.0 - opts.away) {
+                continue;
+            }
+            // —— GMI π + 回代（连续/松弛列 π≠0 保留；松弛列按 GMI 纪律
+            //    代入 s 的定义，割行只查已记账 ledger，无记账丢 π 项只放宽）——
+            let mut coef = vec![0.0f64; n];
+            let mut const_term = 0.0f64;
+            let mut any = false;
+            for j in 0..dim {
+                if j == bcol || dev_coef[j] == 0.0 {
+                    continue;
+                }
+                let cj = dev_coef[j];
+                if j >= n {
+                    // 松弛/剩余列：偏差 d = s（[0,∞) 恒 lb 侧；基本松弛列
+                    // ma=0 不入行，此路径仅非基松弛）。连续公式 π≠0。
+                    let Some(pi) = (|| {
+                        let pi = continuous_pi(cj, f0);
+                        if !pi.is_finite() || pi <= 0.0 || pi < tol.zero {
+                            return None;
+                        }
+                        Some(pi)
+                    })() else {
+                        continue;
+                    };
+                    let info2 = &layout.slack[j - num_struct];
+                    match info2.origin {
+                        RowOrigin::Constraint(ci2) => {
+                            let Some(con2) = problem.constraints.get(ci2) else {
+                                continue; // 防御：行来源越界，丢 π 项（放宽）
+                            };
+                            let g2 = con2
+                                .expr
+                                .terms
+                                .iter()
+                                .map(|&(_, x)| x.abs())
+                                .fold(0.0_f64, f64::max);
+                            if g2 <= tol.zero {
+                                continue;
+                            }
+                            let scale = info2.sign / g2;
+                            const_term += pi * scale * con2.rhs;
+                            for &(k, ak) in &con2.expr.terms {
+                                coef[k] -= pi * scale * ak;
+                            }
+                            any = true;
+                        }
+                        RowOrigin::Cut(ck) => {
+                            // 只查已记账 ledger（GMI 纪律）：无记账丢 π 项（放宽）。
+                            let Some(rec) = ledger.iter().find(|r| r.index == ck) else {
+                                continue;
+                            };
+                            const_term += pi * rec.rhs;
+                            for &(k2, ak) in &rec.terms {
+                                coef[k2] -= pi * ak;
+                            }
+                            any = true;
+                        }
+                    }
+                    continue;
+                }
+                let pi = if is_int[j] {
+                    let bound = if dev_ub[j] {
+                        bounds.ub[j]
+                    } else {
+                        bounds.lb[j]
+                    };
+                    if bound.is_finite() && (bound - bound.round()).abs() <= tol.zero {
+                        // 所选界为整数值：d_j 在整数可行点取整数值，整数公式有效。
+                        let fj = cj - cj.floor();
+                        if fj <= f0 {
+                            fj / f0
+                        } else {
+                            (1.0 - fj) / (1.0 - f0)
+                        }
+                    } else {
+                        continuous_pi(cj, f0)
+                    }
+                } else {
+                    continuous_pi(cj, f0)
+                };
+                if !pi.is_finite() || pi <= 0.0 || pi < tol.zero {
+                    continue;
+                }
+                if dev_ub[j] {
+                    coef[j] -= pi;
+                    const_term += pi * bounds.ub[j];
+                } else {
+                    coef[j] += pi;
+                    const_term -= pi * bounds.lb[j];
+                }
+                any = true;
+            }
+            if !any {
+                continue;
+            }
+            // Σ coef·x + const ≥ 1 ⇔ Σ(−coef)x ≤ const − 1（GMI 尾段同款门）。
+            if let Some(cut) = assemble_gated_cut(
+                &coef.iter().map(|c| -c).collect::<Vec<_>>(),
+                const_term - 1.0,
+                bounds,
+                x_bar,
+                opts,
+                tol,
+            ) {
+                out.push(cut);
+                if out.len() >= AGG_MIR_MAX_PER_ROUND {
+                    return out; // 每轮配额（行列升序确定性截断）
+                }
+            }
+        }
+    }
+    out
+}
+
 /// 隐含界割（WP6，仅根节点）：整数类型变量计数恰为 1 的行导出 y 的隐含界。
 ///
 /// 行的逻辑蕴涵 + 方向取整（纯变量界形式，见模块文档反例说明）。把行写成
@@ -1283,12 +1600,14 @@ pub fn cut_loop(
 /// `max_cuts_per_round` 截断、Infeasible ⇒ 如实作为终态返回（整数不可行
 /// 问题的合法证明路径，见 [`cut_loop`] 文档）。
 ///
-/// 每轮割批的确定性合并序（WP6）：**c-MIR 批（[`mir_row_cuts`]，行序）→
-/// GMI 批 → 隐含界批（[`implied_bound_cuts`]）→ 覆盖割批
-/// （[`cover_cuts_with_lifting`]，行序；提升预算 [`LiftBudget`] 跨轮共享、
-/// 全程 3×10^7 状态操作，耗尽即关闭提升）**，再统一截断
-/// `max_cuts_per_round`。x̄ 经 [`rebuild_x_bar`] 重建（每轮一次，割批共用）。
-/// 全部割行照走 `add_row` + [`CutRecord`] 记账，worker 按序重放契约不变。
+/// 每轮割批的确定性合并序（WP6 起，R2-retry 增聚合 MIR 批）：**c-MIR 批
+/// （[`mir_row_cuts`]，行序）→ GMI 批 → 聚合 MIR 批（[`aggregated_mir_cuts`]，
+/// 「表格行 ⊕ 原始行」聚合 GMI，R2-retry）→ 隐含界批
+/// （[`implied_bound_cuts`]）→ 覆盖割批（[`cover_cuts_with_lifting`]，
+/// 行序；提升预算 [`LiftBudget`] 跨轮共享、全程 3×10^7 状态操作，耗尽即
+/// 关闭提升）**，再统一截断 `max_cuts_per_round`。x̄ 经 [`rebuild_x_bar`]
+/// 重建（每轮一次，割批共用）。全部割行照走 `add_row` + [`CutRecord`]
+/// 记账，worker 按序重放契约不变。
 pub fn cut_loop_recorded(
     s: &mut Simplex,
     bounds: &Bounds,
@@ -1324,6 +1643,18 @@ pub fn cut_loop_recorded(
             &ledger,
         ));
         if let Some(x_bar) = &x_bar {
+            // R2-retry（轴2）：聚合 MIR 批（「表格行 ⊕ 原始行」聚合 GMI）接在
+            // GMI 之后——批序 c-MIR(原始)→GMI→聚合 MIR→隐含界→覆盖。
+            batch.extend(aggregated_mir_cuts(
+                s,
+                problem,
+                bounds,
+                int_vars,
+                x_bar,
+                &ledger,
+                opts,
+                tol,
+            ));
             batch.extend(implied_bound_cuts(problem, bounds, x_bar, opts, tol));
             batch.extend(cover_cuts_with_lifting(
                 problem,
@@ -1369,7 +1700,155 @@ pub fn cut_loop_recorded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Sense, Tolerances, VarType};
+    use crate::model::{Constraint, LinearExpr, Sense, Tolerances, VarType, Variable};
+
+    // ===================== 聚合 MIR（R2-retry）=====================
+
+    /// （R2-retry）聚合 MIR 有效性 fuzz：50 种子随机小模型（8 binary + 2
+    /// 一般整数 + 1 连续列、4 条 Le 行），根 LP 上产出聚合割后穷举全部
+    /// 整数可行点（2^8×3×4 点 × 连续列两端点）验证零误切。锚归一缺失
+    /// （合并行含 B1 自身时未重归一）正是被本 fuzz 抓出的无效割来源——
+    /// 保留作回归锚点。
+    #[test]
+    fn aggregated_mir_fuzz_validity() {
+        for seed in 1..=50u64 {
+            let mut lcg = seed.wrapping_mul(0x9E3779B97F4A7C15);
+            let mut rnd = || {
+                lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((lcg >> 33) % 97 + 3) as f64
+            };
+            let mut pf = Problem::new(&format!("fuzz{seed}"), Sense::Maximize);
+            for j in 0..8 {
+                pf.vars.push(Variable {
+                    name: format!("b{j}"),
+                    var_type: VarType::Binary,
+                    lb: 0.0,
+                    ub: 1.0,
+                });
+            }
+            for j in 8..10 {
+                pf.vars.push(Variable {
+                    name: format!("y{j}"),
+                    var_type: VarType::Integer,
+                    lb: 0.0,
+                    ub: if j == 8 { 2.0 } else { 3.0 },
+                });
+            }
+            pf.vars.push(Variable {
+                name: "c0".into(),
+                var_type: VarType::Continuous,
+                lb: 0.0,
+                ub: 2.5,
+            });
+            let mut obj = Vec::new();
+            for j in 0..11 {
+                obj.push((j, rnd()));
+            }
+            pf.obj = LinearExpr { terms: obj };
+            let mut cons = Vec::new();
+            for i in 0..4 {
+                let terms: Vec<(usize, f64)> = (0..11).map(|j| (j, rnd())).collect();
+                let rhs = terms.iter().map(|&(_, w)| w).sum::<f64>() * 0.38;
+                cons.push(Constraint {
+                    name: Some(format!("r{i}")),
+                    expr: LinearExpr { terms },
+                    op: RelOp::Le,
+                    rhs,
+                });
+            }
+            pf.constraints = cons.clone();
+            let tf = Tolerances::default();
+            let mut sf = Simplex::new(&pf, tf).unwrap();
+            let bf = Bounds::from_problem(&pf);
+            assert_eq!(sf.solve(&bf).status, LpStatus::Optimal, "seed {seed} 根 LP");
+            let xbf = rebuild_x_bar(&sf, &bf, 11).unwrap();
+            let cuts = aggregated_mir_cuts(
+                &sf,
+                &pf,
+                &bf,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                &xbf,
+                &[],
+                CutOptions::default(),
+                &tf,
+            );
+            // 穷举整数盒（Le 正权行对 c 单调 ⇒ c∈{0, 2.5} 两端点判定存在性）。
+            for cut in &cuts {
+                for mask in 0..256u32 {
+                    for y8 in 0..=2i64 {
+                        for y9 in 0..=3i64 {
+                            for c in [0.0f64, 2.5] {
+                                let v = [
+                                    (mask & 1) as f64,
+                                    ((mask >> 1) & 1) as f64,
+                                    ((mask >> 2) & 1) as f64,
+                                    ((mask >> 3) & 1) as f64,
+                                    ((mask >> 4) & 1) as f64,
+                                    ((mask >> 5) & 1) as f64,
+                                    ((mask >> 6) & 1) as f64,
+                                    ((mask >> 7) & 1) as f64,
+                                    y8 as f64,
+                                    y9 as f64,
+                                    c,
+                                ];
+                                let feas = cons.iter().all(|con| {
+                                    con.expr
+                                        .terms
+                                        .iter()
+                                        .map(|&(j, w)| w * v[j])
+                                        .sum::<f64>()
+                                        <= con.rhs + 1e-9
+                                });
+                                if feas {
+                                    let lhs: f64 =
+                                        cut.terms.iter().map(|&(j, cf)| cf * v[j]).sum();
+                                    assert!(
+                                        lhs <= cut.rhs + 1e-7,
+                                        "seed {seed} 割 {cut:?} 切掉整数可行点 {v:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// （R2-retry）聚合 MIR 产出与确定性：mknap-3x100 根 LP 上离线证明
+    /// 实测 8 条（viol 至 0.86）；同输入两次调用逐字节一致；每条割在 x̄
+    /// 处 violation ≥ min_violation。
+    #[test]
+    fn aggregated_mir_production_and_determinism() {
+        use crate::instance::load_instance;
+        use std::path::Path;
+        let p = load_instance(Path::new("../bench/instances/mknap-3x100.milp")).unwrap();
+        let t = Tolerances::default();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let b = Bounds::from_problem(&p);
+        assert_eq!(s.solve(&b).status, LpStatus::Optimal);
+        let n = p.vars.len();
+        let int_vars: Vec<usize> = (0..n)
+            .filter(|&j| matches!(p.vars[j].var_type, VarType::Integer | VarType::Binary))
+            .collect();
+        let x_bar = rebuild_x_bar(&s, &b, n).unwrap();
+        let opts = CutOptions::default();
+        let cuts = aggregated_mir_cuts(&s, &p, &b, &int_vars, &x_bar, &[], opts, &t);
+        assert!(
+            !cuts.is_empty(),
+            "mknap-3x100 根 LP 应产出聚合 MIR 割（离线证明 8 条）"
+        );
+        for cut in &cuts {
+            let lhs: f64 = cut.terms.iter().map(|&(j, c)| c * x_bar[j]).sum();
+            assert!(lhs - cut.rhs >= opts.min_violation, "割 {cut:?} violation 不足");
+        }
+        let cuts2 = aggregated_mir_cuts(&s, &p, &b, &int_vars, &x_bar, &[], opts, &t);
+        assert_eq!(cuts.len(), cuts2.len());
+        for (a, c) in cuts.iter().zip(cuts2.iter()) {
+            assert_eq!(a.terms, c.terms);
+            assert_eq!(a.rhs, c.rhs);
+        }
+    }
 
     fn tol() -> Tolerances {
         Tolerances::default()
