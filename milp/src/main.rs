@@ -397,7 +397,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
         mitm: mitm.unwrap_or(true),
-        work_stack_global: work_stack_global.unwrap_or(false),      // 默认 on（R5-retry）
+        work_stack_global: work_stack_global.unwrap_or(false), // 默认 local；global 为 R6 全局栈（显式开启）
     })
 }
 

@@ -1723,8 +1723,9 @@ pub fn cut_loop_recorded(
         // 收敛轮实测 ~1.5k 迭代，退化爬行轮放任到默认上限会白烧（setcover
         // 算例第 5 轮 10000 迭代打满后整树回退丢全部割）。预算 = 已提交割
         // 行数感知的收紧式 max(3000, 12×(m+n))；超限走下方回滚而非终态
-        // 传播。Infeasible 信号**不受影响**（Phase-1 判定在预算内完成，
-        // 不可行终局照旧第一时间返回——预算不吞真实不可行）。
+        // 传播。Infeasible 终局照旧第一时间如实返回；若某问题的 Phase-1
+        // 本身需要超过收紧预算的迭代，走下方回滚后树搜索继续——真实不可行
+        // 只会被延迟发现，不会被伪造或吞掉（hint 在回滚 resolve 前已复位）。
         let m_now = s.num_rows();
         let n_now = problem.vars.len();
         s.set_iter_limit_hint(Some(

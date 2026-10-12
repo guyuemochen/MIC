@@ -567,7 +567,8 @@ knapsack-200 与 setcover-400x800（limit_reached @ 24000 上限）行为不变�
 8. **bench 口径**：lp-sparse 在 gate 名义 30s 时限下仍 ~34s optimal（时限
    只在节点边界检查）——如需 gate 严格 <30s 应换算例或给纯 LP 路径加内部
    时限检查（本轮未动 simplex 内部语义）。
-9. **终局独立复核发现（1 中危 + 4 低危，均未修复，见 §3.3）**：
+9. **终局独立复核发现（1 中危 + 4 低危，见 §3.3；处置：后续提交已全部
+   以注释/文档对齐方式修复，行为零变化）**：
    - **（中危）R8 永久 Bland 可被释放，代码与自身文档矛盾**：
      `bland_release_step`（`simplex.rs:1992-2005`）的释放条件不含
      `!self.bland_permanent`——总迭代触发（`simplex.rs:1975-1978`）置位的
@@ -577,7 +578,11 @@ knapsack-200 与 setcover-400x800（limit_reached @ 24000 上限）行为不变�
      （`simplex.rs:92-106`，「总迭代触发的 Bland 永久生效」）三处均声称
      不可释放。终止性仍成立（释放次数有限，预算耗尽后 Bland 恒驻留）、
      确定性不受影响；且该路径在 setcover 类（R8 目标算例）上必然被触发。
-     修复只需在释放条件加 `!self.bland_permanent`。
+     复核建议的修复是在释放条件加 `!self.bland_permanent`；**实际处置取
+     相反方向——改文档而非改代码**：间歇释放正是 R8 实测拿到 setcover
+     大幅提速的行为（单步 Dantzig 窗口让爬行中的宽表 LP 获得真实进展），
+     加守卫会回退已测得的行为；三处注释/文档已对齐为「两种触发一致适用、
+     置位逐迭代重申、预算耗尽后永久驻留（终止保底）」的如实语义。
    - **（低危）误导性注释**：`main.rs:400`
      `work_stack_global: work_stack_global.unwrap_or(false), // 默认 on（R5-retry）`
      ——该行默认值实为 false（local 模式，与 `BbOptions::global_work_stack`

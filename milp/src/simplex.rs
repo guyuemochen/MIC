@@ -42,7 +42,8 @@
 //!   变量的常态操作，缺它会在非最优点误报 Optimal。
 //! - Dantzig 阶段得分 = 贴下界列 (−rc)、贴上界列 (+rc)，取最大，并列取最小
 //!   列下标。反循环：自上次目标改善起连续退化迭代 > 50 次或本次调用总迭代
-//!   超过 3×(m+n) 后进入 Bland 模式（本次调用内永久生效）：入基取合格列最小
+//!   超过 3×(m+n) 后进入 Bland 模式（置位在循环顶部逐迭代重申；释放语义
+//!   见下）：入基取合格列最小
 //!   下标；出基侧全部并列候选（被阻挡基变量按其列下标、入基变量自身界翻转
 //!   按入基列下标）一律取最小下标；|主元|最大规则仅 Dantzig 阶段使用。
 //! - 比值测试同时考虑基变量上下界与入基变量自身界翻转；主元 |p| ≥ tol.pivot
@@ -52,9 +53,10 @@
 //!   每 200 次主元用原始数据重算 B⁻¹b；NaN/Inf 立即按数值失败处理。迭代
 //!   上限 max(10_000, 20×(m+n))（割循环内经 set_iter_limit_hint 收紧为
 //!   max(3_000, 12×(m+n))，R8）⇒ IterationLimit（诚实上报，不冒充
-//!   Optimal）。Bland 释放（R8）：停滞触发的 Bland 在非退化步（目标真
-//!   改善 ⇒ 已脱离触发退化区）+ 驻留满 8 步后回 Dantzig 定价（每次调用
-//!   最多 64 次重入，预算耗尽后 Bland 永久驻留——无循环定理的终止路径
+//!   Optimal）。Bland 释放（R8）：停滞/总迭代两种触发的 Bland 均在非退化
+//!   步（目标真改善 ⇒ 已脱离触发退化区）+ 驻留满 8 步后回 Dantzig 定价
+//!   （每次调用最多 64 次重入；总迭代触发的置位逐迭代重申，故释放只给出
+//!   单步 Dantzig 窗口；预算耗尽后 Bland 永久驻留——无循环定理的终止路径
 //!   恒在场）——Bland 的最小下标入基在宽表上单步进展极小，纯 Bland 爬行
 //!   实测打满迭代上限（setcover 类根 LP）。主循环每迭代零分配：c_b/检验
 //!   数/比值候选/消元系数/主元行非零下标/界交换全部走容量复用暂存字段。
@@ -96,10 +98,11 @@ const DEGENERATE_STREAK_LIMIT: u32 = 50;
 /// 最小下标入基在宽表（setcover 类 ncols ≫ m）上单步进展极小——纯退化
 /// 停滞触发 Bland 后永久驻留会在 3×(m+n) 后爬行至迭代上限（setcover
 /// 300x600/400x800 根 LP 实测：Phase-2 以 bland=true 打满 18000/24000
-/// 上限、零 incumbent 传播）。释放规则只作用于**停滞触发**的 Bland；
-/// 总迭代触发（iter_call > 3×(m+n)）的 Bland 永久生效（原有保底语义
-/// 不变），且每次调用最多释放 [`BLAND_REARM_MAX`] 次——重入预算耗尽后
-/// Bland 永久驻留，保证 Bland 无循环定理的终止路径恒在场。
+/// 上限、零 incumbent 传播）。释放规则对**两种触发**一致生效；总迭代触发
+/// （iter_call > 3×(m+n)）的置位在循环顶部逐迭代重申，故一次释放只给出
+/// 单步 Dantzig 定价窗口（每 [`BLAND_DWELL`] 驻留步 + 非退化步至多一次），
+/// 且每次调用最多释放 [`BLAND_REARM_MAX`] 次——重入预算耗尽后 Bland 永久
+/// 驻留，保证 Bland 无循环定理的终止路径恒在场。
 const BLAND_DWELL: u32 = 8;
 /// 每次 solve/resolve 调用的 Bland 释放重入预算（R8）：耗尽后停滞触发的
 /// Bland 也永久驻留（终止保底）。
@@ -350,11 +353,12 @@ pub struct Simplex {
     iter_call: u64,
     /// 自上次有效改善起的连续退化迭代数。
     degenerate_streak: u32,
-    /// Bland 模式。R8 起分两种：总迭代触发的永久 Bland（`bland_permanent`，
-    /// 本次调用内不释放）与停滞触发的可释放 Bland（非退化步 + 驻留满
-    /// [`BLAND_DWELL`] 后回 Dantzig，重入预算 [`BLAND_REARM_MAX`]）。
+    /// Bland 模式（R8 起可释放）：非退化步 + 驻留满 [`BLAND_DWELL`] 后回
+    /// Dantzig 定价，重入预算 [`BLAND_REARM_MAX`]；两种触发一致适用（总
+    /// 迭代触发的置位逐迭代重申，见 `bland_permanent`）。
     bland: bool,
-    /// 总迭代触发（iter_call > 3×(m+n)）的永久 Bland 置位。
+    /// 总迭代触发（iter_call > 3×(m+n)）的 Bland 置位：在循环顶部逐迭代
+    /// 重申（释放只给出单步 Dantzig 窗口）；重入预算耗尽后即永久驻留。
     bland_permanent: bool,
     /// Bland 已驻留步数（释放的驻留门）。
     bland_dwell: u32,
@@ -834,7 +838,9 @@ impl Simplex {
             }
             // 轴1（启用态）：既有行索引同步右移一位（列 ≥ c 的存活/墓碑项
             // +1；新松弛列对旧行恒 0，不入索引。墓碑在高 1 位，+1 不进位）。
-            // 禁用态索引恒空，跳过（旧路径零新增指令）。
+            // 禁用态索引恒空，跳过（旧路径零新增指令）。边界：NZ_MASK 上限
+            // 0x7FFFFFFF 在 nz_rebuild_row/newidx 有 ≥2^31 防御，本移位路径
+            // 仅列下标达 2^31-1 时才回绕（单行稠密表需 16 GiB，不可达）。
             if self.nz_enabled {
                 for idx in self.row_nz.iter_mut() {
                     for e in idx.iter_mut() {
@@ -1619,6 +1625,9 @@ impl Simplex {
         // 密度自适应：非零数读行索引（稀疏标记行的存活数 = 精确非零数），
         // 空索引 = 稠密标记。割行/GMI 行在大 LP 上近乎全稠密，索引式内循环
         // （间接寻址）阻碍 SIMD——实测 mknap-5x300 t1 do_pivot 占墙钟 ~70%。
+        // 第二析取项（存活×4 ≥ ncols）当前不可达：密度回退/nz_rebuild_row/
+        // add_row 三处保证稀疏标记行恒满足 alive×4 < ncols（ncols 只增不
+        // 清）；若日后可达，下方稠密除法分支需同步维护 row_nz 的墓碑不变量。
         let dense_elim = self.row_nz[r].is_empty() || self.nz_alive(r) * 4 >= ncols;
         if !dense_elim {
             // 主元行非零下标直接读索引（跳过墓碑），替代旧全列扫描。
@@ -1973,7 +1982,9 @@ impl Simplex {
                 return PhaseOutcome::Failed("基变量值出现 NaN/Inf".to_string());
             }
             if self.iter_call > bland_total {
-                // 总迭代触发：永久 Bland（保底终止路径，不释放）。
+                // 总迭代触发：Bland 置位（逐迭代重申；释放见
+                // bland_release_step——单步 Dantzig 窗口，预算耗尽后
+                // 永久驻留，终止保底）。
                 self.bland = true;
                 self.bland_permanent = true;
             } else if self.degenerate_streak > DEGENERATE_STREAK_LIMIT {
@@ -1987,7 +1998,8 @@ impl Simplex {
 
     /// Bland 释放记账（R8，run_phase 每步尾部调用）：`t_nondegenerate` =
     /// 本步非退化（目标真改善）。驻留满 [`BLAND_DWELL`] 且非退化 ⇒ 回
-    /// Dantzig 定价（重入预算内）；永久 Bland（总迭代触发）与预算耗尽后
+    /// Dantzig 定价（重入预算内）；两种触发一致适用——总迭代触发的置位在
+    /// 循环顶部逐迭代重申，故释放只给出单步 Dantzig 窗口。重入预算耗尽后
     /// 不释放——Bland 无循环定理的终止路径恒在场。
     fn bland_release_step(&mut self, t_nondegenerate: bool) {
         if self.bland
