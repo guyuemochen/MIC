@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack local|global] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -90,6 +90,10 @@ struct Config {
     /// 子集和 MITM 可行性启发式（`--mitm=on|off`，R5-retry）；默认 on
     ///（全 Eq + 全 Binary 类的最后手段，廉价启发式 miss 时根一次求解）。
     mitm: bool,
+    /// 并行工作栈模式（`--work-stack local|global`，R6-retry）；默认 local
+    ///（本地亲和，现状）；global = 全局 DFS 栈（并行探索序对齐顺序 DFS，
+    /// 抑制搜索膨胀；仅 threads ≥ 2 生效）。
+    work_stack_global: bool,
 }
 
 fn main() -> ExitCode {
@@ -156,6 +160,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut branch_rule: Option<BranchRule> = None;
     let mut scaling: Option<bool> = None;
     let mut mitm: Option<bool> = None;
+    let mut work_stack_global: Option<bool> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -343,6 +348,29 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             mitm = Some(v);
+        } else if arg == "--work-stack" || arg.starts_with("--work-stack=") {
+            if work_stack_global.is_some() {
+                return Err(format!("`--work-stack` 重复出现（{USAGE}）"));
+            }
+            let value: String = if let Some(v) = arg.strip_prefix("--work-stack=") {
+                v.to_string()
+            } else {
+                let Some(v) = args.get(index + 1) else {
+                    return Err(format!("`--work-stack` 缺少参数 local|global（{USAGE}）"));
+                };
+                index += 1;
+                v.clone()
+            };
+            let v = match value.as_str() {
+                "local" => false,
+                "global" => true,
+                other => {
+                    return Err(format!(
+                        "未知 --work-stack 值 `{other}`（期望 local|global，{USAGE}）"
+                    ))
+                }
+            };
+            work_stack_global = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -368,7 +396,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
-        mitm: mitm.unwrap_or(true),      // 默认 on（R5-retry）
+        mitm: mitm.unwrap_or(true),
+        work_stack_global: work_stack_global.unwrap_or(false),      // 默认 on（R5-retry）
     })
 }
 
@@ -399,6 +428,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             mitm_windows: if config.mitm { 8 } else { 0 },
+            global_work_stack: config.work_stack_global,
         },
         use_presolve: true,
         use_scaling: config.scaling,
@@ -613,6 +643,7 @@ mod tests {
             branch_rule: None,
             scaling: true,
             mitm: true,
+            work_stack_global: false,
         }
     }
 

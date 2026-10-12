@@ -196,6 +196,13 @@ struct PoolNode {
 /// 中 `Some` 槽位数；每个存活节点恰归属一个容器（某本地队列 / 窃取池 /
 /// 某 worker 的 inflight 槽），全部转移在锁临界区内原子完成 ⇒ 无丢无重。
 struct PoolState {
+    /// **全局 DFS 栈模式**（R6-retry，轴3）：true ⇒ 子代不进本地队列而
+    /// 直接压全局 steal 栈顶（Vec push），worker 恒从栈顶弹（Vec pop =
+    /// LIFO）——全局探索序 ≈ 顺序 DFS 序（谁弹到谁延续 t1 的下一个节点），
+    /// 对齐 t1 的 incumbent 时序与剪枝，抑制并行搜索膨胀（local 亲和模式
+    /// 下 4 棵独立 DFS 树各自延迟发现 incumbent）。false = 本地亲和模式
+    ///（默认，现状）。
+    work_global: bool,
     /// per-worker 本地队列（双端：**队首** = owner 弹出端 = 最新子代——分支时
     /// 两个孩子按序 `push_front` 到自己队首，owner 随后 `pop_front` 即得近亲
     /// 子代，同亲热启动保亲和；**队尾** = 最老 deferred 分支，留给窃取者）。
@@ -324,6 +331,7 @@ impl Shared {
     ) -> Self {
         Shared {
             pool: Mutex::new(PoolState {
+                work_global: false,
                 locals: (0..threads).map(|_| VecDeque::new()).collect(),
                 steal: Vec::new(),
                 active: 0,
@@ -549,18 +557,27 @@ impl Shared {
         mut children: Vec<PoolNode>,
         sense: Sense,
         mipgap: Option<f64>,
+        work_global_notify: bool,
     ) {
         let need_db = matches!(mipgap, Some(g) if g.is_finite() && g > 0.0)
             || self.degrade_budget_secs.is_some();
         let db = {
             let mut pool = self.lock_pool();
-            // 子代压自己队首（保同亲 LIFO）：按序 push_front ⇒ owner 队首弹出
-            // 顺序与旧全局池『append 后尾弹出』逐子节点一致（children 末元素
-            // 先探索）。本地队列 push **不发全局 notify**——等待 worker 经
-            // wait_timeout 周期扫 victim 队尾窃取；若此处 notify_one，被唤醒
-            // 的睡者会与 owner 争夺刚压入的近亲子代，恰好破坏亲和机制。
-            for child in children.drain(..) {
-                pool.locals[w].push_front(child);
+            if pool.work_global {
+                // 全局 DFS 栈模式：子代压 steal 栈顶（append ⇒ 末元素 = 栈顶
+                // = 下一弹出，与本地模式的 push_front 首探索序逐子一致）；
+                // push 走 notify_all 快路径（全局栈无亲和可保护，等待者应
+                // 立即被唤醒取新栈顶）。
+                pool.steal.append(&mut children);
+            } else {
+                // 子代压自己队首（保同亲 LIFO）：按序 push_front ⇒ owner 队首弹出
+                // 顺序与旧全局池『append 后尾弹出』逐子节点一致（children 末元素
+                // 先探索）。本地队列 push **不发全局 notify**——等待 worker 经
+                // wait_timeout 周期扫 victim 队尾窃取；若此处 notify_one，被唤醒
+                // 的睡者会与 owner 争夺刚压入的近亲子代，恰好破坏亲和机制。
+                for child in children.drain(..) {
+                    pool.locals[w].push_front(child);
+                }
             }
             pool.active -= 1;
             pool.inflight[w] = None;
@@ -574,6 +591,11 @@ impl Shared {
             }
             need_db.then(|| pool_db_aggregate(&pool, sense)).flatten()
         };
+        // 全局 DFS 栈模式：栈顶有新子代 ⇒ 唤醒等待者（本地亲和模式不
+        // notify——见上方亲和机制注释；此处无亲和可保护）。
+        if work_global_notify {
+            self.cv_workers.notify_all();
+        }
         self.maybe_gap(sense, mipgap, db);
         self.maybe_degrade(sense, db);
     }
@@ -1022,6 +1044,9 @@ pub fn parallel_branch_and_bound(
         },
         start,
     );
+    // R6-retry 全局 DFS 工作栈：模式写入口池（worker 的子代路由由
+    // complete_node 读该标志，notify 参数由 opts 侧同源给出）。
+    shared.lock_pool().work_global = opts.global_work_stack;
     shared.write_incumbent(incumbent.clone());
     shared.reserved.store(1, Ordering::SeqCst);
     shared.performed.store(1, Ordering::SeqCst);
@@ -1301,7 +1326,7 @@ fn worker_run(
         if obj_integral {
             if let Some(obj) = shared.read_incumbent_obj() {
                 if bound_no_better(sense, node.est, obj, true, opts.prune_abs, opts.prune_rel) {
-                    shared.complete_node(w, Vec::new(), sense, mipgap);
+                    shared.complete_node(w, Vec::new(), sense, mipgap, false);
                     continue;
                 }
             }
@@ -1325,7 +1350,7 @@ fn worker_run(
         match sol.status {
             // (a) Infeasible ⇒ 剪枝。
             LpStatus::Infeasible => {
-                shared.complete_node(w, Vec::new(), sense, mipgap);
+                shared.complete_node(w, Vec::new(), sense, mipgap, false);
                 continue;
             }
             // (b) 非根 Unbounded（父有界时理论不发生的数值异常）⇒ 诚实 Err。
@@ -1341,7 +1366,7 @@ fn worker_run(
             //     探索范围一致，不再以粘滞 stop 截断整树。
             LpStatus::IterationLimit => {
                 shared.limit_hit.store(true, Ordering::SeqCst);
-                shared.complete_node(w, Vec::new(), sense, mipgap);
+                shared.complete_node(w, Vec::new(), sense, mipgap, false);
                 continue;
             }
             LpStatus::Optimal => {}
@@ -1462,7 +1487,8 @@ fn worker_run(
             );
         }
         // —— 节点完成转移 + 两段式 gap 检查 ——
-        shared.complete_node(w, children, sense, mipgap);
+        let notify_stack = opts.global_work_stack && !children.is_empty();
+        shared.complete_node(w, children, sense, mipgap, notify_stack);
     }
 }
 
@@ -1764,6 +1790,7 @@ mod tests {
         active: usize,
     ) -> PoolState {
         PoolState {
+            work_global: false,
             locals: locals
                 .into_iter()
                 .map(|ests| ests.into_iter().map(|e| test_node(e, 1)).collect())
@@ -2186,6 +2213,7 @@ mod tests {
             vec![test_node(1.0, 1), test_node(2.0, 1)],
             Sense::Maximize,
             None,
+            false,
         );
         {
             let pool = shared.lock_pool();
@@ -2206,7 +2234,7 @@ mod tests {
             pool.active = 1;
             pool.inflight[0] = Some(2.0);
         }
-        shared.complete_node(0, Vec::new(), Sense::Maximize, None);
+        shared.complete_node(0, Vec::new(), Sense::Maximize, None, false);
         assert!(shared.lock_pool().done, "全容器空且 active==0 ⇒ done");
     }
 
@@ -2249,7 +2277,7 @@ mod tests {
                                 } else {
                                     Vec::new()
                                 };
-                                shared.complete_node(w, children, Sense::Maximize, None);
+                                shared.complete_node(w, children, Sense::Maximize, None, false);
                             }
                         }
                     }

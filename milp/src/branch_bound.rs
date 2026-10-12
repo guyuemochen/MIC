@@ -155,6 +155,12 @@ pub struct BbOptions {
     /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
     ///（CLI `--mitm=off` 供消融）。
     pub mitm_windows: usize,
+    /// 全局 DFS 工作栈（R6-retry，轴3；仅并行 threads ≥ 2 生效）：true ⇒
+    /// 子代直接压全局栈顶、worker 恒从栈顶弹——全局探索序对齐顺序 DFS，
+    /// 抑制并行搜索膨胀（本地亲和模式下各 worker 独立 DFS 树的 incumbent
+    /// 延迟发现是 t4 节点膨胀实测根因）。默认 false（本地亲和，现状）；
+    /// CLI `--work-stack local|global`。
+    pub global_work_stack: bool,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
@@ -183,6 +189,7 @@ impl Default for BbOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             mitm_windows: 8,
+            global_work_stack: false,
             branch_rule_auto: true,
         }
     }
