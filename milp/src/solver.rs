@@ -42,15 +42,22 @@ pub struct SolveOptions {
     pub bb: BbOptions,
     /// 是否启用预处理。默认 true。
     pub use_presolve: bool,
+    /// 是否启用问题级数值缩放（R4，轴4：行列迭代几何均值，2 的幂系数，
+    /// scale→presolve→solve→postsolve→unscale）。默认 true；CLI
+    /// `--scaling=off` 关闭供 A/B。目标/解还原原尺度（终检与目标重算在
+    /// 原问题上做），输出契约不变。
+    pub use_scaling: bool,
 }
 
 impl Default for SolveOptions {
-    /// 默认值：Tolerances::default() + BbOptions::default() + use_presolve=true。
+    /// 默认值：Tolerances::default() + BbOptions::default() + use_presolve=true
+    /// + use_scaling=true。
     fn default() -> Self {
         SolveOptions {
             tol: Tolerances::default(),
             bb: BbOptions::default(),
             use_presolve: true,
+            use_scaling: true,
         }
     }
 }
@@ -102,23 +109,39 @@ pub fn solve_controlled(
     problem.validate()?;
     let num_orig_vars = problem.vars.len();
 
-    // （可选）presolve → 缩减问题 + 还原映射。
+    // （可选）presolve → 缩减问题 + 还原映射。R4 起最前端先做问题级数值
+    // 缩放（scale→presolve→solve→postsolve→unscale）：缩放使容差判定
+    // 作用于均衡后量级（标准做法）；目标值不变（ĉ·ŷ = c·x）、正缩放保序
+    // ⇒ incumbent 比较合法、割在缩放空间生成对原问题有效（线性双射保
+    // 可行集）；终检与目标重算在**原问题**上做（unscale 后的 x），输出
+    // 契约不变。2 的幂因子保证 unscale 除法逐位精确。
+    let (pre_work, smap) = if opts.use_scaling {
+        let (scaled, map) = crate::scaling::scale_problem(problem);
+        (scaled, Some(map))
+    } else {
+        (problem.clone(), None)
+    };
     let (work, map, reductions) = if opts.use_presolve {
-        let (reduced, map) = presolve::presolve(problem, &opts.tol)?;
+        let (reduced, map) = presolve::presolve(&pre_work, &opts.tol)?;
         let reductions = map.fixed.len() + map.dropped_rows.len();
         (reduced, Some(map), reductions)
     } else {
-        (problem.clone(), None, 0)
+        (pre_work, None, 0)
     };
 
     let bb = branch_bound::branch_and_bound_controlled(&work, &opts.bb, ctrl, opts.tol, hooks)?;
 
-    // postsolve → 原始变量空间；B&B 未带回取值则不带解返回。
+    // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
+    // 带回取值则不带解返回。
     let (objective, values) = match bb.best_values {
         Some(reduced_x) => {
-            let mut x = match &map {
+            let x_pre = match &map {
                 Some(m) => presolve::postsolve(m, &reduced_x, num_orig_vars, &opts.tol),
                 None => reduced_x,
+            };
+            let mut x = match &smap {
+                Some(s) => s.unscale_x(&x_pre),
+                None => x_pre,
             };
             if x.len() != num_orig_vars {
                 return Err(MilpError::Numerical(format!(

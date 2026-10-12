@@ -36,3 +36,4 @@ pub mod solver;
 // 追加声明（并行分支定界引擎与搜索控制层）：仅追加，勿重排上方既有声明。
 pub mod search_ctrl;
 pub mod parallel_bb;
+pub mod scaling;
