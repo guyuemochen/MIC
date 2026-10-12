@@ -203,9 +203,15 @@ struct CutRecord {
 
 /// 依据当前 Optimal 表格生成一批割（不动 Simplex 状态）。
 ///
-/// 非基割松弛列因无记账（本函数不携带 cut_loop 的私有账本）而整列丢弃——
-/// π ≥ 0、d ≥ 0，丢弃只会放宽割，安全；cut_loop 内部走带记账路径，可精确
-/// 回代。调用前提：`bounds` 即 Simplex 最近一次 solve/resolve 所用界，且状态
+/// 非基割松弛列因无记账（本函数不携带 cut_loop 的私有账本）而整列丢弃。
+/// 【方向勘误（独立复核发现，R7）：割为 Σπ_j·d_j ≥ 1（π ≥ 0、d ≥ 0），
+/// 从 LHS 丢 π>0 的项使割**更强**、可能误切整数可行解——不是放宽。
+/// 该丢弃在全部接线路径**不可达**（cut_loop 委托 cut_loop_recorded：
+/// ledger 自空完整累积、割循环从重建的冷 Simplex 启动 ⇒ 每个割松弛列
+/// 必有记账，`RowOrigin::Cut` 查找恒命中）；公开入口若被用于手工
+/// add_row 过的 Simplex（库内无此调用方），丢弃产出的割可能过强而
+/// 无效——调用方自负。】cut_loop 内部走带记账路径，可精确回代。
+/// 调用前提：`bounds` 即 Simplex 最近一次 solve/resolve 所用界，且状态
 /// 为 Optimal。
 pub fn gomory_cuts(
     s: &Simplex,
@@ -318,10 +324,15 @@ fn gomory_cuts_inner(
                 continuous_pi(alpha, f0)
             };
             if !pi.is_finite() || pi <= 0.0 {
-                continue; // π = 0 无贡献；非有限为数值异常，丢列（放宽方向）
+                continue; // π = 0 无贡献（精确无操作）；非有限为数值异常，丢列
             }
             if pi < tol.zero {
-                continue; // 近零项丢弃（π ≥ 0、d ≥ 0，丢弃只放宽割）
+                // 近零项丢弃。方向勘误（独立复核，R7）：割为 Σπ·d ≥ 1
+                //（π ≥ 0、d ≥ 0），丢 0 < π < tol.zero 的项使割**更强**
+                //（非放宽）——增量上界 π·d_j ≤ tol.zero·d_j（tol.zero =
+                // 1e-12，结构列 d_j ≤ 界幅、松弛列 d_j = s_i 有界），数值
+                // 上可忽略，但方向如实记录、不称“安全放宽”。
+                continue;
             }
             if j < n {
                 if nb.at_upper {
@@ -339,7 +350,10 @@ fn gomory_cuts_inner(
                         // s = σ·(rhs − Σ a·x)/g，g 为该行 max|a_ij|（与 WP2
                         // 构建期归一一致）。
                         let Some(con) = problem.constraints.get(ci) else {
-                            continue; // 防御：行来源越界，丢列（放宽）
+                            // 防御：行来源越界，丢列——使割更强非放宽
+                            //（独立复核方向勘误，R7）；构造保证 origin 索引
+                            // 恒有效，此分支不可达。
+                            continue;
                         };
                         let g = con
                             .expr
@@ -360,7 +374,14 @@ fn gomory_cuts_inner(
                     RowOrigin::Cut(k) => {
                         // s_k = rhs_k − Σ terms·x（add_row 原尺度，不缩放）。
                         let Some(rec) = ledger.iter().find(|r| r.index == k) else {
-                            continue; // 无记账（公开入口路径）：丢列（放宽）
+                            // 无记账（公开入口路径）：丢列。方向勘误（独立
+                            // 复核，R7）：割 Σπ·d ≥ 1 丢 π>0 列使割**更强**、
+                            // 可能误切整数可行解（非放宽）。接线路径不可达：
+                            // cut_loop_recorded 的 ledger 自空完整累积 + 割
+                            // 循环从冷 Simplex 启动 ⇒ Cut 列必有记账；仅公开
+                            // 入口 gomory_cuts 手工用于带割 Simplex 时可达
+                            //（库内无此调用方，见其文档勘误块）。
+                            continue;
                         };
                         const_term += pi * rec.rhs;
                         for &(k2, a) in &rec.terms {
@@ -1164,8 +1185,12 @@ const AGG_MIR_MAX_PER_ROUND: usize = 8;
 /// ub−x ≥ 0 恒成立，整数列整界时 d ∈ Z_+），对偏差行套与 GMI 相同的
 /// 混合整数公式——**连续/松弛列 π ≠ 0 保留**（连续公式
 /// max(ĉ/f0, −ĉ/(1−f0))），松弛列回代按 GMI 既有纪律（原始行
-/// s = σ·(rhs−Σa·x)/g、割行只查已记账 ledger；无记账的割松弛列丢其 π 项
-/// ——π ≥ 0、d ≥ 0，丢弃只放宽）。
+/// s = σ·(rhs−Σa·x)/g、割行只查已记账 ledger）。【方向勘误（独立复核
+/// 发现，R7）：无记账时丢 π 项使割**更强**（割为 Σπ·d ≥ 1、π ≥ 0、
+/// d ≥ 0，从 LHS 丢正项收紧约束）、可能误切整数可行解——**不是放宽**；
+/// 接线路径不可达（cut_loop_recorded 的 ledger 自空完整累积、割循环从
+/// 冷 Simplex 启动 ⇒ 每个割松弛列必有记账），本路径为公开入口的防御
+/// 分支，触发时产出割可能过强而无效。】
 ///
 /// 有效性：合并行是原始等式系的恒等线性组合（B⁻¹ 行 + μ·归一行），
 /// 偏差形式 Σ ĉ_j d_j ≡ f0 (mod Z)、d ≥ 0 单侧，GMI 混合整数割引理
@@ -1265,7 +1290,11 @@ fn aggregated_mir_cuts(
             let RowOrigin::Constraint(ci) = info.origin else {
                 continue; // 割松弛列不作合并目标（其结构内容由 ledger 回代）
             };
-            let con = &problem.constraints[ci];
+            // 防御口径与 GMI 一致（独立复核发现，R7）：.get 而非直接下标
+            //——构造保证 origin 索引恒有效，此分支不可达，仅统一口径。
+            let Some(con) = problem.constraints.get(ci) else {
+                continue;
+            };
             let g = con
                 .expr
                 .terms
@@ -1326,7 +1355,8 @@ fn aggregated_mir_cuts(
                 continue;
             }
             // —— GMI π + 回代（连续/松弛列 π≠0 保留；松弛列按 GMI 纪律
-            //    代入 s 的定义，割行只查已记账 ledger，无记账丢 π 项只放宽）——
+            //    代入 s 的定义，割行只查已记账 ledger——无记账丢 π 项使割
+            //    更强非放宽，方向勘误见模块文档）——
             let mut coef = vec![0.0f64; n];
             let mut const_term = 0.0f64;
             let mut any = false;
@@ -1351,7 +1381,10 @@ fn aggregated_mir_cuts(
                     match info2.origin {
                         RowOrigin::Constraint(ci2) => {
                             let Some(con2) = problem.constraints.get(ci2) else {
-                                continue; // 防御：行来源越界，丢 π 项（放宽）
+                                // 防御：行来源越界，丢 π 项——使割更强非
+                                // 放宽（见模块文档方向勘误）；构造保证 origin
+                                // 索引恒有效，此分支不可达。
+                                continue;
                             };
                             let g2 = con2
                                 .expr
@@ -1370,7 +1403,9 @@ fn aggregated_mir_cuts(
                             any = true;
                         }
                         RowOrigin::Cut(ck) => {
-                            // 只查已记账 ledger（GMI 纪律）：无记账丢 π 项（放宽）。
+                            // 只查已记账 ledger（GMI 纪律）：无记账丢 π 项
+                            // ——使割更强非放宽（模块文档方向勘误）；接线路径
+                            // 不可达（ledger 完整累积），触发时割可能过强。
                             let Some(rec) = ledger.iter().find(|r| r.index == ck) else {
                                 continue;
                             };
