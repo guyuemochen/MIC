@@ -8,13 +8,18 @@
 ## 定位与能力边界
 
 - **能力**：纯 LP（全连续）、0-1 规划、一般整数与混合类型 MILP 的**精确**
-  求解——两阶段有界单纯形 + 深度优先分支定界 + 根节点 Gomory 混合整数割
-  （GMI）+ 取整/潜水启发式 + 保守预处理，可选多线程并行与 MIP gap 提前
-  终止。`threads = 1` 时求解完全确定，同一算例同一结果（`threads ≥ 2` 见
+  求解——两阶段有界单纯形（大规模启用稀疏簿记）+ 深度优先分支定界（类自适应
+  分支默认）+ 根节点 GMI/聚合 MIR 割 + 取整/潜水/子集和 MITM 启发式 + 数值
+  缩放与保守预处理，可选多线程并行（本地亲和或全局 DFS 工作栈）与 MIP gap
+  提前终止。`threads = 1` 时求解完全确定，同一算例同一结果（`threads ≥ 2` 见
   「并行架构与确定性」一节）。
-- **规模目标**：以 ≤500 结构变量、≤2000 行的正确性为设计目标。分支定界
-  使用显式 dense 表格，内存 ≈ m×(n+m+a)×8B（2000 行 × 500 变量约 72MB
-  量级）；运行时间随分支节点数增长，由节点/时间上限兜底。
+- **规模目标**：以 ≤500 结构变量、≤2000 行的正确性为设计目标；2026-10
+  大规模优化轮（R1–R6）后，表格单元数超 2^18 的大算例（如 bench 的
+  lp-sparse-4000x800、setcover-400x800）启用稀疏簿记路径以压低每迭代成本
+  （小算例逐字节走旧稠密路径，行为零扰动）。分支定界使用显式 dense 表格，
+  内存 ≈ m×(n+m+a)×8B（2000 行 × 500 变量约 72MB 量级）；运行时间随分支
+  节点数增长，由节点/时间上限兜底。逐轮实测数据见
+  `docs/large-scale-report.md`。
 - **诚实性铁律**：只有满足最优性终止条件才报 Optimal；触发迭代/节点/时间
   上限一律报 `LimitReached`（附已有 incumbent），绝不把截断结果谎报为最优。
 - **边界**：变量下界必须有限（不支持 −∞ 下界；上界默认 +∞ 合法）；`.milp`
@@ -33,7 +38,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack local|global] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -48,7 +53,10 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
-| `--branch-rule most_fractional\|pseudocost` | 分支规则（默认 `most_fractional`；`pseudocost` 含可靠性冷启动，个别问题类可能更优/更差，可切换对比） | `most_fractional` | 未知 token / 重复出现报错 |
+| `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 ≤ 64 的背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
+| `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
+| `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
+| `--work-stack local\|global` | 并行工作栈模式（R6，仅 `--threads ≥ 2` 生效）：`local` 本地亲和 + 偷取（现状）；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `local` | 非 `local\|global` token / 重复出现报错 |
 | `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
 
 ### 输出格式
@@ -155,12 +163,13 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   最优**（目标与 `on`/`off` 一致）。
 - **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值 ⇒ `auto ≡ on`，CLI
   默认输出逐字节一致（由验收测试钉死）。
-- **hard-knapsack-12**：184 节点 / objective 523（2026-10 启发式增强后
-  的确定性基线——根 dive 现在能供应 incumbent；增强前根 dive 在断点链
-  上必耗尽 8 次预算而失败。根预割启发式轮加入后根 incumbent 453→511 ⇒
-  剪枝提前，235→184）。一般而言中途 dive 若改进 incumbent 可使
-  节点数**变少**（剪枝更早），`auto` 的 nodes/迭代数不承诺与 `on` 相同
-  （目标与终态恒同）。
+- **hard-knapsack-12**：196 节点 / objective 523（大规模轮 R3 起的确定性
+  基线——hard-knapsack-12 命中背包类检测，类自适应默认翻 Pseudocost +
+  可靠性冷启动，树形 159→196、目标 523 恒为已知最优；演进史 235→184（根
+  预割启发式轮使根 incumbent 453→511、剪枝提前）→159（默认规则复核回退
+  MostFractional）→196；`--branch-rule most_fractional` 显式复现 159 旧
+  径）。一般而言中途 dive 若改进 incumbent 可使节点数**变少**（剪枝更早），
+  `auto` 的 nodes/迭代数不承诺与 `on` 相同（目标与终态恒同）。
 
 ### 策略级自动降级（auto + --time-limit-secs）
 
@@ -195,6 +204,15 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   `std::thread::scope` 派生 N 个 worker 抢占式处理；worker 各持独立
   `Simplex` 实例，按序 `add_row` 重放根阶段记录的割清单，任意界跳转由
   snap/Phase-1 重建处理。
+- **工作栈模式（大规模轮 R6）**：`--work-stack local`（默认）= 本地亲和 +
+  偷取（现状，行为逐字节不变）；`--work-stack global` = 单一全局 DFS steal
+  栈——`complete_node` 把子代压全局栈顶、worker 恒弹栈顶（LIFO），并行
+  探索序对齐顺序 DFS（谁弹到谁延续 t1 的下一节点），incumbent 时序/剪枝
+  与 t1 同构，抑制并行搜索膨胀。实测 mknap-5x300 t4：local 29.3–33.3s
+  （nodes 193k–251k）→ global 16.1s（nodes ≈100k），墙钟 −45%~−52%；
+  t1 默认路径 15 算例行为逐位不变。诚实边界：t4 聚合吞吐仍被单锁池竞争与
+  并行子树交错吃掉（t4/t1 ≈ 0.6–1.15×，本架构下无稳定并行加速），不承诺
+  线性加速。
 - **共享状态与同步原语**：节点池 `Mutex`（互斥弹出 ⇒ 每节点恰处理一次）；
   incumbent `RwLock`（单调改进，剪枝判定与顺序路径逐字相同 ⇒ 永不丢更优
   解）；**双 Condvar**——`cv_workers` 供 worker 等节点、`cv_progress` 供
@@ -296,6 +314,17 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
 - 显式 dense 表格 + 有界变量机制（非基变量位于 lb 或 ub）；分支定界只改
   `Bounds` 不改约束矩阵，热启动代价最低。内部统一 min（Maximize 目标系数
   取负，报告时还原并加 `obj_offset`）。
+- **稀疏混合表格（大规模轮 R1）**：表格单元数（m×ncols）超过
+  `RC_SPARSE_CELL_THRESHOLD = 2^18 = 262144` 才启用每行非零列索引簿记
+  （`row_nz`）：主元消元同步归并游标簿记（fill-in 插入 / 恰零惰性墓碑 /
+  墓碑复活，每 64 主元压缩 + debug 全量重建比对），密度过高的行（nnz×4 ≥
+  ncols）回退稠密标记；检验数批量散射（`#[inline(never)]` 外置函数，防
+  codegen 扰动旧路径）、加行列插入索引右移、割分离稀疏读表
+  （`tableau_row_terms`）均走稀疏路径。**阈值之下逐字节走旧稠密路径**
+  （`do_pivot_legacy_inner` 与旧实现函数体经程序化比对字节一致），bench
+  13 个既有算例全部留驻旧路径、行为零扰动。实测 setcover-400x800 同一
+  24000 迭代序列每迭代成本 −6%（两轮独立复现）；lp-sparse-4000x800
+  收益 0~−5%（不稳定）。
 - **按行归一、行永不翻转**：构建期每行除以 `max|a_ij|` 后施用容差，杜绝
   除零/NaN；行不翻转保证松弛列符号只有两个合法来源（Le=+1、Ge=−1），对偶
   与解的还原无符号歧义。
@@ -326,9 +355,17 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
   Unbounded（见理论近似声明）；IterationLimit ⇒ 剪枝并记 limit_hit；LP bound
   不优于 incumbent ⇒ 剪枝；整数性满足 ⇒ 取整复核（伪整数解**不得**剪枝，
   必须继续分支）；空界 ⇒ 剪枝。
-- 分支变量规则 MostFractional（max min(f, 1−f)，并列取最小下标）；可选
-  [`BranchRule::Pseudocost`]（`BbOptions::branch_rule`，编程 API；无观测时
-  退化为 f⁻·f⁺ 乘积规则——目前仅顺序路径生效）；剪枝条件
+- 分支变量规则默认**类自适应**（大规模轮 R3，`BbOptions::branch_rule_auto`
+  默认 true）：`detect_pseudocost_favorable`（全变量 Binary ∧ 全部约束为
+  正系数 Le 行 ∧ 行数 ∈ [1,64]——覆盖 0-1 背包/多维背包类）命中 ⇒
+  [`BranchRule::Pseudocost`] + 可靠性冷启动（根节点全量探测，预算
+  2×min(分数候选数, 64)；深度 1-8 每节点探测预算 8；深度 > 8 不探测；
+  探测 = 收紧界 → 重解 → 严格正增益才记账 → 精确恢复原界，确定性不读
+  墙钟），否则 MostFractional（max min(f, 1−f)，并列取最小下标）；显式
+  指定（CLI `--branch-rule` / `branch_rule_auto = false`）覆盖优先。实测
+  mknap 类 nodes −44%~−56%（mknap-5x300 无时限 341446→163641）；单行
+  背包类探测白烧小代价（knapsack-500 +18ms、knapsack-5000 +0.6s 量级），
+  不命中类（setcover/marketsplit/milp-mixed）行为逐字节不变。剪枝条件
   `node_bound ≤ incumbent + 1e-9×(1+|incumbent|)`。
 - **界变化后的对偶修复快路径**（2026-10，大规模主优化）：分支收紧界后若
   基变量越界，不再整基重建 + 完整 Phase-1（冷重解），而是有界变量对偶
@@ -347,9 +384,13 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
 - 终态诚实判定：栈空自然退出且有 incumbent ⇒ Optimal、无 ⇒ Infeasible；
   节点/时间上限触发 ⇒ LimitReached（附 incumbent）。
 - **基准套件**：`bench/`（`gen_instances.py` 生成，种子确定）：强相关背包
-  200/500（附 DP 独立核对最优）、多背包 3×100、指派 16×16、混合 MILP、
-  宽 LP。2026-10 优化后（对偶修复 + 深潜 + 控制器重调 256/400）：可完成
-  算例单线程 2.1–3.3×、4 线程 2.2–3.4× 加速，目标值与基线全部一致。
+  200/500/2000/5000（附 DP 独立核对最优 `.opt`）、多背包 3×100/5×300/
+  10×200、指派 16×16/40×40、混合 MILP、宽 LP、稀疏 LP 4000×800、
+  setcover 至 400×800、marketsplit 至 5×50，共 22 个 `.milp` 算例。计时
+  矩阵分两集（`bench/run_timings.py --set gate|full`）：gate = 6 算例 ×
+  30s 时限（单次实测约 2 分钟、设计上限 3 分钟，快速回归）；full = 18 算例 × threads {1,4} ×
+  90s（中位数 JSON + 逐次原始记录）。2026-10 大规模轮（R1–R6）逐轮同窗
+  交错 A/B 实测与数据见 `docs/large-scale-report.md`。
 
 ### 根节点 GMI 割（WP3）
 
@@ -363,17 +404,63 @@ tol.zero）时才可用整数公式，否则必须按连续列公式处理，否
 该集合为空时割可切空松弛区域）——终态如实映射 Infeasible（CLI
 `status = infeasible`、退出码 2），不是数值错误。
 
+#### 表格行聚合 MIR 割（大规模轮 R2）
+
+根割循环的割族在 c-MIR、GMI 之后新增**聚合 MIR**（`cuts::aggregated_mir_cuts`）：
+候选表格行（GMI 同口径）与其**非基松弛列的原始归一行**合并（μ = −α/σ 恰消去
+该松弛列、并入其结构内容；行支撑含锚列自身时整行除锚系数重新归一，漏归一会
+静默丢项产无效割——由 fuzz 抓出并钉住），全部列取单侧偏差（非基按所贴界、
+基本结构列按较近界）后套与 GMI 相同的混合整数公式；**连续/松弛列 π ≠ 0
+保留**（松弛列回代按 GMI 既有记账纪律）。每轮尝试上限 64（`AGG_MIR_MAX_TRIES`）、
+配额 8 条（`AGG_MIR_MAX_PER_ROUND`，无配额时 setcover 类根割白烧 +244%），
+批序 c-MIR → GMI → 聚合 MIR → 隐含界 → 覆盖统一截断。两个朴素构造（表格行
+内松弛列全部回代 ⇒ 恒等式塌缩 0=0；表格行对 λ 直接合并产生双基列）经离线
+证明否决。正确性由 50 种子随机小模型穷举 fuzz 钉死（3072 整数点 × 连续两端点，
+零误切，随测试套件运行）。实测：mknap-5x300 无时限 nodes −42%
+（591752→341446）、墙钟 −39%；knapsack-2000 nodes −94%（594→38）；
+milp-wolsey-2 根割界直接收紧到整数最优 40 ⇒ 根节点即证最优（nodes 7→1）。
+
 ### 预处理（WP3）
 
 保守规则仅四类且可证明安全，每轮严格按 **R1→R2→R3→R4** 顺序施加，禁止
 重排，最多 5 轮无化简即停：R1 整数变量界取整；R2 固定列（单点界）代入删列；
 R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 
+### 数值缩放（大规模轮 R4）
+
+`scaling::scale_problem` 在求解编排最前端做问题级行列缩放（管线变为
+scale → presolve → solve → postsolve → unscale；CLI `--scaling=off` 关闭，
+关闭时逐字节复现旧路径）：迭代几何均值（≤ 8 轮 sweep），行因子
+r_i = 1/√(max|a|·min|a|)（行非零上）吸附最近 **2 的幂**后整行乘上，列乘子
+同式经代换 ŷ = x·s_j 施加；全部因子吸附 2^0 即停。代换保证**目标值不变**
+（ĉ·ŷ = c·x）、正缩放保序（incumbent 比较合法）、线性双射保可行集（割在
+缩放空间生成对原问题有效）；2 的幂乘除 f64 精确无舍入 ⇒ unscale 逐位还原，
+终检与目标重算在**原问题**上做（输出契约不变）。**正确性红线（实测抓出）**：
+列缩放仅 **Continuous** 列——Integer/Binary 列的整格双射 x∈Z ⟺ ŷ∈Z 对
+2 的幂因子仅 s=1 成立（首次按宽口径落地被安全网终检在 milp-mixed-250i40c
+上当场拒绝半整数解），Binary 的 0/1 语义同禁；全整数算例只有行缩放参与。
+实测 mknap-5x300 无时限 nodes −46%（163641→87800）、墙钟 −41%
+（32.7→19.2s 中位）；milp-mixed 连续列收益 lpi −18%/−21%；其余算例行为
+逐位不变（knapsack DP 真值 3409/8975/35328/88526 在 on/off 双口径下精确）。
+
 ### 启发式（WP3）
 
 `round_and_check`（简单取整 + 可行性复核）与 `dive`（fix-and-dive，迭代
 ≤ 8 次固定最接近整数的非整变量后重解 LP）只供应 incumbent 以加速剪枝，
 不影响正确性；复核容差与 integrality 联动（见下）。
+
+`subset_sum_mitm`（子集和 MITM，大规模轮 R5；CLI `--mitm=on|off`，默认
+on）是 LP 驱动启发式全部失败后的**最后手段**，在根阶段 dive 之后、仅
+incumbent 为空时启动。类门控（全部满足才启动，否则恒零成本跳过）：全变量
+Binary ∧ 全约束 Eq ∧ 系数/右端可整数化（2 的幂分母有理数，|v| < 32000——
+R4 缩放产生的 2^k 分母可精确恢复）∧ 行数 ≤ 8 ∧ n ≤ 84。机制（脱离 LP
+信息源）：n ≤ 42 时全变量半枚举 MITM（2×2^(n/2)，u128 打包键 + 二分）
+**精确**求解 A·x = b（planted 解必被找到）；n ≤ 84 时窗口半枚举（基点取
+根 LP 解取整，|窗口| ≤ 42 的固定种子 LCG 随机子集上重解，默认 8 窗重试）。
+产出经 `round_and_check` 原始界复核，只供应 incumbent 不影响正确性；固定
+种子、不读墙钟（确定性）。实测解开 marketsplit 大规格「零可行解解锁死」：
+marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点证最优
+19.0（9.9s）；marketsplit-5x50 拿到首个 incumbent 25.0（证最优未闭合）。
 
 ### 容差表（集中定义于 `model::Tolerances`，库内禁止散落 magic number）
 
@@ -415,27 +502,48 @@ R3 空行判定/删行；R4 单系数行换算为变量界后删行。
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 184 节点（threads=1；并行下节点数可变） | 2^12 = 4096 穷举；实测 184 节点 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 196 节点（threads=1 默认类自适应分支；`--branch-rule most_fractional` 下为 159；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
+
+## 大规模算例（bench/）
+
+`bench/instances/` 共 22 个 `.milp` 算例（`bench/gen_instances.py` 生成，
+种子确定），2026-10 大规模轮新增 9 个，其中进入计时矩阵的 5 个（t1 + 90s
+探针标定）：
+
+| 算例 | 规模 | t1 实测（探针标定） |
+|------|------|---------------------|
+| `lp-sparse-4000x800` | 稀疏纯 LP：800 行 × 4000 列，密度 8%（256,000 非零元） | 35.8s optimal（1 节点 / 7774 单纯形迭代，obj 5893.705757）——稀疏核心主秀场；注意时限只在 B&B 节点边界检查，单节点纯 LP 的根 LP 会跑完，30s gate 名义时限下仍约 34s optimal |
+| `setcover-400x800` | 集合覆盖：400 覆盖行 × 800 二元列，密度 0.08 | 17.3s **limit_reached**（1 节点）——lp_iterations = 24000 恰为单次求解迭代上限 max(10k, 20×(m+n))，setcover 类迭代上限传播失败模式的大规模样本，如实入列 |
+| `knapsack-5000` | 强相关 0/1 背包 5000 变量 | 2.2s optimal，objective 88526 与独立 DP 真值（`knapsack-5000.opt`）一致 |
+| `mknap-10x200` | 多维背包：200 二元变量 × 10 约束行 | 26.4s optimal，obj 1791（254,119 节点 / 3,132,767 LP 迭代） |
+| `assign-40x40` | 指派 40×40（1600 二元变量 / 80 等式行） | 0.12s optimal，obj 176（1 节点——指派约束矩阵全单模，根 LP 即整数解） |
+
+矩阵外另有拉伸/消融算例：`lp-wide-1000x2000`、`setcover-300x600`（R1 行为
+对账用）、`marketsplit-4x40` / `marketsplit-5x50`（R5 MITM 目标算例）。计时
+矩阵：`python bench/run_timings.py --set gate`（6 算例 × 30s，约 3 分钟快速
+回归）或 `--set full`（18 算例 × threads {1,4} × 90s）。逐轮改动与实测数据
+见 [docs/large-scale-report.md](../docs/large-scale-report.md)。
 
 ## 仓库布局
 
 ```text
 milp/
 ├── src/
-│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode）
+│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode/branch-rule/scaling/mitm/work-stack）
 │   ├── error.rs         # MilpError 与 Result 别名（WP1）
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）
-│   ├── simplex.rs       # 两阶段有界单纯形（WP2）
+│   ├── simplex.rs       # 两阶段有界单纯形 + 稀疏混合表格簿记（WP2，大规模轮 R1）
 │   ├── presolve.rs      # 保守预处理与还原（WP3）
-│   ├── cuts.rs          # 根节点 GMI 割（WP3）
-│   ├── heuristics.rs    # 取整/潜水启发式（WP3）
-│   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口（WP4）
-│   ├── solver.rs        # 统一编排、受控求解入口与安全网终检（WP4）
+│   ├── cuts.rs          # 根节点 GMI/聚合 MIR 割（WP3，大规模轮 R2 扩展）
+│   ├── heuristics.rs    # 取整/潜水启发式 + 子集和 MITM（WP3，大规模轮 R5）
+│   ├── scaling.rs       # 行列迭代几何均值数值缩放（大规模轮 R4）
+│   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口 + 类自适应分支默认（WP4）
+│   ├── solver.rs        # 统一编排（含缩放接线）、受控求解入口与安全网终检（WP4）
 │   ├── search_ctrl.rs   # 搜索控制层：进度快照/gap 口径/自适应控制器（纯逻辑零锁）
-│   └── parallel_bb.rs   # 并行分支定界引擎（节点池/incumbent/双 Condvar/粘滞 stop）
+│   └── parallel_bb.rs   # 并行分支定界引擎（节点池/incumbent/双 Condvar/粘滞 stop/全局工作栈）
 ├── instances/           # 8 个验收算例（7 原算例 + hard-knapsack-12）
 └── tests/acceptance.rs  # 验收测试（WP5 + 受控搜索参数扩展）
 ```

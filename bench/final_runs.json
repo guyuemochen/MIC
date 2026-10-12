@@ -1,0 +1,290 @@
+[
+  {
+    "instance": "assign-16x16",
+    "threads": 1,
+    "wall_secs": 0.002945,
+    "status": "optimal",
+    "objective": 165.0,
+    "nodes": 1
+  },
+  {
+    "instance": "assign-16x16",
+    "threads": 4,
+    "wall_secs": 0.002807,
+    "status": "optimal",
+    "objective": 165.0,
+    "nodes": 1
+  },
+  {
+    "instance": "lp-wide-200x300",
+    "threads": 1,
+    "wall_secs": 0.010707,
+    "status": "optimal",
+    "objective": 112.668615,
+    "nodes": 1
+  },
+  {
+    "instance": "lp-wide-200x300",
+    "threads": 4,
+    "wall_secs": 0.01113,
+    "status": "optimal",
+    "objective": 112.668615,
+    "nodes": 1
+  },
+  {
+    "instance": "milp-mixed-120i30c",
+    "threads": 1,
+    "wall_secs": 0.005204,
+    "status": "optimal",
+    "objective": 980.853268,
+    "nodes": 47
+  },
+  {
+    "instance": "milp-mixed-120i30c",
+    "threads": 4,
+    "wall_secs": 0.00581,
+    "status": "optimal",
+    "objective": 980.853268,
+    "nodes": 47
+  },
+  {
+    "instance": "milp-mixed-250i40c",
+    "threads": 1,
+    "wall_secs": 0.015542,
+    "status": "optimal",
+    "objective": 1275.791752,
+    "nodes": 53
+  },
+  {
+    "instance": "milp-mixed-250i40c",
+    "threads": 4,
+    "wall_secs": 0.020001,
+    "status": "optimal",
+    "objective": 1275.791752,
+    "nodes": 53
+  },
+  {
+    "instance": "knapsack-200",
+    "threads": 1,
+    "wall_secs": 0.004916,
+    "status": "optimal",
+    "objective": 3409.0,
+    "nodes": 1
+  },
+  {
+    "instance": "knapsack-200",
+    "threads": 4,
+    "wall_secs": 0.004046,
+    "status": "optimal",
+    "objective": 3409.0,
+    "nodes": 1
+  },
+  {
+    "instance": "knapsack-500",
+    "threads": 1,
+    "wall_secs": 0.047453,
+    "status": "optimal",
+    "objective": 8975.0,
+    "nodes": 536
+  },
+  {
+    "instance": "knapsack-500",
+    "threads": 4,
+    "wall_secs": 0.034683,
+    "status": "optimal",
+    "objective": 8975.0,
+    "nodes": 562
+  },
+  {
+    "instance": "knapsack-2000",
+    "threads": 1,
+    "wall_secs": 0.326565,
+    "status": "optimal",
+    "objective": 35328.0,
+    "nodes": 39
+  },
+  {
+    "instance": "knapsack-2000",
+    "threads": 4,
+    "wall_secs": 0.388406,
+    "status": "optimal",
+    "objective": 35328.0,
+    "nodes": 88
+  },
+  {
+    "instance": "mknap-3x100",
+    "threads": 1,
+    "wall_secs": 0.102931,
+    "status": "optimal",
+    "objective": 2331.0,
+    "nodes": 2120
+  },
+  {
+    "instance": "mknap-3x100",
+    "threads": 4,
+    "wall_secs": 0.068264,
+    "status": "optimal",
+    "objective": 2331.0,
+    "nodes": 3990
+  },
+  {
+    "instance": "mknap-5x300",
+    "threads": 1,
+    "wall_secs": 27.379553,
+    "status": "optimal",
+    "objective": 4762.0,
+    "nodes": 87800
+  },
+  {
+    "instance": "mknap-5x300",
+    "threads": 4,
+    "wall_secs": 16.454531,
+    "status": "optimal",
+    "objective": 4762.0,
+    "nodes": 195750
+  },
+  {
+    "instance": "marketsplit-2x20",
+    "threads": 1,
+    "wall_secs": 0.001165,
+    "status": "optimal",
+    "objective": 10.0,
+    "nodes": 1
+  },
+  {
+    "instance": "marketsplit-2x20",
+    "threads": 4,
+    "wall_secs": 0.000817,
+    "status": "optimal",
+    "objective": 10.0,
+    "nodes": 1
+  },
+  {
+    "instance": "marketsplit-4x30",
+    "threads": 1,
+    "wall_secs": 0.014981,
+    "status": "optimal",
+    "objective": 15.0,
+    "nodes": 1
+  },
+  {
+    "instance": "marketsplit-4x30",
+    "threads": 4,
+    "wall_secs": 0.0153,
+    "status": "optimal",
+    "objective": 15.0,
+    "nodes": 1
+  },
+  {
+    "instance": "setcover-60x100",
+    "threads": 1,
+    "wall_secs": 0.008988,
+    "status": "optimal",
+    "objective": 243.0,
+    "nodes": 1
+  },
+  {
+    "instance": "setcover-60x100",
+    "threads": 4,
+    "wall_secs": 0.009463,
+    "status": "optimal",
+    "objective": 243.0,
+    "nodes": 1
+  },
+  {
+    "instance": "setcover-100x150",
+    "threads": 1,
+    "wall_secs": 0.597781,
+    "status": "optimal",
+    "objective": 276.0,
+    "nodes": 45
+  },
+  {
+    "instance": "setcover-100x150",
+    "threads": 4,
+    "wall_secs": 0.617546,
+    "status": "optimal",
+    "objective": 276.0,
+    "nodes": 37
+  },
+  {
+    "instance": "lp-sparse-4000x800",
+    "threads": 1,
+    "wall_secs": 54.39515,
+    "status": "optimal",
+    "objective": 5893.705757,
+    "nodes": 1
+  },
+  {
+    "instance": "lp-sparse-4000x800",
+    "threads": 4,
+    "wall_secs": 44.044007,
+    "status": "optimal",
+    "objective": 5893.705757,
+    "nodes": 1
+  },
+  {
+    "instance": "setcover-400x800",
+    "threads": 1,
+    "wall_secs": 24.414085,
+    "status": "limit_reached",
+    "objective": null,
+    "nodes": 1
+  },
+  {
+    "instance": "setcover-400x800",
+    "threads": 4,
+    "wall_secs": 21.4319,
+    "status": "limit_reached",
+    "objective": null,
+    "nodes": 1
+  },
+  {
+    "instance": "knapsack-5000",
+    "threads": 1,
+    "wall_secs": 3.218966,
+    "status": "optimal",
+    "objective": 88526.0,
+    "nodes": 52
+  },
+  {
+    "instance": "knapsack-5000",
+    "threads": 4,
+    "wall_secs": 4.125267,
+    "status": "optimal",
+    "objective": 88526.0,
+    "nodes": 83
+  },
+  {
+    "instance": "mknap-10x200",
+    "threads": 1,
+    "wall_secs": 22.376622,
+    "status": "optimal",
+    "objective": 1791.0,
+    "nodes": 142242
+  },
+  {
+    "instance": "mknap-10x200",
+    "threads": 4,
+    "wall_secs": 11.44266,
+    "status": "optimal",
+    "objective": 1791.0,
+    "nodes": 103770
+  },
+  {
+    "instance": "assign-40x40",
+    "threads": 1,
+    "wall_secs": 0.249876,
+    "status": "optimal",
+    "objective": 176.0,
+    "nodes": 1
+  },
+  {
+    "instance": "assign-40x40",
+    "threads": 4,
+    "wall_secs": 0.178925,
+    "status": "optimal",
+    "objective": 176.0,
+    "nodes": 1
+  }
+]

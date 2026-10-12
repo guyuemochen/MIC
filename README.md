@@ -4,7 +4,7 @@ MIC 是一组完全独立的 Rust 求解器 crate：**M**ixed-**I**nteger 精确
 
 | 目录 | 求解器 | 核心算法 | 验证状态 |
 |---|---|---|---|
-| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛 + 分支定界 + Gomory 混合整数割 + 预处理/潜水启发式；多线程、Gurobi 式进度日志、自适应启发式与策略级自动降级 | 6 个已知最优解算例全部精确命中；CLI 端到端一致 |
+| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛（大规模稀疏簿记）+ 分支定界（类自适应分支）+ Gomory/聚合 MIR 割 + 数值缩放 + 预处理/潜水/子集和 MITM 启发式；多线程（本地亲和或全局 DFS 工作栈）、Gurobi 式进度日志、自适应启发式与策略级自动降级 | 6 个已知最优解算例全部精确命中；CLI 端到端一致；大规模基准（bench gate/full 计时矩阵，18 算例 t1/t4）逐轮 A/B 验证，5000 变量背包与独立 DP 真值一致 |
 | [`planner/`](planner/README.md) | OptaPlanner 式**启发式**约束求解器 | HardSoftScore 硬软评分 + First/Best Fit 构造启发式 + 禁忌/模拟退火/迟到接受局部搜索 | 6 个算例的可行性（hard=0）、搜索改进、固定种子可复现全部满足 |
 
 ## 目录结构
@@ -12,8 +12,8 @@ MIC 是一组完全独立的 Rust 求解器 crate：**M**ixed-**I**nteger 精确
 ```
 MIC/
 ├── milp/               MILP 精确求解器（独立 crate）
-│   ├── src/            建模/解析、单纯形、预处理、割平面、启发式、分支定界、编排
-│   ├── instances/      7 个 .milp 算例（LP / 背包 / 指派 / 一般 MILP / 不可行 / 无界）
+│   ├── src/            建模/解析、单纯形（稀疏簿记）、预处理、割平面、数值缩放、启发式、分支定界、编排
+│   ├── instances/      8 个 .milp 算例（LP / 背包 / 指派 / 一般 MILP / 不可行 / 无界）
 │   ├── tests/          验收测试（已知最优解断言）
 │   └── README.md       算例格式、CLI、编程 API
 ├── planner/            OptaPlanner 式启发式求解器（独立 crate）
@@ -26,10 +26,12 @@ MIC/
 │   ├── examples/       knapsack.py 端到端示例
 │   ├── tests/          Python unittest 套件（已知最优/状态/参数/句柄）
 │   └── README.md       安装前置与完整 API 参考
-├── bench/              大规模基准算例与生成器（gen_instances.py，种子确定；
-│   └── instances/      背包 200/500（附 DP 核对最优）、多背包、指派、混合 MILP、宽 LP）
+├── bench/              大规模基准算例与生成器（gen_instances.py，种子确定；计时矩阵
+│   └── instances/      gate=6 / full=18 算例：背包 200–5000（附 DP 核对最优 .opt）、多背包、
+│                       指派、混合 MILP、宽 LP、稀疏 LP 4000×800、setcover 400×800、marketsplit，共 22 个 .milp）
 ├── docs/
-│   └── 交付报告.md      验证结果、评审发现（含证据与状态）、未覆盖范围
+│   ├── 交付报告.md      验证结果、评审发现（含证据与状态）、未覆盖范围
+│   └── large-scale-report.md   milp 大规模优化轮（R1–R6）逐轮记录、实测数据与遗留问题
 └── README.md           本文件
 ```
 
@@ -45,6 +47,17 @@ cargo run --manifest-path milp/Cargo.toml --release -- milp/instances/knapsack-1
 
 常用参数：`--verbose`（输出求解过程）、`--time-limit-secs N`（限时）。
 求得最优时最后一行输出 `objective = <数值>`；不可行/无界有独立状态与退出码。
+
+大规模算例示例（`bench/instances/`，2026-10 大规模优化轮 R1–R6 验证）——
+稀疏纯 LP 800 行 × 4000 列（密度 8%），单线程约 35–45s 证最优：
+
+```bash
+cargo run --manifest-path milp/Cargo.toml --release -- bench/instances/lp-sparse-4000x800.milp
+# status = optimal / objective = 5893.705757（1 节点，7774 次单纯形迭代）
+```
+
+（更快的核验路径：`bench/instances/knapsack-5000.milp` 单线程约 2.2s 证最优
+88526，与生成器独立 DP 真值一致。）
 
 ### planner（启发式求解，可行 + 快速）
 
@@ -106,5 +119,6 @@ if m.Status == GRB.OPTIMAL:
 开发过程中的全部验证结果与独立代码评审结论见 [docs/交付报告.md](docs/交付报告.md)。要点：
 
 - 所有验收门禁（编译、全部测试、已知最优/可行性/可复现断言、CLI 端到端）均通过；
+- **milp 大规模基准**（2026-10，分支 `feat/gurobi-large-scale`）：六轮优化——稀疏混合表格（R1）、聚合 MIR 割（R2）、分支类自适应默认（R3）、数值缩放（R4）、子集和 MITM 启发式（R5）、全局 DFS 工作栈（R6）——全部以同窗交错 A/B 中位数为口径实测，`threads=1` 行为字段（status/nodes/迭代/目标）对账或逐位一致、目标值与已知最优/DP 真值全部精确；bench 计时矩阵扩为 gate（6 算例、约 3 分钟）/full（18 算例 × t1/t4）两集（gate 单次约 2–3 分钟）。逐轮数据（含各轮内部被回退的尝试）与遗留问题见 [docs/large-scale-report.md](docs/large-scale-report.md)；
 - 评审发现的 **2 个高危问题已修复并通过回归验证**（milp 单纯形热启动误报 LimitReached；planner 解析器 CAP/RES 指令交错的静默建模错误）；
 - 另有 **6 个中低危发现未修复**（数值语义、容差边界、文档陈旧等），每条都附证据与位置，处理优先级由您决定。

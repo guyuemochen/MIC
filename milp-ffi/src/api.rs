@@ -702,6 +702,7 @@ pub extern "C" fn milp_ffi_solve(model: *mut c_void) -> i32 {
                 ..BbOptions::default()
             },
             use_presolve: true,
+            use_scaling: true, // R4 数值缩放：与 CLI/库默认同源（目标与解还原原尺度）
         };
         let ctrl = SearchControl {
             threads: params.threads,
