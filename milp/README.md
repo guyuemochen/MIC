@@ -54,7 +54,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
-| `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 ≤ 64 的背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
+| `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--work-stack local\|global` | 并行工作栈模式（R6，仅 `--threads ≥ 2` 生效）：`local` 本地亲和 + 偷取（现状）；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `local` | 非 `local\|global` token / 重复出现报错 |
@@ -164,13 +164,15 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   最优**（目标与 `on`/`off` 一致）。
 - **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值 ⇒ `auto ≡ on`，CLI
   默认输出逐字节一致（由验收测试钉死）。
-- **hard-knapsack-12**：196 节点 / objective 523（大规模轮 R3 起的确定性
-  基线——hard-knapsack-12 命中背包类检测，类自适应默认翻 Pseudocost +
-  可靠性冷启动，树形 159→196、目标 523 恒为已知最优；演进史 235→184（根
+- **hard-knapsack-12**：159 节点 / objective 523（P3 起的确定性基线——
+  hard-knapsack-12 为**单行**背包，类检测行数下限收到 2 后不再命中，默认
+  回落 MostFractional；目标 523 恒为已知最优；演进史 235→184（根
   预割启发式轮使根 incumbent 453→511、剪枝提前）→159（默认规则复核回退
-  MostFractional）→196；`--branch-rule most_fractional` 显式复现 159 旧
-  径）。一般而言中途 dive 若改进 incumbent 可使节点数**变少**（剪枝更早），
-  `auto` 的 nodes/迭代数不承诺与 `on` 相同（目标与终态恒同）。
+  MostFractional）→196（R3 类自适应命中背包类翻 Pseudocost + 可靠性
+  冷启动）→159（P3 行数下限 1→2，单行类回落；`--branch-rule
+  pseudocost` 显式复现 196 旧径）。一般而言中途 dive 若改进 incumbent
+  可使节点数**变少**（剪枝更早），`auto` 的 nodes/迭代数不承诺与 `on`
+  相同（目标与终态恒同）。
 
 ### 策略级自动降级（auto + --time-limit-secs）
 
@@ -371,14 +373,16 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
   约束）。
 - 分支变量规则默认**类自适应**（大规模轮 R3，`BbOptions::branch_rule_auto`
   默认 true）：`detect_pseudocost_favorable`（全变量 Binary ∧ 全部约束为
-  正系数 Le 行 ∧ 行数 ∈ [1,64]——覆盖 0-1 背包/多维背包类）命中 ⇒
+  正系数 Le 行 ∧ 行数 ∈ [2,64]——覆盖多维背包类；P3 收紧行数下限 2，
+  单行背包类回落）命中 ⇒
   [`BranchRule::Pseudocost`] + 可靠性冷启动（根节点全量探测，预算
   2×min(分数候选数, 64)；深度 1-8 每节点探测预算 8；深度 > 8 不探测；
   探测 = 收紧界 → 重解 → 严格正增益才记账 → 精确恢复原界，确定性不读
   墙钟），否则 MostFractional（max min(f, 1−f)，并列取最小下标）；显式
   指定（CLI `--branch-rule` / `branch_rule_auto = false`）覆盖优先。实测
   mknap 类 nodes −44%~−56%（mknap-5x300 无时限 341446→163641）；单行
-  背包类探测白烧小代价（knapsack-500 +18ms、knapsack-5000 +0.6s 量级），
+  背包类探测白烧已由 P3 收紧消除（行数下限 1→2：knapsack-500 墙钟
+  −48%、knapsack-5000 −26%、knapsack-2000 持平，objective 恒最优），
   不命中类（setcover/marketsplit/milp-mixed）行为逐字节不变。剪枝条件
   `node_bound ≤ incumbent + 1e-9×(1+|incumbent|)`。
 - **界变化后的对偶修复快路径**（2026-10，大规模主优化）：分支收紧界后若
@@ -529,7 +533,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 196 节点（threads=1 默认类自适应分支；`--branch-rule most_fractional` 下为 159；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 159 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；`--branch-rule pseudocost` 下为 196；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 
