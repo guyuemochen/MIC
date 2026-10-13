@@ -71,13 +71,14 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions};
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：profile_stats <算例路径> [--threads N] [--time-limit-secs S] \
 [--branch-rule mostfrac|pseudo] [--pc-probes N] [--root-cuts on|off] \
-[--work-stack local|global]";
+[--work-stack auto|local|global]";
 
 /// `--threads` 允许的最大线程数（与 CLI main.rs 同口径）。
 const MAX_THREADS: usize = 1024;
 
 /// 命令行配置（默认值 = CLI 默认的测量复刻：threads=1、无时限、mostfrac、
-/// pc-probes=8（复刻库默认）、root-cuts on）。
+/// pc-probes=8（复刻库默认）、root-cuts on、work-stack auto（W1 按类选栈，
+/// 复刻 CLI 多线程默认））。
 #[derive(Debug)]
 struct Config {
     /// 算例文件路径。
@@ -94,11 +95,22 @@ struct Config {
     pc_probes: usize,
     /// 根割开关；默认 on（CLI 默认 root_cuts=true）。
     root_cuts: bool,
-    /// 并行工作栈模式（`--work-stack local|global`，R6-retry；仅
-    /// threads ≥ 2 生效）；默认 local（复刻 BbOptions::global_work_stack
-    /// 库默认 false）。global = 全局 DFS 栈，压并行节点膨胀（P1 取证
-    /// §5 M1 提案的接线点）。
-    work_stack_global: bool,
+    /// 并行工作栈模式（`--work-stack auto|local|global`，R6 接线 + W1 按类
+    /// 选栈；仅 threads ≥ 2 生效）；默认 auto（复刻 CLI 多线程默认：类检测
+    /// 命中多维背包类 ⇒ global，否则 local）。global = 全局 DFS 栈，压并行
+    /// 节点膨胀（P1 取证 §5 M1 提案的接线点）。
+    work_stack: WorkStack,
+}
+
+/// 并行工作栈模式（与 CLI main.rs 同口径的三态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkStack {
+    /// 类自适应（求解入口按结构类检测解析）。
+    Auto,
+    /// 本地亲和 + 偷取（显式覆盖）。
+    Local,
+    /// 全局 DFS 栈（显式覆盖）。
+    Global,
 }
 
 fn main() -> ExitCode {
@@ -175,7 +187,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut branch_rule: Option<BranchRule> = None;
     let mut pc_probes: Option<usize> = None;
     let mut root_cuts: Option<bool> = None;
-    let mut work_stack_global: Option<bool> = None;
+    let mut work_stack: Option<WorkStack> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -287,22 +299,25 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             root_cuts = Some(on);
             index += 1;
         } else if arg == "--work-stack" {
-            if work_stack_global.is_some() {
+            if work_stack.is_some() {
                 return Err(format!("`--work-stack` 重复出现（{USAGE}）"));
             }
             let Some(value) = args.get(index + 1) else {
-                return Err(format!("`--work-stack` 缺少参数 local|global（{USAGE}）"));
+                return Err(format!(
+                    "`--work-stack` 缺少参数 auto|local|global（{USAGE}）"
+                ));
             };
-            let on = match value.as_str() {
-                "local" => false,
-                "global" => true,
+            let mode = match value.as_str() {
+                "auto" => WorkStack::Auto,
+                "local" => WorkStack::Local,
+                "global" => WorkStack::Global,
                 unknown => {
                     return Err(format!(
-                        "`--work-stack` 的参数 `{unknown}` 未知（期望 local|global）（{USAGE}）"
+                        "`--work-stack` 的参数 `{unknown}` 未知（期望 auto|local|global）（{USAGE}）"
                     ));
                 }
             };
-            work_stack_global = Some(on);
+            work_stack = Some(mode);
             index += 1;
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
@@ -323,7 +338,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         branch_rule, // None = 类自适应（R3，复刻 CLI 默认）
         pc_probes: pc_probes.unwrap_or(8),
         root_cuts: root_cuts.unwrap_or(true),
-        work_stack_global: work_stack_global.unwrap_or(false),
+        // 默认 auto（W1，复刻 CLI 多线程默认：类检测命中 ⇒ global，否则
+        // local）；显式 local/global 供 A/B 消融。
+        work_stack: work_stack.unwrap_or(WorkStack::Auto),
     })
 }
 
@@ -341,7 +358,10 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
             pc_reliability_probes: config.pc_probes,
             root_cuts: config.root_cuts,
-            global_work_stack: config.work_stack_global,
+            // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（复刻 CLI 默认）；
+            // 显式 local/global ⇒ 覆盖优先。
+            global_work_stack: config.work_stack == WorkStack::Global,
+            work_stack_auto: config.work_stack == WorkStack::Auto,
             time_limit_ms: config
                 .time_limit_secs
                 .map_or(0, |secs| secs.saturating_mul(1000)),

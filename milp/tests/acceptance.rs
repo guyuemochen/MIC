@@ -619,13 +619,19 @@ fn acceptance_cli_progress_log_format() {
         assert_progress_lines_wellformed(&stdout);
     }
 
-    // hard-knapsack-12 变体：--log-secs 0.001 --threads 4（并行协调线程）。
+    // hard-knapsack-12 变体：--log-secs 0.001 --threads 4 --work-stack local
+    //（W1 测试调整，断言不变：默认（auto）下小算例调度门会把 threads=4 的
+    // hard-knapsack-12（t1 = 159 节点 < 512 探测预算）接去走顺序路径，亚毫秒
+    // 搜索在 0.001s 周期下可能只有首行——「极小周期下并行协调线程必出周期
+    // 行」的覆盖改用显式 --work-stack local（点名并行引擎，按门契约不进门）。
     let (code, stdout) = cli(&[
         &instance_path("hard-knapsack-12"),
         "--log-secs",
         "0.001",
         "--threads",
         "4",
+        "--work-stack",
+        "local",
     ]);
     assert_eq!(code, Some(0), "{stdout}");
     let progress = assert_progress_lines_wellformed(&stdout);

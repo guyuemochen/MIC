@@ -158,9 +158,23 @@ pub struct BbOptions {
     /// 全局 DFS 工作栈（R6-retry，轴3；仅并行 threads ≥ 2 生效）：true ⇒
     /// 子代直接压全局栈顶、worker 恒从栈顶弹——全局探索序对齐顺序 DFS，
     /// 抑制并行搜索膨胀（本地亲和模式下各 worker 独立 DFS 树的 incumbent
-    /// 延迟发现是 t4 节点膨胀实测根因）。默认 false（本地亲和，现状）；
-    /// CLI `--work-stack local|global`。
+    /// 延迟发现是 t4 节点膨胀实测根因）。字段默认 false；有效值由
+    /// [`Self::work_stack_auto`]（W1 按类选栈，多线程默认）在并行派发层
+    /// 解析；CLI `--work-stack auto|local|global`。
     pub global_work_stack: bool,
+    /// 类自适应工作栈开关（W1）：true 时 [`Self::global_work_stack`] 字段视为
+    /// 「未指定」，并行派发层（[`parallel_entry`]，经
+    /// [`resolve_work_stack_mode`]）按 [`detect_pseudocost_favorable`]（与 R3
+    /// 分支规则类自适应**同一检测器**）解析——命中（全 Binary + 正系数 Le
+    /// 行 + 行数 2..=64，即 mknap 多维背包族）⇒ global（P2 §8.2/8.3 实测：
+    /// mknap-5x300 t4 节点中位 −14.3%、mknap-3x100 −26%~−45%）；未命中（单行
+    /// 背包 / 等式行 marketsplit / Ge 行 setcover / 连续列 milp-mixed 类）⇒
+    /// local（global 在 knapsack-500 回退 ×1.2-3.0、setcover-100x150
+    /// +8%~+26%）。CLI `--work-stack auto|local|global`，多线程默认 auto；
+    /// 显式 local/global（auto=false）覆盖优先且不过小算例调度门（保持栈
+    /// 形态 A/B 可测量）。解析只发生在并行派发层：threads=1 顺序路径不读
+    /// 该字段（t1 行为逐字节不变）。默认 true。
+    pub work_stack_auto: bool,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
@@ -172,7 +186,8 @@ pub struct BbOptions {
 
 impl Default for BbOptions {
     /// 默认值：MostFractional / DepthFirst / 2_000_000 / 0 / true / true / 4096 /
-    /// 1e-9 / 1e-9 / 8。（2026-10 复核后回退：第三轮曾默认 Pseudocost，
+    /// 1e-9 / 1e-9 / 8 / global_work_stack=false + work_stack_auto=true（W1：
+    /// 多线程默认按类选栈）。（2026-10 复核后回退：第三轮曾默认 Pseudocost，
     /// 但 market-split/mknap-5x300 等类实测大幅倒退且无实测收益——全部
     /// 已验证性能数字均在 MostFractional 口径下取得；Pseudocost 经
     /// `BbOptions::branch_rule` / CLI `--branch-rule pseudocost` 可选。）
@@ -190,6 +205,7 @@ impl Default for BbOptions {
             pc_reliability_probes: 8,
             mitm_windows: 8,
             global_work_stack: false,
+            work_stack_auto: true,
             branch_rule_auto: true,
         }
     }
@@ -312,11 +328,16 @@ pub fn detect_pseudocost_favorable(problem: &Problem) -> bool {
     })
 }
 
-/// 求解入口解析类自适应默认（R3）：`branch_rule_auto = true` 时按
+/// 求解入口解析类自适应默认（R3 分支规则）：`branch_rule_auto = true` 时按
 /// [`detect_pseudocost_favorable`] 翻转有效规则（命中 ⇒ Pseudocost 且
 /// `pc_reliability_probes ≥ 8`；未命中 ⇒ MostFractional），返回解析后的
 /// 具体选项（`branch_rule_auto` 置 false，幂等）；显式指定
 /// （`branch_rule_auto = false`）原样透传——覆盖优先。
+///
+/// W1 按类选栈（`work_stack_auto`）的解析**不在本函数**——工作栈是纯并行
+/// 概念（threads=1 顺序路径不读该字段），解析连同小算例调度门一起在
+/// [`parallel_entry`]（并行派发层）完成：auto ⇒ 类检测翻转 + 调度门；
+/// 显式 local/global ⇒ 逐字生效且不进门（保持 P2 式栈形态 A/B 可测量）。
 fn resolve_branch_rule_defaults(problem: &Problem, opts: &BbOptions) -> BbOptions {
     if !opts.branch_rule_auto {
         return *opts;
@@ -330,6 +351,25 @@ fn resolve_branch_rule_defaults(problem: &Problem, opts: &BbOptions) -> BbOption
         resolved.branch_rule = BranchRule::MostFractional;
     }
     resolved
+}
+
+/// W1 按类选栈解析（纯函数，仅 [`parallel_entry`] 调用；可单元级直接测试）：
+/// `work_stack_auto = true`（多线程默认）⇒ 按 [`detect_pseudocost_favorable`]
+///（与 R3 分支规则**同一检测器**）翻转 [`BbOptions::global_work_stack`]——
+/// 命中（全 Binary + 正系数 Le 行 + 行数 2..=64，即 mknap 多维背包族）⇒
+/// global（P2 §8.2/8.3 实测 mknap 族 t4 节点 −14%~−45%）；未命中（单行
+/// 背包 / 等式行 marketsplit / Ge 行 setcover / 连续列 milp-mixed 类）⇒
+/// local（global 在 knapsack-500 回退 ×1.2-3.0、setcover-100x150
+/// +8%~+26%）。显式（auto=false）逐字透传（覆盖优先）。返回解析后选项与
+/// 「是否处于 auto 决策链」（调度门只对 auto 链生效）。
+fn resolve_work_stack_mode(problem: &Problem, opts: &BbOptions) -> (BbOptions, bool) {
+    let mut resolved = *opts;
+    let was_auto = resolved.work_stack_auto;
+    if was_auto {
+        resolved.work_stack_auto = false;
+        resolved.global_work_stack = detect_pseudocost_favorable(problem);
+    }
+    (resolved, was_auto)
 }
 
 /// 受控入口：threads ≤ 1 走纯顺序路径；threads ≥ 2 组装
@@ -353,8 +393,9 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
-    // R3 类自适应默认：入口一次解析（顺序/并行两路共用；worker 收到的
-    // 即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
+    // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
+    // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
+    // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
     let opts = &resolve_branch_rule_defaults(problem, opts);
     if ctrl.threads >= 2 {
         return parallel_entry(problem, opts, ctrl, tol, hooks);
@@ -1614,10 +1655,53 @@ fn emit_progress(
 // 并行委托（threads ≥ 2；引擎本体见 crate::parallel_bb，本文件只做组装与映射）
 // ===========================================================================
 
-/// threads ≥ 2 的受控入口：由 [`SearchControl`] 组装
-/// [`crate::parallel_bb::ParallelConfig`]（BbOptions 原样透传），委托
+/// 小算例调度门探测预算（W1，P1 §5 M3 落地）：threads ≥ 2 时先用顺序路径
+/// 以该节点预算探测，预算内出终态 ⇒ 门命中直返。512 的取值依据既有 t1
+/// 节点数的两簇空档：**并行纯亏簇**全部 ≤ 360（milp-mixed-250i40c 53/85、
+/// knapsack-500 360、knapsack-2000 38、knapsack-5000 37、setcover-100x150
+/// 13-15、hard-knapsack-12 159），**并行有收益/大树簇**全部 ≥ 2,120
+///（mknap-3x100 t1 2,120；mknap-5x300 87,800）——512 落在两簇之间。
+const SMALL_TREE_PROBE_NODES: u64 = 512;
+
+/// 调度门静态规模阈（LP 单位 = 变量数 × (行数 + 1)，与每节点 LP 成本同
+/// 量级的代理）：门内最大 = lp-wide-200x300（60,200）与 setcover-100x150
+///（15,150）；门外最小 = assign-40x40（129,600）与 setcover-300x600
+///（180,600）——大 LP 类不进门，探测前缀的墙钟上限被钉在「512 个小 LP」
+///（mknap-5x300 门未命中前缀实测 ≈ 0.2s / 30s 量级，见 W1 落档）。
+const SMALL_TREE_LP_UNITS: usize = 65_536;
+
+/// 调度门适用判定（纯函数，确定性：规模 + 节点预算，零墙钟读点；threads
+/// ≥ 2 与 auto 决策链由调用方保证）。取证依据（P1 §3）：小树并行 = 纯
+/// 开销——milp-mixed-250i40c t4 下 root 单线程段 ~42%、Σcv_wait 57.29%、
+/// 3/4 worker 饥饿（某 worker 中位节点数 0）、lp_resolve 仅 23.50%；树
+/// ≤ 85 节点填不满 2/4 线程。用户紧节点预算（≤ 探测预算）是对搜索形态的
+/// 显式选择，不进门（保持既有并行口径）。
+fn small_tree_gate_applies(problem: &Problem, opts: &BbOptions) -> bool {
+    let units = problem.vars.len() * (problem.constraints.len() + 1);
+    units <= SMALL_TREE_LP_UNITS
+        && (opts.node_limit == 0 || opts.node_limit > SMALL_TREE_PROBE_NODES)
+}
+
+/// threads ≥ 2 的受控入口：**先过小算例调度门**（W1），再由 [`SearchControl`]
+/// 组装 [`crate::parallel_bb::ParallelConfig`]（BbOptions 原样透传），委托
 /// [`crate::parallel_bb::parallel_branch_and_bound`]，再按本文件统一口径把
 /// [`crate::parallel_bb::ParallelOutcome`] 映射回 [`BbResult`]。
+///
+/// W1 按类选栈（`work_stack_auto`，多线程默认）在**本层**解析（工作栈是纯
+/// 并行概念，threads=1 顺序路径不读该字段 ⇒ t1 行为逐字节不变）：auto ⇒
+/// [`resolve_work_stack_mode`] 按类检测翻转（mknap 类 ⇒ global，其余 ⇒
+/// local）；显式 local/global 逐字生效（覆盖优先）。
+///
+/// 调度门**只对 auto 决策链**生效：显式 `--work-stack local|global` 是用户
+/// 点名并行引擎的栈形态（P2 式栈形态 A/B 的测量入口），不进门。门命中
+/// （[`small_tree_gate_applies`] 且顺序探测在 [`SMALL_TREE_PROBE_NODES`]
+/// 预算内出终态——Optimal/Infeasible/Unbounded，或 gap/降级/时限等与
+/// threads=1 同口径的诚实截断）⇒ 直接返回：**threads ≥ 2 的输出与
+/// threads=1 逐字节相同**（同一条确定性代码路径），免掉池协调/worker 冷
+/// 启动开销；预算耗尽（LimitReached 且 nodes ≥ 预算且非 gap/降级）⇒ 树
+/// 不小，丢弃探测、并行从零派发（既有行为 + 有界前缀浪费；进度行在门未
+/// 命中时会重复发射首行——probe 与并行各一次，--log-secs 用户可见，纯
+/// 外观）。
 fn parallel_entry(
     problem: &Problem,
     opts: &BbOptions,
@@ -1625,6 +1709,25 @@ fn parallel_entry(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    // —— W1 按类选栈解析（仅并行路径；t1 不读该字段）——
+    let (opts, auto_stack) = resolve_work_stack_mode(problem, opts);
+    let opts = &opts;
+    // —— 小算例调度门（W1，仅 auto 决策链）：确定性判定 + 顺序探测 ——
+    if auto_stack && small_tree_gate_applies(problem, opts) {
+        let mut probe_opts = *opts;
+        probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
+        let mut probe_ctrl = *ctrl;
+        probe_ctrl.threads = 1;
+        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks)?;
+        let budget_exhausted = probe.status == SolveStatus::LimitReached
+            && !probe.gap_terminated
+            && !probe.auto_degraded
+            && probe.stats.nodes >= SMALL_TREE_PROBE_NODES;
+        if !budget_exhausted {
+            return Ok(probe);
+        }
+        // 门未命中：树不小 ⇒ 探测作废（计数器不串），并行从零。
+    }
     let config = crate::parallel_bb::ParallelConfig {
         threads: ctrl.threads,
         mipgap_percent: ctrl.mipgap_percent,
@@ -1775,7 +1878,8 @@ mod tests {
     /// （R3）入口解析：auto=true 命中类 ⇒ Pseudocost + probes ≥ 8；未命中 ⇒
     /// MostFractional；显式（auto=false）原样透传（覆盖优先）。
     ///（P3 重钉：命中载体从单行背包改为 2 行——行数下限收紧后单行不再
-    /// 命中，见 detect_pseudocost_favorable 文档注释。）
+    /// 命中，见 detect_pseudocost_favorable 文档注释。W1：工作栈解析移至
+    /// parallel_entry（纯并行概念），本函数只管分支规则。）
     #[test]
     fn resolve_branch_rule_defaults_paths() {
         let mut p = Problem::new("k", Sense::Maximize);
@@ -1813,6 +1917,52 @@ mod tests {
         assert_eq!(r4.branch_rule, BranchRule::MostFractional);
     }
 
+    /// （W1）按类选栈解析：auto ⇒ 命中类（mknap 族）global、未命中类
+    ///（单行/等式行/Ge/连续列）local；显式 local/global 逐字透传
+    ///（覆盖优先）；解析后 auto 位清零（幂等）且返回 was_auto=true 供
+    /// 调度门判定；显式时 was_auto=false（门不生效，保持栈形态可测量）。
+    #[test]
+    fn resolve_work_stack_mode_paths() {
+        let mut p = Problem::new("k", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 7.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0)
+            .unwrap();
+        p.add_constraint(None, vec![(0, 2.0), (1, 4.0)], RelOp::Le, 6.0)
+            .unwrap();
+        let mut q = p.clone();
+        q.constraints[0].op = RelOp::Eq; // 非命中类（marketsplit 显式分支）
+        // auto + 命中 ⇒ global，was_auto = true。
+        let (r, was_auto) = resolve_work_stack_mode(&p, &BbOptions::default());
+        assert!(r.global_work_stack, "命中类（mknap 族）⇒ global（W1）");
+        assert!(!r.work_stack_auto); // 解析后幂等
+        assert!(was_auto);
+        // auto + 未命中 ⇒ local。
+        let (r2, was_auto2) = resolve_work_stack_mode(&q, &BbOptions::default());
+        assert!(!r2.global_work_stack, "未命中类保持 local（W1）");
+        assert!(!r2.work_stack_auto);
+        assert!(was_auto2);
+        // 显式 local 在命中类上仍 local；显式 global 在未命中类上仍 global
+        //（覆盖优先），was_auto = false（调度门不生效）。
+        let mut ex = BbOptions::default();
+        ex.work_stack_auto = false;
+        ex.global_work_stack = false;
+        let (r3, w3) = resolve_work_stack_mode(&p, &ex);
+        assert!(!r3.global_work_stack, "显式 local 在命中类上仍 local");
+        assert!(!w3);
+        let mut ex2 = BbOptions::default();
+        ex2.work_stack_auto = false;
+        ex2.global_work_stack = true;
+        let (r4, w4) = resolve_work_stack_mode(&q, &ex2);
+        assert!(r4.global_work_stack, "显式 global 在未命中类上仍 global");
+        assert!(!w4);
+        // 幂等：已解析选项二次解析逐字段不变。
+        let (r5, w5) = resolve_work_stack_mode(&p, &r);
+        assert_eq!(r5.global_work_stack, r.global_work_stack);
+        assert!(!r5.work_stack_auto && !w5);
+    }
+
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为
     /// （整数节点复核 round_and_check 属跨模块联调路径，见相关用例）。
     fn plain_opts() -> BbOptions {
@@ -1844,6 +1994,148 @@ mod tests {
         assert_eq!(o.prune_abs, 1e-9);
         assert_eq!(o.prune_rel, 1e-9);
         assert_eq!(o.pc_reliability_probes, 8);
+        assert!(!o.global_work_stack);
+        assert!(o.work_stack_auto, "W1：多线程默认按类选栈（auto）");
+    }
+
+    // ===================== W1：小算例调度门 ======================
+
+    /// （W1）调度门适用判定：LP 单位阈（65,536 = 2^16）与节点预算边界。
+    /// 边界向量按 bench 实测单位数取值（lp-wide-200x300 = 60,200 门内、
+    /// assign-40x40 = 129,600 门外；node_limit = 0 不限或 > 512 进门，
+    /// 紧预算 ≤ 512 不进）。
+    #[test]
+    fn small_tree_gate_applies_boundaries() {
+        // 60,000 变量单位问题（200 变量 × 300 行 = 60,200 ≤ 65,536）进门。
+        let mut small_lp = Problem::new("small-lp", Sense::Maximize);
+        small_lp.vars.push(crate::model::Variable {
+            name: "z".into(),
+            var_type: VarType::Continuous,
+            lb: 0.0,
+            ub: 1.0,
+        });
+        small_lp.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        for i in 0..300 {
+            small_lp
+                .add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0 + i as f64)
+                .unwrap();
+        }
+        // 129,600 单位问题（1,600 变量 × 80 行）不进门。
+        let mut big_lp = Problem::new("big-lp", Sense::Maximize);
+        for j in 0..1600 {
+            big_lp.vars.push(crate::model::Variable {
+                name: format!("b{j}"),
+                var_type: VarType::Binary,
+                lb: 0.0,
+                ub: 1.0,
+            });
+        }
+        let terms: Vec<(usize, f64)> = (0..1600).map(|j| (j, 1.0)).collect();
+        big_lp.set_objective(terms.clone(), 0.0).unwrap();
+        for _ in 0..80 {
+            big_lp.add_constraint(None, terms.clone(), RelOp::Le, 800.0).unwrap();
+        }
+        let unlimited = BbOptions::default();
+        assert!(small_tree_gate_applies(&small_lp, &unlimited));
+        assert!(!small_tree_gate_applies(&big_lp, &unlimited));
+        // node_limit：0（不限）与 > 512 进门；512 与更紧预算不进门
+        //（紧预算 = 用户对搜索形态的显式选择，保持既有并行口径）。
+        for (limit, expected) in [(0u64, true), (513, true), (512, false), (100, false)] {
+            let opts = BbOptions {
+                node_limit: limit,
+                ..BbOptions::default()
+            };
+            assert_eq!(
+                small_tree_gate_applies(&small_lp, &opts),
+                expected,
+                "node_limit = {limit}"
+            );
+        }
+    }
+
+    /// （W1）门命中 ⇒ threads=4 输出与 threads=1 **逐字节相同**（同一顺序
+    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 159 节点
+    ///（P3 口径）< 512 探测预算 ⇒ 门命中。行为字段全比：status/objective/
+    /// values/nodes/lp_iterations/cuts/bound/gap_terminated/auto_degraded。
+    #[test]
+    fn small_tree_gate_hit_returns_t1_identical_result() {
+        let weights = [
+            7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0, 31.0, 37.0, 41.0, 43.0, 47.0,
+        ];
+        let values = [
+            11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0,
+        ];
+        let mut p = Problem::new("hard-knapsack-12", Sense::Maximize);
+        for i in 0..12 {
+            p.add_var(&format!("x{i}"), VarType::Binary).unwrap();
+        }
+        p.set_objective((0..12).map(|i| (i, values[i])).collect(), 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            (0..12).map(|i| (i, weights[i])).collect(),
+            RelOp::Le,
+            172.0,
+        )
+        .unwrap();
+        let t1 = branch_and_bound_controlled(
+            &p,
+            &BbOptions::default(),
+            &SearchControl::default(),
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t1.status, SolveStatus::Optimal);
+        assert_eq!(t1.stats.nodes, 159, "P3 口径 t1 节点数（159）");
+        let t4 = branch_and_bound_controlled(
+            &p,
+            &BbOptions::default(),
+            &SearchControl {
+                threads: 4,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t4.status, t1.status);
+        assert_eq!(t4.best_objective, t1.best_objective);
+        assert_eq!(t4.best_values, t1.best_values, "取值逐字节（含并列破键序）");
+        assert_eq!(t4.stats.nodes, t1.stats.nodes, "节点数逐字节（门命中）");
+        assert_eq!(t4.stats.lp_iterations, t1.stats.lp_iterations);
+        assert_eq!(t4.stats.cuts, t1.stats.cuts);
+        assert_eq!(t4.bound, t1.bound);
+        assert_eq!(t4.gap_terminated, t1.gap_terminated);
+        assert_eq!(t4.auto_degraded, t1.auto_degraded);
+    }
+
+    /// （W1）门未命中 ⇒ 并行路径照常（mknap-3x100：t1 = 2,120 节点 > 512
+    /// 探测预算 ⇒ 探测耗尽、丢弃、并行从零）；终态完备且最优恒同（2331.0，
+    /// bench .opt 独立真值口径）。3 rep 覆盖窃取调度漂移。
+    #[test]
+    fn small_tree_gate_miss_dispatches_parallel() {
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        for rep in 0..3 {
+            let out = branch_and_bound_controlled(
+                &problem,
+                &BbOptions::default(),
+                &SearchControl {
+                    threads: 4,
+                    ..SearchControl::default()
+                },
+                tol(),
+                None,
+            )
+            .unwrap_or_else(|e| panic!("rep {rep} 求解失败：{e}"));
+            assert_eq!(out.status, SolveStatus::Optimal, "rep {rep}");
+            assert_close(out.best_objective.unwrap(), 2331.0);
+        }
     }
 
     /// 根预割启发式轮对割循环**基透明**（2026-10-09 O1 修复的回归钉）：
@@ -3052,6 +3344,10 @@ mod tests {
 
     /// threads=4 于 5 个原验收算例：最优值与默认（threads=1）完全一致
     ///（池互斥弹出每节点恰处理一次 + incumbent 单调 + 粘滞 stop ⇒ 不丢最优）。
+    ///（W1 测试调整，断言不变：显式 node_limit=512 旁路小算例调度门——这些
+    /// 算例 t1 节点 ≪ 512，W1 起默认会被调度门接走走顺序路径，本测试的意图
+    /// 是受控入口的**并行**正确性；紧节点预算（≤ 门预算）按门契约保持既有
+    /// 并行口径，512 对这些算例的完备需求仍充裕。）
     #[test]
     fn threads4_matches_default_on_acceptance_instances() {
         for (name, p) in acceptance_problems() {
@@ -3059,7 +3355,10 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{name} 顺序求解失败：{e}"));
             let par = branch_and_bound_controlled(
                 &p,
-                &BbOptions::default(),
+                &BbOptions {
+                    node_limit: 512,
+                    ..BbOptions::default()
+                },
                 &SearchControl {
                     threads: 4,
                     ..SearchControl::default()
@@ -3080,6 +3379,9 @@ mod tests {
 
     /// threads=4 于 hard-knapsack-12（最优 523）重复 ≥100 次：每次断言
     /// objective=523 且 Optimal（丢唤醒/死锁/竞态在重复下必现；不依赖计时）。
+    ///（W1 测试调整，断言不变：显式 node_limit=512 旁路调度门——t1 = 159
+    /// 节点 < 512 会被门接走走顺序路径，而本测试的意图是并行引擎压测；
+    /// 512 ≥ 完备需求 159，预算不截断搜索。）
     #[test]
     fn threads4_hard_knapsack_12_repeated_100() {
         let p = hard_knapsack_12();
@@ -3087,8 +3389,12 @@ mod tests {
             threads: 4,
             ..SearchControl::default()
         };
+        let opts = BbOptions {
+            node_limit: 512,
+            ..BbOptions::default()
+        };
         for i in 0..100 {
-            let r = branch_and_bound_controlled(&p, &BbOptions::default(), &ctrl, tol(), None)
+            let r = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None)
                 .unwrap_or_else(|e| panic!("第 {i} 次并行运行失败：{e}"));
             assert_eq!(r.status, SolveStatus::Optimal, "第 {i} 次运行终态");
             assert_close(r.best_objective.unwrap(), 523.0);

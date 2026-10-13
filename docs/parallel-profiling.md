@@ -418,3 +418,120 @@ milp/README.md 已有 `--work-stack` 条目（参数表）且默认 local 未变
 - 自检（本轮实跑）：`cargo test --release --lib branch_bound`（39/39）、
   `--lib parallel_bb`（29/29）、`--test acceptance`（13/13，重钉后）；
   t1 确定性双跑（knapsack-5000）行为字段逐字节相同。
+
+## 10. W1 实现轮（2026-10-13 同日续窗）：按类选栈 auto 默认 + 小算例调度门
+
+> 实现 §5 M1（类别分化杠杆的类检测接驾）与 §5 M3（小算例调度门）。
+> 引擎（parallel_bb.rs）**零代码改动**——选栈在派发层解析、门在派发层
+> 前置；本节全部数字为同窗交错多 rep 中位口径（§1.3 噪声地板 ±18-20%
+> 依旧，跨窗绝对墙钟不可比，同窗 A/B 有效）。
+
+### 10.1 实现
+
+1. **按类选栈（`--work-stack auto|local|global`，多线程默认 auto）**：
+   `BbOptions` 新增 `work_stack_auto: bool`（默认 true）；解析在
+   `branch_bound.rs::parallel_entry`（纯并行概念，threads=1 顺序路径不读
+   该字段 ⇒ t1 逐字节不变）：auto ⇒ `detect_pseudocost_favorable`（与 R3
+   分支规则**同一检测器**：全 Binary + 正系数 Le 行 + 行数 2..=64）命中
+   ⇒ `global_work_stack = true`（mknap 族），未命中（单行背包/等式行
+   marketsplit/Ge 行 setcover/连续列 milp-mixed）⇒ local；显式
+   local/global 覆盖优先。CLI/探针/USAGE/README 同步（main.rs、
+   profile_stats.rs 均接受三态 token，默认 auto）。
+2. **小算例调度门（M3）**：threads ≥ 2 ∧ LP 单位 = vars×(rows+1) ≤ 65,536
+   ∧（node_limit=0 或 > 512）∧ **处于 auto 决策链**（显式 local/global
+   点名并行引擎，不进门——P2 式栈形态 A/B 保持可测量）时，先以 512
+   节点预算跑顺序路径探测：预算内出终态 ⇒ 门命中直返（**t4 输出与 t1
+   逐字节相同**，同一确定性代码路径）；预算耗尽（LimitReached ∧ nodes
+   ≥ 512 ∧ 非 gap/降级）⇒ 树不小，探测作废、并行从零（既有行为 + 有界
+   前缀：≤512 个小 LP 节点 + 根阶段重跑）。
+   - **512 取值**：两簇空档——并行纯亏簇 t1 节点 ≤ 360（milp-mixed
+     53/85、knapsack-500 360、knapsack-2000 38、knapsack-5000 37、
+     setcover-100x150 13、hard-knapsack-12 159），并行有收益/大树簇
+     ≥ 2,120（mknap-3x100；mknap-5x300 87,800）。
+   - **65,536 取值**：门内最大 = lp-wide-200x300（60,200）与
+     setcover-100x150（15,150）；门外最小 = assign-40x40（129,600）与
+     setcover-300x600（180,600）——以单节点 LP 成本为界钉住探测前缀
+     墙钟上限。
+3. **测试调整（断言均不变，逐条记因）**：
+   - `threads4_matches_default_on_acceptance_instances` /
+     `threads4_hard_knapsack_12_repeated_100`（branch_bound）：显式
+     node_limit=512 旁路门——这些小算例 W1 起默认被门接走顺序路径，
+     而两测试意图是受控入口的**并行**正确性/压测；512 ≥ 完备需求。
+   - `acceptance::acceptance_cli_progress_log_format` 的 hard-knapsack-12
+     变体：补 `--work-stack local`——「极小周期下并行协调线程必出周期行」
+     的覆盖需要并行路径（门命中下亚毫秒顺序搜索可能只有首行）。
+   - 新增 4 测：`resolve_work_stack_mode_paths`（解析纯函数全路径）、
+     `small_tree_gate_applies_boundaries`（阈/预算边界向量）、
+     `small_tree_gate_hit_returns_t1_identical_result`（门命中 t4=t1
+     行为字段全等）、`small_tree_gate_miss_dispatches_parallel`
+    （mknap-3x100 门未命中 → 并行完备最优 2331.0×3 rep）。
+   - `resolve_branch_rule_defaults` 保持原名原义（工作栈解析移至
+     parallel_entry，函数只管分支规则；其测试回原断言）。
+
+### 10.2 正确性锚（全部实测，本窗）
+
+- **t1 逐字节不变**：HEAD vs NEW 二进制 t1 行为字段（status/objective/
+  nodes/lp_iterations/cuts/presolve_reductions/bound/gap_percent/
+  root_bound）**15 算例全等**（knapsack-200/500/2000/5000、
+  milp-mixed-120i30c/250i40c、mknap-3x100、setcover-60x100/100x150、
+  marketsplit-2x20/4x30/4x40/5x50、assign-16x16、lp-wide-200x300）+
+  **mknap-5x300**（87,800 节点 / 1,747,982 lpi / 4762.0 optimal —— R8
+  锚逐位一致）；t1 双跑确定性复核（knapsack-5000）逐字节相同。
+- **门命中 t4 = t1 逐字节**：12 快算例（上列中 t1 ≤ 512 节点者 +
+  lp-wide-200x300 纯 LP）t4 输出与 t1 行为字段全等，含 knapsack-500
+  （360）、milp-mixed-250i40c（53）、setcover-100x150（13）、
+  marketsplit-2x20/4x30（1/1）、knapsack-2000（38）、knapsack-5000（37）。
+- **全部目标值恒为已知最优**：本窗全部求解 objective —— mknap-5x300
+  4762.0（20 次：t1×4 + t4 A/B×15 + 复核×1，全部无时限口径）、mknap-3x100 2331.0（13）、mknap-10x200 1791.0（10）、
+  knapsack-200/500/2000/5000 = 3409/8975/35328/88526（.opt DP 真值）、
+  milp-mixed 1275.791752/980.853268、setcover 276.0/243.0、marketsplit
+  10/15/19.0/25.0、assign 165/176、lp-wide 112.668615/112.600268——
+  无一偏离。marketsplit-5x50 t4（HEAD 与 NEW 同）2M 节点上限
+  limit_reached 携带 incumbent 25.0（钉值不降）。
+
+### 10.3 t4 A/B（同窗交错 5 rep 中位 [min,max]；行为见 §10.2）
+
+| 算例（臂） | NEW auto | 对照臂 | 裁决 |
+|---|---|---|---|
+| mknap-5x300 t4 无时限 | nodes **122,432** [100,839,175,863]；wall 16.72s [10.7,33.9] | NEW local：225,905 [194,909,253,041] / 37.19s；HEAD local 默认：245,641 / 29.57s | **节点中位 −45.8%**（auto<local 逐 rep 5/5，区间不相交）；墙钟中位 −55%/−43%（区间重叠=噪声，中位与逐 rep 符号一致） |
+| mknap-10x200 t4（首次进 global 栈画像） | nodes **92,137** [72,143,101,912]；wall 5.84s [5.2,7.2] | local：111,840 [81,729,114,984] / 5.44s [5.0,9.7] | 节点中位 **−17.6%**；墙钟区间重叠 ⇒ **持平**（无回退） |
+| mknap-3x100 t4 | nodes **3,509** [2,437,6,057]；wall 0.12s | local：4,738 [2,927,4,926] / 0.12s | 节点中位 **−26%**；墙钟持平（与 §8.3 global 画像一致） |
+| knapsack-500 t4 | **360 节点**（=t1，门命中）；wall 0.075s [0.075,0.081] | HEAD 并行 local：572 [559,595] / 0.110s [0.095,0.123] | 区间不相交 ⇒ **改善 −32%**；节点确定性回归 t1。**不回退 ✓** |
+| milp-mixed-250i40c t4 | 53 节点（=t1）；wall 0.046s [0.043,0.064] | HEAD：51-85 节点 / 0.042s [0.041,0.047] | 区间重叠 ⇒ **持平**（验收线达成）；节点数终局确定化 |
+| setcover-100x150 t4 | 13 节点（=t1）；wall 0.319s [0.284,0.322] | HEAD：13 节点 / 0.388s [0.373,0.498] | 区间不相交 ⇒ **改善 −18%**（global 回退类 ⇒ 保持 local + 门） |
+| assign-40x40 t4（门外，local 不变） | 1 节点；wall 0.893s [0.442,0.903] | HEAD：1 节点 / 0.707s [0.596,1.068] | 区间重叠 ⇒ **持平** ✓ |
+| marketsplit-4x40 t4 | 2M 节点 limit_reached obj 20.0；wall 21.6-29.0s | HEAD：同终态同 obj / 25.9-27.6s | **门不缓解**（结构不可能：t1 = 854,952 节点 ≫ 512 探测预算 ⇒ 门未命中走并行；诊断 1 rep `--work-stack global` 同样 2M 上限 obj 20.0——延迟发现最优是树内机理，两种栈都未解，另立轮次） |
+| marketsplit-5x50 t4 | 2M limit_reached obj 25.0 | HEAD 同 | 持平（incumbent 钉值不降） |
+| lp-wide-1000x2000 t4 | 纯 LP 根终局，HEAD vs NEW 行为字段逐字节相同 | — | 持平 ✓ |
+
+- **显式栈旁路门**（可测量性验证）：knapsack-500 `--work-stack global`
+  t4 = 1,092 节点、`local` = 787（均在 §8.3 画像区间 ⇒ 并行确实执行），
+  默认 auto = 360（门命中）——显式旗标按契约不进门。
+- **门未命中前缀实测**：mknap-5x300 auto t4 无时限 wall 中位 16.7s vs
+  local 37.2s——512 节点探测前缀（≈0.2s 量级）被 global 栈收益完全
+  吸收，无净损耗。
+
+### 10.4 bench 基线翻转预期（供编排方重钉；30s 时限 t4 对照 HEAD 各 1 rep + 补测）
+
+- knapsack-200 / setcover-100x150 / lp-sparse / setcover-400x800：输出
+  无变化（前两者门命中=t1 且 HEAD 恰同值；后两者门外/纯 LP）。
+- knapsack-2000 t4：nodes 40（并行）→ 38（=t1，门命中），objective 不变。
+- **mknap-5x300 t4 30s**：终态在 optimal 4762 与 auto_degraded
+  4746-4755 之间随机翻转——HEAD 4 rep = 3×optimal/1×degraded、
+  NEW 4 rep = 2×optimal/2×degraded（机器噪声主导 30s 预算下的降级
+  时机，与工作区既录 t1 30s 钉值 auto_degraded 4754 同现象，W3 漂移
+  轮的正题）；NEW 节点中位仍低于 HEAD（127-199k vs 197-242k）。
+  无时限口径恒 4762.0 optimal（20/20 次，见 §10.2 计数）。
+- t4 全快算例 nodes 基线将确定化（= t1 值），并行形态的 t4 基线比较
+  需显式 `--work-stack local|global`。
+
+### 10.5 遗留与观察
+
+1. marketsplit-4x40 的 t4 延迟发现最优（t1 19.0@854,952 节点 vs t4
+   2M 上限未证优、incumbent 20.0）：调度门结构上不可能缓解（树太大），
+   global 栈也不缓解（2M 上限 obj 20.0 诊断 rep）——属树内机理（根界
+   弱 + 等式行类），候选路径为根割强化或 presolve（W4/W5 排期）。
+2. 门命中时 `--log-secs` 用户在门未命中路径会看到重复首行（probe 与
+   并行各发一次）——纯外观，文档已记。
+3. mknap-10x200 在 global 栈下节点 −17.6% 但墙钟持平——节点收益被
+   每节点成本膨胀吃掉（P1 §4.2 二义未分辨，M2a 仍缺位）。

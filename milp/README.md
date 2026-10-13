@@ -39,7 +39,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack local|global] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -57,7 +57,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
-| `--work-stack local\|global` | 并行工作栈模式（R6，仅 `--threads ≥ 2` 生效）：`local` 本地亲和 + 偷取（现状）；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `local` | 非 `local\|global` token / 重复出现报错 |
+| `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
 | `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
 
 ### 输出格式
@@ -207,15 +207,35 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   `std::thread::scope` 派生 N 个 worker 抢占式处理；worker 各持独立
   `Simplex` 实例，按序 `add_row` 重放根阶段记录的割清单，任意界跳转由
   snap/Phase-1 重建处理。
-- **工作栈模式（大规模轮 R6）**：`--work-stack local`（默认）= 本地亲和 +
-  偷取（现状，行为逐字节不变）；`--work-stack global` = 单一全局 DFS steal
+- **工作栈模式（大规模轮 R6 接线，W1 起默认按类选栈）**：`--work-stack
+  local` = 本地亲和 + 偷取；`--work-stack global` = 单一全局 DFS steal
   栈——`complete_node` 把子代压全局栈顶、worker 恒弹栈顶（LIFO），并行
   探索序对齐顺序 DFS（谁弹到谁延续 t1 的下一节点），incumbent 时序/剪枝
   与 t1 同构，抑制并行搜索膨胀。实测 mknap-5x300 t4：local 29.3–33.3s
   （nodes 193k–251k）→ global 16.1s（nodes ≈100k），墙钟 −45%~−52%；
   t1 默认路径 15 算例行为逐位不变。诚实边界：t4 聚合吞吐仍被单锁池竞争与
   并行子树交错吃掉（t4/t1 ≈ 0.6–1.15×，本架构下无稳定并行加速），不承诺
-  线性加速。
+  线性加速。**W1：`--work-stack auto`（多线程默认）**——global 是按问题
+  类别分化的杠杆（mknap 族 t4 节点 −26%~−45%，但 knapsack-500 回退
+  ×1.2-3.0、setcover-100x150 轻微回退），故入口按 `detect_pseudocost_
+  favorable` 类检测（与 R3 分支规则同一检测器：全 Binary + 正系数 Le 行 +
+  行数 2..=64）选栈：命中多维背包类 ⇒ global，单行背包/等式行/Ge 行/
+  连续列类 ⇒ local；显式 `local`/`global` 覆盖优先（`threads=1` 顺序路径
+  不读该字段，t1 行为逐字节不变）。
+- **小算例调度门（W1，`--threads ≥ 2` 生效，仅 `--work-stack auto` 默认
+  决策链）**：小树并行 = 纯开销（P1 插桩取证：milp-mixed t4 下 root 单线程
+  段 ~42%、Σcv_wait 57.29%、3/4 worker 饥饿、树 ≤ 85 节点填不满线程）。
+  threads ≥ 2 且问题规模低于静态阈（LP 单位 = 变量数 × (行数+1) ≤ 65,536）
+  且未设紧节点预算（node_limit = 0 或 > 512）时，先以 512 节点预算跑
+  **顺序路径**探测：预算内出终态 ⇒ 门命中直返——**threads ≥ 2 的输出与
+  threads=1 逐字节相同**（同一条确定性代码路径），免掉池协调与 worker
+  冷启动开销；预算耗尽 ⇒ 树不小，丢弃探测、并行从零派发（既有行为 +
+  有界前缀浪费，mknap-5x300 实测 ≈ 0.2s/30s 量级）。512 预算落在既有
+  t1 节点数的两簇空档（并行纯亏簇 ≤ 360：milp-mixed 53-85、knapsack-500
+  360、knapsack-2000 38、knapsack-5000 37、setcover-100x150 13-15；
+  并行有收益/大树簇 ≥ 2,120：mknap-3x100）。显式 `--work-stack
+  local|global` 点名并行引擎的栈形态，**不进门**（P2 式栈形态 A/B 保持
+  可测量，覆盖优先）。
 - **共享状态与同步原语**：节点池 `Mutex`（互斥弹出 ⇒ 每节点恰处理一次）；
   incumbent `RwLock`（单调改进，剪枝判定与顺序路径逐字相同 ⇒ 永不丢更优
   解）；**双 Condvar**——`cv_workers` 供 worker 等节点、`cv_progress` 供

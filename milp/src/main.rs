@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack local|global] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -40,7 +40,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -54,6 +54,20 @@ enum HeuristicModeCli {
     On,
     /// off：heuristics=false。
     Off,
+}
+
+/// 并行工作栈模式（`--work-stack auto|local|global`，W1；默认 Auto——
+/// 仅 `--threads ≥ 2` 生效，threads=1 顺序路径不受影响）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkStackCli {
+    /// auto：按类选栈（求解入口按结构类检测——全 Binary + 正系数 Le 行 +
+    /// 行数 2..=64 的多维背包类 ⇒ global；单行背包/等式行/Ge 行/连续列类
+    /// ⇒ local）。多线程默认。
+    Auto,
+    /// local：本地亲和 + 偷取（显式指定，覆盖类检测）。
+    Local,
+    /// global：单一全局 DFS 栈（显式指定，覆盖类检测）。
+    Global,
 }
 
 /// 命令行配置。
@@ -90,10 +104,10 @@ struct Config {
     /// 子集和 MITM 可行性启发式（`--mitm=on|off`，R5-retry）；默认 on
     ///（全 Eq + 全 Binary 类的最后手段，廉价启发式 miss 时根一次求解）。
     mitm: bool,
-    /// 并行工作栈模式（`--work-stack local|global`，R6-retry）；默认 local
-    ///（本地亲和，现状）；global = 全局 DFS 栈（并行探索序对齐顺序 DFS，
-    /// 抑制搜索膨胀；仅 threads ≥ 2 生效）。
-    work_stack_global: bool,
+    /// 并行工作栈模式（`--work-stack auto|local|global`，R6 接线 + W1 按类
+    /// 选栈默认）；默认 Auto（仅 threads ≥ 2 生效）：类检测命中多维背包类
+    /// ⇒ global，其余 ⇒ local；显式 local/global 覆盖优先。
+    work_stack: WorkStackCli,
 }
 
 fn main() -> ExitCode {
@@ -160,7 +174,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut branch_rule: Option<BranchRule> = None;
     let mut scaling: Option<bool> = None;
     let mut mitm: Option<bool> = None;
-    let mut work_stack_global: Option<bool> = None;
+    let mut work_stack: Option<WorkStackCli> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -349,28 +363,31 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             mitm = Some(v);
         } else if arg == "--work-stack" || arg.starts_with("--work-stack=") {
-            if work_stack_global.is_some() {
+            if work_stack.is_some() {
                 return Err(format!("`--work-stack` 重复出现（{USAGE}）"));
             }
             let value: String = if let Some(v) = arg.strip_prefix("--work-stack=") {
                 v.to_string()
             } else {
                 let Some(v) = args.get(index + 1) else {
-                    return Err(format!("`--work-stack` 缺少参数 local|global（{USAGE}）"));
+                    return Err(format!(
+                        "`--work-stack` 缺少参数 auto|local|global（{USAGE}）"
+                    ));
                 };
-                index += 1;
+                index += 1; // 额外消费模式 token
                 v.clone()
             };
             let v = match value.as_str() {
-                "local" => false,
-                "global" => true,
+                "auto" => WorkStackCli::Auto,
+                "local" => WorkStackCli::Local,
+                "global" => WorkStackCli::Global,
                 other => {
                     return Err(format!(
-                        "未知 --work-stack 值 `{other}`（期望 local|global，{USAGE}）"
+                        "未知 --work-stack 值 `{other}`（期望 auto|local|global，{USAGE}）"
                     ))
                 }
             };
-            work_stack_global = Some(v);
+            work_stack = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -397,7 +414,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
         mitm: mitm.unwrap_or(true),
-        work_stack_global: work_stack_global.unwrap_or(false), // 默认 local；global 为 R6 全局栈（显式开启）
+        // 默认 auto（W1 按类选栈：多线程下类检测命中 ⇒ global，否则 local；
+        // 显式 local/global 覆盖优先）。threads=1 顺序路径不受该默认影响。
+        work_stack: work_stack.unwrap_or(WorkStackCli::Auto),
     })
 }
 
@@ -428,7 +447,10 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             mitm_windows: if config.mitm { 8 } else { 0 },
-            global_work_stack: config.work_stack_global,
+            // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；
+            // 显式 local/global ⇒ auto=false、字段逐字生效（覆盖优先）。
+            global_work_stack: config.work_stack == WorkStackCli::Global,
+            work_stack_auto: config.work_stack == WorkStackCli::Auto,
         },
         use_presolve: true,
         use_scaling: config.scaling,
@@ -643,7 +665,7 @@ mod tests {
             branch_rule: None,
             scaling: true,
             mitm: true,
-            work_stack_global: false,
+            work_stack: WorkStackCli::Auto,
         }
     }
 
@@ -939,7 +961,70 @@ mod tests {
         assert_eq!(opts.bb.branch_rule, BranchRule::MostFractional);
         assert!(opts.bb.branch_rule_auto);
         assert_eq!(opts.bb.pc_reliability_probes, 8);
+        assert!(!opts.bb.global_work_stack, "auto 基线字段 = local");
+        assert!(opts.bb.work_stack_auto, "默认 auto（W1 按类选栈）");
         assert!(opts.use_presolve);
+    }
+
+    // —— work-stack 解析与映射（W1）——
+
+    /// `--work-stack`：默认 auto；三 token 合法（含 `=` 连写）；未知 token /
+    /// 缺参 / 重复出现报错；auto/local/global → BbOptions 映射正确。
+    #[test]
+    fn work_stack_parsing_and_mapping() {
+        // 默认 auto。
+        assert_eq!(
+            parse_args(&args(&["a.milp"])).unwrap().work_stack,
+            WorkStackCli::Auto
+        );
+        // 三 token（空格与 `=` 连写两种形式）。
+        for (token, mode) in [
+            ("auto", WorkStackCli::Auto),
+            ("local", WorkStackCli::Local),
+            ("global", WorkStackCli::Global),
+        ] {
+            assert_eq!(
+                parse_args(&args(&["a.milp", "--work-stack", token]))
+                    .unwrap()
+                    .work_stack,
+                mode,
+                "token {token}"
+            );
+            assert_eq!(
+                parse_args(&args(&[&format!("--work-stack={token}"), "a.milp"]))
+                    .unwrap()
+                    .work_stack,
+                mode,
+                "连写 token {token}"
+            );
+        }
+        // → BbOptions 映射：auto ⇒ (false, true)；local ⇒ (false, false)；
+        // global ⇒ (true, false)。
+        for (mode, global_flag, auto_flag) in [
+            (WorkStackCli::Auto, false, true),
+            (WorkStackCli::Local, false, false),
+            (WorkStackCli::Global, true, false),
+        ] {
+            let config = Config {
+                work_stack: mode,
+                ..config_with(None)
+            };
+            let bb = solve_options_from(&config).bb;
+            assert_eq!(bb.global_work_stack, global_flag, "{mode:?}");
+            assert_eq!(bb.work_stack_auto, auto_flag, "{mode:?}");
+        }
+        // 非法：未知 token / 缺参 / 重复。
+        for bad in [
+            &["a.milp", "--work-stack", "fast"][..],
+            &["a.milp", "--work-stack=LOCAL"][..],
+            &["a.milp", "--work-stack"][..],
+            &["a.milp", "--work-stack", "local", "--work-stack", "global"][..],
+        ] {
+            assert!(
+                parse_args(&args(bad)).is_err(),
+                "参数 {bad:?} 应报错"
+            );
+        }
     }
 
     // —— time_limit_secs → time_limit_ms 映射 ——
