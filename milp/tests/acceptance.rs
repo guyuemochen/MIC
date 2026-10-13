@@ -842,13 +842,19 @@ fn acceptance_cli_heuristic_on_identical() {
     // 在背包类上净优：mknap-5x300 −25% 证最优墙钟；本例树形 159→196，
     // 目标 523 恒为已知最优——钉值随默认规则演进重钉；显式复现旧行：
     // --branch-rule most_fractional。）
+    // （P3 行数下限收紧：单行背包类不再命中类检测（detect 行数下限
+    // 1→2）⇒ 回落 MostFractional，196→159。依据：同窗 A/B 6 rep——
+    // 单行族 Pseudocost+probes 零收益纯付探测开销（knapsack-500 墙钟
+    // +48%/knapsack-5000 +26%/knapsack-2000 持平），多行族收益保留
+    // （mknap-3x100 −67%）；objective 523 恒为 2^12 穷举真值。显式复现
+    // Pseudocost 行：--branch-rule pseudocost（196）。）
     assert_eq!(
         stdout,
         "status = optimal
-nodes = 196
+nodes = 159
 objective = 523.000000
 ",
-        "hard-knapsack-12 --heuristic-mode on 输出（R3 类自适应默认确定性基线）"
+        "hard-knapsack-12 --heuristic-mode on 输出（P3 收紧后默认 MostFractional 确定性基线）"
     );
 }
 

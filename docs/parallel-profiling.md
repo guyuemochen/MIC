@@ -366,3 +366,49 @@ root_ms 中位 9.228；scope_ms 中位 12.784 ⇒ root 占 **41.9%**。
   共享内存子系统」架构下没有协调层解，剩余路径为 §5 M2a（每节点成本
   ×1.55 的频率/带宽判别）与更强单节点 LP（数据布局），或按类选栈
   （需先有可靠的类检测器——R3 类自适应基础设施可复用，另立轮次）。
+
+## 9. P3 收尾轮（2026-10-13 同日续窗）：global 转正评估 + 类检测收紧
+
+### 9.1 ① `--work-stack global` 转正：**不转正，保持显式开关**
+
+转正前提（「P2 使 t4/t1 达标且 global 参与达成」）不成立：P2 同窗紧交错
+5 rep 中位 t4/t1 = **1.17× < 1.5×**（§8.2），且 global 是类别分化杠杆
+（§8.3：knapsack-500 回退 ×1.2-3.0、setcover-100x150 轻微回退、mknap 族
+受益）——翻默认会以 gate 集算例的确定性回退换噪声内收益。CLI 默认
+local 不变（main.rs `--work-stack` 帮助文本与 USAGE 已如实描述）；
+README 无 work-stack 条目（grep 实测），无需同步。多线程默认口径零变化。
+
+### 9.2 ② detect_pseudocost_favorable 行数下限 1→2：**收紧（A/B 定夺）**
+
+同窗交错 6 rep（探针 `--branch-rule mostfrac` 显式覆盖 ≡ 收紧后单行类
+的解析结果；节点/迭代逐 rep 完全确定，墙钟给中位）：
+
+| 算例（类） | def=Pseudocost+probes8 | mf=MostFractional | 裁决 |
+|---|---|---|---|
+| knapsack-500（单行） | 536 节点/10,485 lpi/~44ms | **360/4,889/~23ms（−48%）** | 单行纯付探测开销 |
+| knapsack-2000（单行） | 39/16,994/~273ms | 38/16,787/~269ms | 持平（无收益） |
+| knapsack-5000（单行守门） | 52/53,042/~2.34s | **37/38,242/~1.74s（−26%）** | 守门通过（无反向风险） |
+| mknap-3x100（3 行） | **2,120/23,978/~88ms** | 7,793/57,892/~268ms | **多行收益 −67% 由 Pseudocost 贡献，保留** |
+
+- 判据（ask 原文）：mknap 族收益主要由多行类贡献 ⇒ 收紧。实测：单行
+  族零收益纯开销、多行族收益真实且巨大——收紧成立。
+- 实施：`branch_bound.rs::detect_pseudocost_favorable` 行数下限
+  `is_empty()`（≥1）→ `len() < 2`（≥2）；三处文档注释同步（枚举/字段/
+  函数）。**mknap-5x300 默认行为逐位不变**（t1 87,800 节点/1,747,982
+  lpi/4762.0 optimal 实测复核）。
+- 测试重钉 3 处（理由入注释，objective 均为已知最优不变）：
+  1. `detect_pseudocost_favorable_classification`：命中载体 1 行→2 行，
+     新增单行排除向量（原单行正例变排除项）；
+  2. `resolve_branch_rule_defaults_paths`：命中载体 p 补第 2 行
+     （单行不再命中，三路径语义「命中⇒pseudo+probes≥8 / 未命中⇒
+     mostfrac / 显式覆盖优先」不变）；
+  3. `acceptance::acceptance_cli_heuristic_on_identical`：hard-knapsack-12
+     （单行）nodes 196→159（回落 MostFractional 即 R3 前旧值；objective
+     523 = 2^12 穷举真值恒同；显式 `--branch-rule pseudocost` 实测复现
+     196，已记入注释）。
+- 收紧后默认实测 = A/B 预测值逐位一致：knapsack-500 360/4,889、
+  knapsack-2000 38/16,787、knapsack-5000 37/38,242（墙钟 2.34→1.66s）、
+  mknap-3x100 2,120/23,978 不变；knapsack-200 根闭合（nodes=1）不变。
+- 自检（本轮实跑）：`cargo test --release --lib branch_bound`（39/39）、
+  `--lib parallel_bb`（29/29）、`--test acceptance`（13/13，重钉后）；
+  t1 确定性双跑（knapsack-5000）行为字段逐字节相同。

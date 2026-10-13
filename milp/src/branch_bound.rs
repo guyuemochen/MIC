@@ -104,9 +104,9 @@ pub enum BranchRule {
     /// 实为可靠性探测预算在该算例等式行结构上的白烧）；mknap-5x300 则
     /// pseudo×probes=8 最优（−25% 证最优墙钟）。故默认走类自适应
     /// （[`BbOptions::branch_rule_auto`] + [`detect_pseudocost_favorable`]）：
-    /// 背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数 ≤ 64）⇒
-    /// Pseudocost + probes=8，其余 ⇒ MostFractional；marketsplit（等式行）
-    /// 不命中类，探测白烧路径不进默认。
+    /// 背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数 2..=64，P3 收紧
+    /// 单行回落）⇒ Pseudocost + probes=8，其余 ⇒ MostFractional；
+    /// marketsplit（等式行）不命中类，探测白烧路径不进默认。
     /// 可靠性冷启动见 [`BbOptions::pc_reliability_probes`]。
     Pseudocost,
 }
@@ -164,8 +164,8 @@ pub struct BbOptions {
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
-    /// ≤ 64）⇒ Pseudocost + `pc_reliability_probes ≥ 8`，否则
-    /// MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
+    /// 2..=64，P3 收紧单行回落）⇒ Pseudocost + `pc_reliability_probes ≥ 8`，
+    /// 否则 MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
     /// 优先）。默认 true。
     pub branch_rule_auto: bool,
 }
@@ -288,18 +288,24 @@ pub fn branch_and_bound(problem: &Problem, opts: &BbOptions, tol: Tolerances) ->
     branch_and_bound_controlled(problem, opts, &SearchControl::default(), tol, None)
 }
 
-/// Pseudocost 类自适应默认的结构检测（R3）：**全变量 Binary、全部约束为
-/// 正系数 Le 行、行数 ≤ 64** 同时成立——强结构特征覆盖 knapsack-*/mknap-*
-/// 家族（0-1 背包/多维背包）；setcover（Ge 行 + 混合符号目标语义）、
+/// Pseudocost 类自适应默认的结构检测（R3；P3 收紧行数下限）：**全变量
+/// Binary、全部约束为正系数 Le 行、2 ≤ 行数 ≤ 64** 同时成立——强结构特征
+/// 覆盖 mknap-* 家族（多维背包）；setcover（Ge 行 + 混合符号目标语义）、
 /// marketsplit（等式行）、milp-mixed（连续列 + 等式行）均不命中，回落
 /// MostFractional。条件取强特征交集，宁缺勿滥（置信不足时回落 mostfrac，
 /// 风险提示原文）。
+///
+/// 行数下限 2（P3，2026-10-13 同窗 A/B 6 rep）：单行背包类
+/// （knapsack-500/2000/5000）在 Pseudocost+根探测下零收益纯付探测开销
+/// （墙钟 +48%/持平/+26%，节点 −33%/−2.5%/−29% 全在 MostFractional 侧），
+/// 而多行类收益真实（mknap-3x100 墙钟 −67%、节点 −73%）——下限收紧到 2
+/// 保留多行收益、消除单行开销；objective 全程已知最优不变。
 pub fn detect_pseudocost_favorable(problem: &Problem) -> bool {
     if problem.vars.is_empty() || problem.vars.iter().any(|v| v.var_type != VarType::Binary) {
         return false; // 非「全变量 Binary」
     }
-    if problem.constraints.is_empty() || problem.constraints.len() > 64 {
-        return false; // 行数 0（纯界问题，无分支树可言）或 > 64
+    if problem.constraints.len() < 2 || problem.constraints.len() > 64 {
+        return false; // 行数 < 2（单行背包类回落 mostfrac，见模块注释 P3）或 > 64
     }
     problem.constraints.iter().all(|con| {
         con.op == RelOp::Le && con.expr.terms.iter().all(|&(_, a)| a > 0.0)
@@ -1697,24 +1703,34 @@ mod tests {
 
     // ===================== R3：类自适应默认 ======================
 
-    /// （R3）结构检测：全 Binary + 全正系数 Le 行 + 行数 ≤ 64 命中
-    /// （背包类）；连续列 / 等式行 / Ge 行 / 混合符号系数 / 行数超限均回落。
+    /// （R3）结构检测：全 Binary + 全正系数 Le 行 + 2 ≤ 行数 ≤ 64 命中
+    /// （多维背包类）；连续列 / 等式行 / Ge 行 / 混合符号系数 / 单行 /
+    /// 行数超限均回落。（P3 重钉：单行背包向量从命中改为排除——行数下限
+    /// 1→2 收紧，单行类 Pseudocost 零收益纯付探测开销，见
+    /// detect_pseudocost_favorable 文档注释的 A/B 数字；新增 2 行命中向量。）
     #[test]
     fn detect_pseudocost_favorable_classification() {
-        // 命中：2 Binary + 1 条正系数 Le 行（背包）。
+        // 命中：2 Binary + 2 条正系数 Le 行（多维背包）。
         let mut p = Problem::new("k", Sense::Maximize);
         p.add_var("a", VarType::Binary).unwrap();
         p.add_var("b", VarType::Binary).unwrap();
         p.set_objective(vec![(0, 10.0), (1, 7.0)], 0.0).unwrap();
         p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0)
             .unwrap();
+        p.add_constraint(None, vec![(0, 2.0), (1, 4.0)], RelOp::Le, 6.0)
+            .unwrap();
         assert!(detect_pseudocost_favorable(&p));
+        // 排除（P3）：单行背包（行数下限 2 收紧——零收益纯付探测开销）。
+        let mut single = p.clone();
+        single.constraints.truncate(1);
+        assert!(!detect_pseudocost_favorable(&single));
         // 排除：Integer 变量（非全 Binary）。
         let mut q = Problem::new("int", Sense::Maximize);
         q.add_var("a", VarType::Integer).unwrap();
         q.set_var_bounds(0, 0.0, 5.0).unwrap();
         q.set_objective(vec![(0, 1.0)], 0.0).unwrap();
         q.add_constraint(None, vec![(0, 2.0)], RelOp::Le, 7.0).unwrap();
+        q.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 5.0).unwrap();
         assert!(!detect_pseudocost_favorable(&q));
         // 排除：连续列。
         let mut c = p.clone();
@@ -1758,6 +1774,8 @@ mod tests {
 
     /// （R3）入口解析：auto=true 命中类 ⇒ Pseudocost + probes ≥ 8；未命中 ⇒
     /// MostFractional；显式（auto=false）原样透传（覆盖优先）。
+    ///（P3 重钉：命中载体从单行背包改为 2 行——行数下限收紧后单行不再
+    /// 命中，见 detect_pseudocost_favorable 文档注释。）
     #[test]
     fn resolve_branch_rule_defaults_paths() {
         let mut p = Problem::new("k", Sense::Maximize);
@@ -1765,6 +1783,8 @@ mod tests {
         p.add_var("b", VarType::Binary).unwrap();
         p.set_objective(vec![(0, 10.0), (1, 7.0)], 0.0).unwrap();
         p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0)
+            .unwrap();
+        p.add_constraint(None, vec![(0, 2.0), (1, 4.0)], RelOp::Le, 6.0)
             .unwrap();
         let mut q = p.clone();
         q.constraints[0].op = RelOp::Eq; // 非命中类
