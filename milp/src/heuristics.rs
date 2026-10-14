@@ -10,7 +10,8 @@
 //!   planted 解与 LP 取整点汉明距离 ~15，LP 驱动机制原理上跨不过）。
 
 use crate::model::{Problem, RelOp, Tolerances, VarType};
-use crate::simplex::{Bounds, LpStatus, Simplex};
+use crate::simplex::{Bounds, LpStatus};
+use crate::simplex_sparse::LpEngine;
 
 /// 启发式得到的可行整数解。
 #[derive(Debug, Clone)]
@@ -107,7 +108,7 @@ pub fn round_and_check(
 /// 注意：dive 会改变 Simplex 内部基，调用方事后必须用真实 bounds 重新 resolve。
 pub fn dive(
     problem: &Problem,
-    simplex: &mut Simplex,
+    simplex: &mut dyn LpEngine,
     bounds: &Bounds,
     lp_x: &[f64],
     max_fixes: usize,
@@ -486,6 +487,7 @@ pub fn subset_sum_mitm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simplex::Simplex;
     use crate::model::Sense;
 
     fn tol() -> Tolerances {

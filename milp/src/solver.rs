@@ -627,4 +627,199 @@ mod tests {
         assert!(!r.gap_terminated);
         assert!(!r.auto_degraded);
     }
+
+    // =====================================================================
+    // S3：revised 引擎全路径（--lp-engine revised 的库层口径）
+    // =====================================================================
+
+    /// revised 选项（threads=1 默认；关 presolve 隔离 B&B 本体）。
+    fn opts_revised() -> SolveOptions {
+        SolveOptions {
+            use_presolve: false,
+            bb: crate::branch_bound::BbOptions {
+                lp_engine: crate::simplex_sparse::LpEngineKind::Revised,
+                ..crate::branch_bound::BbOptions::default()
+            },
+            ..SolveOptions::default()
+        }
+    }
+
+    fn bench_instance(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../bench/instances"))
+            .join(format!("{name}.milp"))
+    }
+
+    fn milp_instance(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/instances"))
+            .join(format!("{name}.milp"))
+    }
+
+    /// revised 全路径小 MILP：背包 5 项 → 18（同 tableau 钉值）。
+    #[test]
+    fn revised_full_path_knapsack5() {
+        let mut p = Problem::new("k5", Sense::Maximize);
+        for name in ["a", "b", "c", "d", "e"] {
+            p.add_var(name, VarType::Binary).unwrap();
+        }
+        p.set_objective(vec![(0, 10.0), (1, 7.0), (2, 6.0), (3, 4.0), (4, 2.0)], 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            vec![(0, 5.0), (1, 4.0), (2, 3.0), (3, 2.0), (4, 1.0)],
+            RelOp::Le,
+            9.0,
+        )
+        .unwrap();
+        let rep = solve(&p, &opts_revised()).unwrap();
+        assert_eq!(rep.status, SolveStatus::Optimal);
+        assert_close(rep.objective.unwrap(), 18.0);
+    }
+
+    /// revised × milp/instances 全路径对账（presolve/根割/启发式/局部割全开，
+    /// 默认参数）：目标值与 tableau 引擎恒同（状态恒同；节点/lpi 允许不同）。
+    #[test]
+    fn revised_matches_tableau_on_milp_instances() {
+        for name in [
+            "knapsack-10",
+            "lp-prod-3",
+            "milp-mixed-5",
+            "milp-wolsey-2",
+            "assign-4x4",
+            "hard-knapsack-12",
+        ] {
+            let p = crate::instance::load_instance(&milp_instance(name)).unwrap();
+            let tab = solve_default(&p).unwrap();
+            let rev = solve(&p, &opts_revised_with_presolve()).unwrap();
+            assert_eq!(
+                format!("{:?}", tab.status),
+                format!("{:?}", rev.status),
+                "{name}: 终态分叉"
+            );
+            if tab.status == SolveStatus::Optimal {
+                let a = tab.objective.unwrap();
+                let b = rev.objective.unwrap();
+                assert!(
+                    (a - b).abs() <= 1e-6 * (1.0 + a.abs()),
+                    "{name}: 目标分叉 tableau={a} revised={b}"
+                );
+            }
+        }
+    }
+
+    /// revised 选项（presolve 开启——与默认 tableau 完全同参数，仅引擎不同）。
+    fn opts_revised_with_presolve() -> SolveOptions {
+        SolveOptions {
+            bb: crate::branch_bound::BbOptions {
+                lp_engine: crate::simplex_sparse::LpEngineKind::Revised,
+                ..crate::branch_bound::BbOptions::default()
+            },
+            ..SolveOptions::default()
+        }
+    }
+
+    /// bench 轻负载对账：setcover-100x150 已知最优 276（revised 全路径）。
+    #[test]
+    fn revised_setcover_100x150_known_optimum_276() {
+        let p = crate::instance::load_instance(&bench_instance("setcover-100x150")).unwrap();
+        let rep = solve(&p, &opts_revised_with_presolve()).unwrap();
+        assert_eq!(rep.status, SolveStatus::Optimal);
+        assert!(
+            (rep.objective.unwrap() - 276.0).abs() <= 1e-6,
+            "obj = {}",
+            rep.objective.unwrap()
+        );
+    }
+
+    /// F5 守卫：revised × threads≥2 在库层显式报错（不静默回 tableau）。
+    #[test]
+    fn revised_with_threads_rejected_loudly() {
+        let mut p = Problem::new("m", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 2.0)], RelOp::Le, 7.0).unwrap();
+        let ctrl = SearchControl {
+            threads: 2,
+            ..SearchControl::default()
+        };
+        let r = solve_controlled(&p, &opts_revised_with_presolve(), &ctrl, None);
+        assert!(matches!(r, Err(MilpError::InvalidModel(_))), "实际 {r:?}");
+        // threads=1 同参数正常。
+        let r = solve_controlled(&p, &opts_revised_with_presolve(), &SearchControl::default(), None);
+        assert!(r.is_ok());
+    }
+
+    /// t1 确定性（revised）：同引擎同参数双跑全部行为字段逐字节相同
+    ///（目标/nodes/lpi/values 按位；mknap-3x100 带 B&B 深树路径）。
+    #[test]
+    fn revised_deterministic_double_run() {
+        let p = crate::instance::load_instance(&bench_instance("mknap-3x100")).unwrap();
+        let a = solve(&p, &opts_revised_with_presolve()).unwrap();
+        let b = solve(&p, &opts_revised_with_presolve()).unwrap();
+        assert_eq!(a.status, b.status);
+        assert_eq!(
+            a.objective.unwrap().to_bits(),
+            b.objective.unwrap().to_bits()
+        );
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.stats.cuts, b.stats.cuts);
+        assert_eq!(a.values, b.values);
+        // 目标为已知最优（对账锚：mknap-3x100 = 2331，tableau 口径与
+        // python_bench micpython/highs/scip 三方记录一致）。
+        assert!(
+            (a.objective.unwrap() - 2331.0).abs() <= 1e-6,
+            "obj = {}",
+            a.objective.unwrap()
+        );
+    }
+
+    /// W2 时限注入兼容（revised 全路径）：极短时限 ⇒ LimitReached 诚实终态
+    ///（不冒充 Optimal）；无时限 ⇒ Optimal。
+    #[test]
+    fn revised_time_limit_truncates_honestly() {
+        let p = crate::instance::load_instance(&bench_instance("setcover-100x150")).unwrap();
+        let opts = SolveOptions {
+            bb: crate::branch_bound::BbOptions {
+                lp_engine: crate::simplex_sparse::LpEngineKind::Revised,
+                time_limit_ms: 1,
+                ..crate::branch_bound::BbOptions::default()
+            },
+            ..SolveOptions::default()
+        };
+        let rep = solve(&p, &opts).unwrap();
+        assert_eq!(rep.status, SolveStatus::LimitReached);
+        let full = solve(&p, &opts_revised_with_presolve()).unwrap();
+        assert_eq!(full.status, SolveStatus::Optimal);
+    }
+
+    /// 验收目标（重负载，#[ignore]；`cargo test --release --lib solver::tests
+    /// -- --ignored --test-threads=1` 显式跑）：revised 下 mknap-5x300 =
+    /// 4762、setcover-300x600 = 144（已知最优，与 tableau 口径一致）。
+    #[test]
+    #[ignore]
+    fn revised_acceptance_mknap_5x300_and_setcover_300x600() {
+        let t0 = std::time::Instant::now();
+        let p = crate::instance::load_instance(&bench_instance("mknap-5x300")).unwrap();
+        let rep = solve(&p, &opts_revised_with_presolve()).unwrap();
+        let mknap_secs = t0.elapsed().as_secs_f64();
+        assert_eq!(rep.status, SolveStatus::Optimal, "mknap-5x300 终态");
+        assert!(
+            (rep.objective.unwrap() - 4762.0).abs() <= 1e-6,
+            "mknap-5x300 obj = {}（钉 4762）",
+            rep.objective.unwrap()
+        );
+        let t0 = std::time::Instant::now();
+        let p = crate::instance::load_instance(&bench_instance("setcover-300x600")).unwrap();
+        let rep = solve(&p, &opts_revised_with_presolve()).unwrap();
+        let setcover_secs = t0.elapsed().as_secs_f64();
+        assert_eq!(rep.status, SolveStatus::Optimal, "setcover-300x600 终态");
+        assert!(
+            (rep.objective.unwrap() - 144.0).abs() <= 1e-6,
+            "setcover-300x600 obj = {}（钉 144）",
+            rep.objective.unwrap()
+        );
+        eprintln!(
+            "revised acceptance: mknap-5x300=4762 @{mknap_secs:.1}s, setcover-300x600=144 @{setcover_secs:.1}s"
+        );
+    }
 }

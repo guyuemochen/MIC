@@ -86,7 +86,8 @@ use crate::search_ctrl::{
     HeuristicConfig, HeuristicController, HeuristicDecision, ProgressInfo, Pseudocosts,
     SearchSnapshot,
 };
-use crate::simplex::{Bounds, LpSolution, LpStatus, Simplex};
+use crate::simplex::{Bounds, LpSolution, LpStatus};
+use crate::simplex_sparse::{new_engine, LpEngine, LpEngineKind};
 
 /// 分支变量选择规则。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +183,13 @@ pub struct BbOptions {
     /// 调整 6 的机制 spike 结论）。仅顺序路径；并行 worker 不施加（窃取
     /// 交错会使局部割泄漏到子树外——共享 Simplex 无行作用域）。默认 true。
     pub local_cuts: bool,
+    /// LP 引擎选择（S3）：默认 [`LpEngineKind::Tableau`]（本轮不改默认；
+    /// CLI `--lp-engine tableau|revised` / 库字段两层接线）。`Revised` =
+    /// 稀疏修正单纯形（simplex_sparse.rs，CSC+稀疏 LU+ETA+对偶热修复），
+    /// **仅接线顺序路径**：threads ≥ 2 在 [`branch_and_bound_controlled`]
+    /// 入口显式报错（并行 worker 直接构造稠密 Simplex——F5 冷审：静默
+    /// 忽略旗标会形成文档外行为分叉）。
+    pub lp_engine: LpEngineKind,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
@@ -215,6 +223,7 @@ impl Default for BbOptions {
             work_stack_auto: true,
             branch_rule_auto: true,
             local_cuts: true,
+            lp_engine: LpEngineKind::default(),
         }
     }
 }
@@ -411,6 +420,15 @@ pub fn branch_and_bound_controlled(
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
     let opts = &resolve_branch_rule_defaults(problem, opts);
     if ctrl.threads >= 2 {
+        // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
+        // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
+        // 旗标会形成文档外行为分叉）。CLI 层已在解析层给出用法错误。
+        if opts.lp_engine == LpEngineKind::Revised {
+            return Err(MilpError::InvalidModel(
+                "--lp-engine revised 仅支持 threads=1（S3 接线范围：并行引擎直接构造稠密 Simplex）"
+                    .to_string(),
+            ));
+        }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
     sequential_bb(problem, opts, ctrl, tol, hooks)
@@ -450,7 +468,7 @@ fn sequential_bb(
     // 割丢弃回退（根割 IterationLimit 重建 Simplex）前累计的 LP 迭代数：
     // finish 以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
     let mut base_lp_iterations: u64 = 0;
-    let mut simplex = Simplex::new(problem, tol)?;
+    let mut simplex = new_engine(problem, tol, opts.lp_engine)?;
     // W2 内部墙钟时限：0（不限）= None ⇒ 零墙钟读点（条件读钟）；重建
     // Simplex（预割轮 / R8 回滚）同款重注入。W3：budget 模式不注入（决策
     // 路径零墙钟读点契约；时限语义已换算为节点预算）。
@@ -612,7 +630,7 @@ fn sequential_bb(
         // 已由 maybe_update 收取，不受重建影响。迭代记账先累计再重建
         // （与下方 PruneLimit 重建路径同款），不丢数。
         base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
-        simplex = Simplex::new(problem, tol)?;
+        simplex = new_engine(problem, tol, opts.lp_engine)?;
         simplex.set_time_deadline(time_deadline);
         sol = simplex.solve(&bounds);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
@@ -643,6 +661,7 @@ fn sequential_bb(
             &int_vars,
             CutOptions::default(),
             &tol,
+            || new_engine(problem, tol, opts.lp_engine),
         )?;
         match classify_node(st, true) {
             // (c) 割后 resolve 触发迭代上限：割循环停在非 Optimal 态，不可作
@@ -655,7 +674,7 @@ fn sequential_bb(
                 // 记账完整：重建前 Simplex 的累计迭代（根 LP + 割循环）不丢。
                 base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
                 stats.cuts = 0; // 割已随 Simplex 一起丢弃，如实清零
-                simplex = Simplex::new(problem, tol)?;
+                simplex = new_engine(problem, tol, opts.lp_engine)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
@@ -808,7 +827,7 @@ fn sequential_bb(
     // unwind_to < 施加点的 Pending ⇒ 已退出该子树 ⇒ 恢复快照（局部行只在
     // 子树内有效——泄漏会切子树外整数可行解）。恢复前把迭代差额累计进
     // base（快照回退 iterations_total，分离/重解迭代不丢账）。
-    let mut cut_scopes: Vec<(usize, Simplex, u64)> = Vec::new();
+    let mut cut_scopes: Vec<(usize, Box<dyn LpEngine>, u64)> = Vec::new();
     let mut local_cut_budget = LOCAL_CUT_GLOBAL_BUDGET;
     let mut next_local_cut_node: u64 = LOCAL_CUT_NODE_INTERVAL;
     // W6 类门控：仅多维背包类（detect_pseudocost_favorable——与 R3/W1 同一
@@ -1016,7 +1035,7 @@ fn sequential_bb(
             );
             if !batch.is_empty() {
                 // 快照（施加前状态；子树出口恢复）。
-                cut_scopes.push((trail.len(), simplex.clone(), simplex.iterations()));
+                cut_scopes.push((trail.len(), simplex.snapshot(), simplex.iterations()));
                 let mut applied: u64 = 0;
                 let mut add_ok = true;
                 for cut in &batch {
@@ -1435,7 +1454,7 @@ pub(crate) fn probe_reliability(
     tol: Tolerances,
     opts: &BbOptions,
     pc: &mut Pseudocosts,
-    simplex: &mut Simplex,
+    simplex: &mut dyn LpEngine,
     depth: usize,
 ) {
     if opts.pc_reliability_probes == 0 || depth > PC_PROBE_MAX_DEPTH {
@@ -1500,7 +1519,7 @@ pub(crate) fn probe_reliability(
 fn probe_one(
     sense: Sense,
     bounds: &mut Bounds,
-    simplex: &mut Simplex,
+    simplex: &mut dyn LpEngine,
     j: usize,
     tighten_lb: bool,
     bound: f64,
@@ -1574,7 +1593,7 @@ fn branch_or_close(
     incumbent: &mut Option<(f64, Vec<f64>)>,
     stack: &mut Vec<Pending>,
     trail: &mut Vec<TrailEntry>,
-    simplex: &mut Simplex,
+    simplex: &mut dyn LpEngine,
     nodes: u64,
     // 决策通道进度量（wall = 墙钟秒 / budget = 节点数，W3 单位契约）。
     elapsed_secs: f64,
@@ -1825,7 +1844,7 @@ fn finish(
     status: SolveStatus,
     incumbent: Option<(f64, Vec<f64>)>,
     stats: &mut BbStats,
-    simplex: &Simplex,
+    simplex: &dyn LpEngine,
     start: Instant,
     base_iters: u64,
     bound: Option<f64>,
@@ -2032,6 +2051,7 @@ fn map_parallel_outcome(outcome: crate::parallel_bb::ParallelOutcome) -> BbResul
 
 #[cfg(test)]
 mod tests {
+    use crate::simplex::Simplex;
     use super::*;
     use crate::model::{RelOp, VarType};
 

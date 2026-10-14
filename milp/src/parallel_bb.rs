@@ -875,6 +875,7 @@ pub fn parallel_branch_and_bound(
                 &int_vars,
                 CutOptions::default(),
                 &tol,
+                || Simplex::new(problem, tol),
             )?;
             // R8 回滚只对迭代上限触发（W2：TimeLimit 走 else 分支直接诚实
             // 终态——回滚重建+重放是又一次整段根 LP，会把超限点拖过
@@ -2581,6 +2582,7 @@ mod tests {
             &int_vars,
             CutOptions::default(),
             &t,
+            || Simplex::new(&problem, t),
         )
         .unwrap();
         assert_eq!(st, LpStatus::Optimal);

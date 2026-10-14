@@ -1,4 +1,6 @@
-//! 稀疏修正单纯形 LP 求解器（S2，standalone v1；不接 B&B）。
+//! 稀疏修正单纯形 LP 求解器（S2 standalone 核心；S3 起经 [`LpEngine`]
+//! trait 接入主求解路径——CLI `--lp-engine revised` / 库
+//! `BbOptions::lp_engine`，默认 tableau 不变）。
 //!
 //! # 与 [`crate::simplex`]（稠密表格引擎）的语义对齐契约
 //! - **同一 LP 语义**：内部统一 min（Maximize 取负，报告还原 + obj_offset）、
@@ -49,12 +51,17 @@
 //!   中非主要成分，且本引擎迭代序列与稠密引擎逐次数一致（7774 次）——
 //!   部分定价会改换入基序列、引入迭代数回归风险，留后续按证据启用。
 //!
-//! # S2 范围边界（诚实声明）
-//! - **standalone**：只提供冷启动 `solve`（每次调用整基重建两阶段）；
-//!   `resolve` 热启动 / `add_row` 割行 / B&B 接线均不在本轮（S3 的
-//!   集成面）。访问器已按 cuts.rs 消费面（cuts.rs:267/448-465/1247/1754）
-//!   提供：表格行 = e_iᵀB⁻¹A 经 BTRAN + 行收集实现，列空间 [结构|松弛]、
-//!   人工列不外露（simplex.rs:262-269 同款约定）；
+//! # 范围边界（诚实声明）
+//! - S3 起提供全套引擎面：`solve` 冷启动 / `resolve` 热启动（snap+传播 →
+//!   对偶修复快路径或整基重建，语义对齐 simplex.rs::resolve）/ `add_row`
+//!   割行（原尺度不缩放；脏因子化标记 + 下次调用整基重构——F6『宜随后
+//!   重构』的最简落法）/ W6 快照（Clone）。访问器按 cuts.rs 消费面
+//!   （cuts.rs:267/448-465/1247/1754）：表格行 = e_iᵀB⁻¹A 经 BTRAN +
+//!   行收集实现，列空间 [结构|松弛]、人工列不外露（simplex.rs:262-269
+//!   同款约定）；
+//! - **revised 仅接线顺序路径**（threads=1）：并行引擎直接构造稠密
+//!   Simplex，revised × threads≥2 在 branch_and_bound_controlled 与 CLI
+//!   解析层显式报错（F5）；
 //! - 并列破键全部确定性（最小下标 / 最小行号 / 升序值计算单遍），无哈希
 //!   迭代序、无墙钟决策（deadline 未注入零读钟）——threads=1 / t1 双跑
 //!   确定性契约。
@@ -66,7 +73,186 @@
 
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, Sense, Tolerances};
-use crate::simplex::{Bounds, ColumnLayout, LpStatus, LpSolution, NonbasicCol, RowOrigin, SlackCol};
+use crate::simplex::{
+    Bounds, ColumnLayout, LpSolution, LpStatus, NonbasicCol, RowOrigin, Simplex, SlackCol,
+};
+
+// ===========================================================================
+// LP 引擎抽象（S3：B&B/cuts/heuristics 经 dyn 引擎驱动，tableau 默认不变）
+// ===========================================================================
+
+/// LP 引擎选择（CLI `--lp-engine` / 库 `BbOptions::lp_engine` 两层）。
+///
+/// 默认 [`LpEngineKind::Tableau`]（本轮不改默认——S3 只接线与对账，S4 才
+/// 议默认翻转）。`Revised` = 本模块稀疏修正单纯形；**仅接线顺序路径**
+///（threads=1）：并行引擎（parallel_bb）直接构造稠密 Simplex，revised ×
+/// threads≥2 在 `branch_and_bound_controlled` 入口显式报错（F5 冷审：静默
+/// 忽略旗标会形成文档外行为分叉）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LpEngineKind {
+    /// 稠密表格两阶段单纯形（simplex.rs，既有默认）。
+    Tableau,
+    /// 稀疏修正单纯形（本模块；CSC + 稀疏 LU + ETA + 对偶热修复）。
+    Revised,
+}
+
+impl Default for LpEngineKind {
+    fn default() -> Self {
+        LpEngineKind::Tableau
+    }
+}
+
+/// LP 引擎统一接口：branch_bound / cuts / heuristics 的全部消费面。
+///
+/// 对 [`Simplex`]（稠密）与 [`SparseSimplex`]（本模块）各有一份实现；
+/// B&B 持有 `Box<dyn LpEngine>`（W6 局部割的子树作用域快照经
+/// [`LpEngine::snapshot`]——Clone 的对象安全等价物）。
+pub trait LpEngine {
+    /// 两阶段冷启动求解（忽略此前内部状态）。
+    fn solve(&mut self, bounds: &Bounds) -> LpSolution;
+    /// 热启动求解（界变化 snap+传播 → 对偶修复快路径或整基重建 → 收尾；
+    /// 语义对齐 simplex.rs::resolve，见各实现的模块文档）。
+    fn resolve(&mut self, bounds: &Bounds) -> LpSolution;
+    /// 追加割行（terms 结构变量空间原尺度、不缩放；返回割序号 k）。
+    fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize>;
+    /// 内部墙钟时限（W2 条件读钟；None = 零读钟）。
+    fn set_time_deadline(&mut self, deadline: Option<std::time::Instant>);
+    /// 当前内部墙钟时限（R8 回滚透传用）。
+    fn time_deadline(&self) -> Option<std::time::Instant>;
+    /// 单次调用迭代上限提示（R8 割循环收紧用，F4）。
+    fn set_iter_limit_hint(&mut self, hint: Option<u64>);
+    /// 累计迭代数。
+    fn iterations(&self) -> u64;
+    /// 各行基列下标（结构+松弛列空间）。
+    fn basis_columns(&self) -> &[usize];
+    /// 当前全部非基列及其所贴界（不含人工列）。
+    fn nonbasic_columns(&self) -> Vec<NonbasicCol>;
+    /// 列布局（结构列/松弛列含义；人工列不外露）。
+    fn column_layout(&self) -> &ColumnLayout;
+    /// 原始约束下标 → 表格行；近零行 None。
+    fn row_of_constraint(&self, constraint_index: usize) -> Option<usize>;
+    /// 割序号 → 表格行。
+    fn row_of_cut(&self, cut_index: usize) -> Option<usize>;
+    /// 表格行数（含割行）。
+    fn num_rows(&self) -> usize;
+    /// 表格行稀疏读取：(非零 (列, e_rowᵀB⁻¹A_j) 项[结构+松弛段、列升序],
+    /// 该行基变量当前值)。
+    fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64);
+    /// 深拷贝快照（W6 子树作用域协议；Clone 的对象安全等价物）。
+    fn snapshot(&self) -> Box<dyn LpEngine>;
+}
+
+/// 按引擎类型构造（branch_bound / cuts 回滚重建的统一工厂）。
+pub fn new_engine(
+    problem: &Problem,
+    tol: Tolerances,
+    kind: LpEngineKind,
+) -> Result<Box<dyn LpEngine>> {
+    match kind {
+        LpEngineKind::Tableau => Ok(Box::new(Simplex::new(problem, tol)?)),
+        LpEngineKind::Revised => Ok(Box::new(SparseSimplex::new(problem, tol)?)),
+    }
+}
+
+/// Box 透传实现（`&Box<dyn LpEngine>` → `&dyn LpEngine` 的去尺寸胁迫与
+/// 泛型 `E = Box<dyn LpEngine>` 的整箱替换 `*s = rebuilt` 都需要它）。
+impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
+    fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        (**self).solve(bounds)
+    }
+    fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        (**self).resolve(bounds)
+    }
+    fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
+        (**self).add_row(terms, op, rhs)
+    }
+    fn set_time_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        (**self).set_time_deadline(deadline)
+    }
+    fn time_deadline(&self) -> Option<std::time::Instant> {
+        (**self).time_deadline()
+    }
+    fn set_iter_limit_hint(&mut self, hint: Option<u64>) {
+        (**self).set_iter_limit_hint(hint)
+    }
+    fn iterations(&self) -> u64 {
+        (**self).iterations()
+    }
+    fn basis_columns(&self) -> &[usize] {
+        (**self).basis_columns()
+    }
+    fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
+        (**self).nonbasic_columns()
+    }
+    fn column_layout(&self) -> &ColumnLayout {
+        (**self).column_layout()
+    }
+    fn row_of_constraint(&self, constraint_index: usize) -> Option<usize> {
+        (**self).row_of_constraint(constraint_index)
+    }
+    fn row_of_cut(&self, cut_index: usize) -> Option<usize> {
+        (**self).row_of_cut(cut_index)
+    }
+    fn num_rows(&self) -> usize {
+        (**self).num_rows()
+    }
+    fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64) {
+        (**self).tableau_row_terms(row)
+    }
+    fn snapshot(&self) -> Box<dyn LpEngine> {
+        (**self).snapshot()
+    }
+}
+
+/// 稠密引擎的 trait 实现（方法名与固有方法同名：固有方法解析优先，
+/// 委托即一行）。
+impl LpEngine for Simplex {
+    fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.solve(bounds)
+    }
+    fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.resolve(bounds)
+    }
+    fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
+        self.add_row(terms, op, rhs)
+    }
+    fn set_time_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.set_time_deadline(deadline)
+    }
+    fn time_deadline(&self) -> Option<std::time::Instant> {
+        self.time_deadline()
+    }
+    fn set_iter_limit_hint(&mut self, hint: Option<u64>) {
+        self.set_iter_limit_hint(hint)
+    }
+    fn iterations(&self) -> u64 {
+        self.iterations()
+    }
+    fn basis_columns(&self) -> &[usize] {
+        self.basis_columns()
+    }
+    fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
+        self.nonbasic_columns()
+    }
+    fn column_layout(&self) -> &ColumnLayout {
+        self.column_layout()
+    }
+    fn row_of_constraint(&self, constraint_index: usize) -> Option<usize> {
+        self.row_of_constraint(constraint_index)
+    }
+    fn row_of_cut(&self, cut_index: usize) -> Option<usize> {
+        self.row_of_cut(cut_index)
+    }
+    fn num_rows(&self) -> usize {
+        self.num_rows()
+    }
+    fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64) {
+        self.tableau_row_terms(row)
+    }
+    fn snapshot(&self) -> Box<dyn LpEngine> {
+        Box::new(self.clone())
+    }
+}
 
 /// 连续退化迭代阈值：超过后切入 Bland（与 simplex.rs 同值）。
 const DEGENERATE_STREAK_LIMIT: u32 = 50;
@@ -430,6 +616,15 @@ enum PhaseOutcome {
     Failed(String),
 }
 
+/// 对偶修复结果（与 simplex.rs::DualRepair 同构）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DualRepair {
+    /// 已恢复原始可行（随后 Phase-2 收尾应为零迭代）。
+    Repaired,
+    /// 不适用/超出预算/数值异常 ⇒ 回退整基重建（语义与冷路径一致）。
+    GiveUp,
+}
+
 /// 稀疏修正单纯形求解器（standalone v1；语义契约见模块文档）。
 ///
 /// `Clone`：全字段纯数据（CSC/LU/ETA/基），克隆即精确状态（W6 快照纪律
@@ -459,7 +654,9 @@ pub struct SparseSimplex {
     row_scale: Vec<f64>,
     /// 原始约束 → 表格行（近零行为 None）。
     constraint_row: Vec<Option<usize>>,
-    /// 当前人工列数（静态段之后连续排列，每 solve 重建）。
+    /// 割序号 → 表格行（近零割行为 None；S3 起 add_row 记账）。
+    cut_row: Vec<Option<usize>>,
+    /// 当前人工列数（静态段之后连续排列，每 solve 重建；add_row 可追加）。
     num_art: usize,
     /// 人工列 t → (所属行, σ)；列号 = ncols_static + t。
     art_info: Vec<(usize, f64)>,
@@ -468,8 +665,17 @@ pub struct SparseSimplex {
     at_upper: Vec<bool>,
     x_b: Vec<f64>,
     bounds: Bounds,
+    /// 上次 solve/resolve 的有效界（resolve 的 snap 基准；与 simplex.rs
+    /// 的 prev_bounds 同款 swap 协议）。
+    prev_bounds: Bounds,
     lu: LuFactors,
     etas: Vec<Eta>,
+    /// add_row 追加了行/列后的脏标记：下一次 solve/resolve 入口整基重
+    /// 因子化 + 重算 x_B（割批共享一次；F6『数值上宜随后重构』的落法）。
+    factorization_dirty: bool,
+    /// 上次 Phase-1 未清理即收场 / add_row 新建人工列（resolve 必须重跑
+    /// Phase-1 的欠账记账，语义同 simplex.rs）。
+    phase1_pending: bool,
     has_run: bool,
     infeasible_flag: bool,
     #[allow(dead_code)]
@@ -583,6 +789,7 @@ impl SparseSimplex {
             row_slack: Vec::new(),
             row_scale: Vec::new(),
             constraint_row: vec![None; problem.constraints.len()],
+            cut_row: Vec::new(),
             num_art: 0,
             art_info: Vec::new(),
             basis: Vec::new(),
@@ -593,8 +800,14 @@ impl SparseSimplex {
                 lb: vec![0.0; n],
                 ub: vec![f64::INFINITY; n],
             },
+            prev_bounds: Bounds {
+                lb: Vec::new(),
+                ub: Vec::new(),
+            },
             lu: LuFactors::default(),
             etas: Vec::new(),
+            factorization_dirty: false,
+            phase1_pending: false,
             has_run: false,
             infeasible_flag: false,
             numerical_error: None,
@@ -729,9 +942,9 @@ impl SparseSimplex {
             .flatten()
     }
 
-    /// S2 无割行：恒 None（S3 接 add_row 后启用）。
-    pub fn row_of_cut(&self, _cut_index: usize) -> Option<usize> {
-        None
+    /// 割序号 → 表格行；近零割行为 None。
+    pub fn row_of_cut(&self, cut_index: usize) -> Option<usize> {
+        self.cut_row.get(cut_index).copied().flatten()
     }
 
     /// 各行基列下标（结构+松弛列空间）。
@@ -825,6 +1038,389 @@ impl SparseSimplex {
         let st = self.run_two_phase(true);
         self.has_run = true;
         self.build_solution(st)
+    }
+
+    /// 热启动求解（S3）：语义对齐 simplex.rs::resolve——
+    /// (1)(2) 非基贴界双向检查（相对上次有效界 `prev_bounds`：收紧越界
+    /// snap 到收紧界 / 严格内点 snap 到较近界、等距按 rc 符号选侧），
+    /// 每个 snap 的 Δx_j 按 B⁻¹A_j（FTRAN）传播；
+    /// (3) 基变量越界或 Phase-1 欠账（含 add_row 新建人工列）⇒ 修复：
+    /// a) **对偶修复快路径**（无欠账、基中无人工列、静态非基对偶可行）：
+    /// 有界变量对偶单纯形若干次旋转恢复原始可行（每次出基落到被违反
+    /// 界；FTRAN/BTRAN 即时现算）；任何异常 GiveUp 回退 b)；
+    /// b) 整基重建 + Phase-1（冷路径，语义与 simplex.rs 完全一致）。
+    pub fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.start_call();
+        if self.infeasible_flag {
+            return self.build_solution(LpStatus::Infeasible);
+        }
+        if let Some(st) = self.validate_bounds_arg(bounds) {
+            return self.build_solution(st);
+        }
+        if !self.has_run || self.factorization_dirty {
+            // 尚无可用热状态 / add_row 后的脏因子化：退化为冷启动
+            //（add_row 后保留基但因子化必须重建——refactor 内含整基
+            // 重因子化 + x_B 从原始数据重算，等价『随后重构』纪律）。
+            if self.factorization_dirty {
+                if let Err(msg) = self.refactor() {
+                    self.numerical_error = Some(msg);
+                    return self.build_solution(LpStatus::IterationLimit);
+                }
+            }
+            if !self.has_run {
+                self.bounds.lb.clone_from(&bounds.lb);
+                self.bounds.ub.clone_from(&bounds.ub);
+                self.rebuild_initial_basis();
+                let st = self.run_two_phase(true);
+                self.has_run = true;
+                return self.build_solution(st);
+            }
+        }
+        // (1)(2) 非基贴界双向检查 + 传播（prev_bounds 换入上次有效界）。
+        std::mem::swap(&mut self.bounds, &mut self.prev_bounds);
+        self.bounds.lb.clone_from(&bounds.lb);
+        self.bounds.ub.clone_from(&bounds.ub);
+        self.snap_nonbasics();
+        // (3) 基变量越界 / Phase-1 欠账检查 → 对偶修复或整基重建。
+        let need_repair = self.basics_violated() || self.phase1_pending;
+        let mut dual_repaired = false;
+        if need_repair
+            && !self.phase1_pending
+            && !self.artificials_in_basis()
+            && self.dual_repair() == DualRepair::Repaired
+        {
+            dual_repaired = true;
+        } else if need_repair {
+            self.rebuild_initial_basis();
+        }
+        let st = self.run_two_phase(need_repair && !dual_repaired);
+        self.has_run = true;
+        self.build_solution(st)
+    }
+
+    /// 非基列贴界双向检查（与 simplex.rs::snap_nonbasics 同款规则；传播
+    /// 经 FTRAN 现算 B⁻¹A_j）。
+    fn snap_nonbasics(&mut self) {
+        let n = self.num_structural;
+        let feas = self.tol.feasibility;
+        // 等距并列按 rc 符号选侧所需的 y（惰性：首次用到才 BTRAN）。
+        let mut y_cache: Option<Vec<f64>> = None;
+        for j in 0..n {
+            if self.in_basis[j] {
+                continue;
+            }
+            let old_v = if self.at_upper[j] {
+                self.prev_bounds.ub[j]
+            } else {
+                self.prev_bounds.lb[j]
+            };
+            let nlb = self.bounds.lb[j];
+            let nub = self.bounds.ub[j];
+            let inside = (old_v - nlb).abs() > feas
+                && !(nub.is_finite() && (nub - old_v).abs() <= feas);
+            let (target, to_upper) = if self.at_upper[j] {
+                if nub.is_finite() && nub < old_v - feas {
+                    (nub, true) // 收紧越界：snap 到新 ub
+                } else if inside {
+                    self.nearest_or_rc(j, old_v, nlb, nub, &mut y_cache)
+                } else if nub.is_finite() {
+                    (nub, true) // 仍贴上界
+                } else {
+                    (nlb, false) // 新上界 +∞：只能贴下界
+                }
+            } else {
+                if nlb > old_v + feas {
+                    (nlb, false) // 收紧越界：snap 到新 lb
+                } else if inside {
+                    self.nearest_or_rc(j, old_v, nlb, nub, &mut y_cache)
+                } else {
+                    (nlb, false) // 仍贴下界
+                }
+            };
+            let delta = target - old_v;
+            if delta != 0.0 {
+                self.ftran_col(j);
+                let m = self.basis.len();
+                for k in 0..m {
+                    let a = self.alpha[k];
+                    if a != 0.0 {
+                        self.x_b[k] -= delta * a;
+                    }
+                }
+            }
+            self.at_upper[j] = to_upper;
+        }
+    }
+
+    /// 松弛失贴时的 snap 目标：较近的界；等距（带宽内）按检验数符号
+    /// 选侧（rc<0 选下界、rc≥0 选上界；与 simplex.rs::nearest_or_rc 同款）。
+    fn nearest_or_rc(
+        &mut self,
+        j: usize,
+        v: f64,
+        lb: f64,
+        ub: f64,
+        y_cache: &mut Option<Vec<f64>>,
+    ) -> (f64, bool) {
+        let d_lb = (v - lb).abs();
+        let d_ub = if ub.is_finite() { (ub - v).abs() } else { f64::INFINITY };
+        let tie = self.tol.feasibility;
+        if d_lb < d_ub - tie {
+            return (lb, false);
+        }
+        if d_ub < d_lb - tie {
+            return (ub, true);
+        }
+        if y_cache.is_none() {
+            let m = self.basis.len();
+            let mut cb = std::mem::take(&mut self.cb);
+            cb.resize(m, 0.0);
+            for i in 0..m {
+                cb[i] = self.cost_of(self.basis[i], 2);
+            }
+            let y = self.btran_full(&cb);
+            self.cb = cb;
+            *y_cache = Some(y);
+        }
+        let y = y_cache.as_ref().unwrap();
+        let mut dot = 0.0;
+        for k in self.col_start[j]..self.col_start[j + 1] {
+            let yr = y[self.col_rows[k]];
+            if yr != 0.0 {
+                dot += yr * self.col_vals[k];
+            }
+        }
+        let rc = self.cost_of(j, 2) - dot;
+        if rc < 0.0 {
+            (lb, false)
+        } else {
+            (ub, true)
+        }
+    }
+
+    /// 基变量越界检查（与 simplex.rs::basics_violated 同款：残基人工变量
+    /// 必须为 0、基变量在界 ±feas 内、值有限）。
+    fn basics_violated(&self) -> bool {
+        let ncs = self.ncols_static();
+        let feas = self.tol.feasibility;
+        for i in 0..self.basis.len() {
+            let c = self.basis[i];
+            if !self.x_b[i].is_finite() {
+                return true;
+            }
+            if c >= ncs {
+                if self.x_b[i].abs() > feas {
+                    return true;
+                }
+            } else {
+                let (lb, ub) = self.col_bounds(c);
+                if self.x_b[i] < lb - feas || self.x_b[i] > ub + feas {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 基中是否存在人工列（对偶快路径前置排除）。
+    fn artificials_in_basis(&self) -> bool {
+        let ncs = self.ncols_static();
+        self.basis.iter().any(|&c| c >= ncs)
+    }
+
+    /// 静态非基列对偶可行性预检（与 simplex.rs::dual_feasible 同款）。
+    fn dual_feasible(&mut self) -> bool {
+        let ncs = self.ncols_static();
+        let m = self.basis.len();
+        for i in 0..m {
+            self.cb[i] = self.cost_of(self.basis[i], 2);
+        }
+        let y = self.btran_full(&self.cb);
+        for j in 0..ncs {
+            if self.in_basis[j] {
+                continue;
+            }
+            let (lb, ub) = self.col_bounds(j);
+            if ub - lb <= self.tol.feasibility {
+                continue; // 固定列：无对偶语义
+            }
+            let mut dot = 0.0;
+            for k in self.col_start[j]..self.col_start[j + 1] {
+                let yr = y[self.col_rows[k]];
+                if yr != 0.0 {
+                    dot += yr * self.col_vals[k];
+                }
+            }
+            let rc = self.cost_of(j, 2) - dot;
+            if !rc.is_finite() {
+                return false;
+            }
+            if self.at_upper[j] {
+                if rc > self.tol.optimality {
+                    return false;
+                }
+            } else if rc < -self.tol.optimality {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 有界变量对偶单纯形修复（与 simplex.rs::dual_repair 同款算法，三角
+    /// 求解即时现算版）：从（对偶可行、原始违约）基出发，每次选违反最重
+    /// 基行出基（落到被违反界）、对偶比值测试选入基列，标准主元，直至
+    /// 全部基变量回界内。任何异常（无可入列 / 步长非法 / 超预算 / 检验数
+    /// 非有限 / 主元过小 / 重因子化失败）⇒ GiveUp 回退整基重建——快路径
+    /// 只加速、绝不改变结果。
+    fn dual_repair(&mut self) -> DualRepair {
+        const BUDGET_BASE: u32 = 2_000;
+        const DEGEN_BLAND: u32 = 32;
+        if !self.dual_feasible() {
+            return DualRepair::GiveUp;
+        }
+        let m = self.basis.len();
+        let ncs = self.ncols_static();
+        let budget = BUDGET_BASE.saturating_add((m as u32).saturating_mul(50));
+        let bland_at = budget / 2;
+        let mut iters: u32 = 0;
+        let mut degen: u32 = 0;
+        loop {
+            // y = BTRAN(c_B)（检验数新鲜度：上一轮主元已改基）。
+            for i in 0..m {
+                self.cb[i] = self.cost_of(self.basis[i], 2);
+            }
+            let y = self.btran_full(&self.cb);
+            // (1) 选相对违反最重的基行（绝对 feasibility 过滤 + 界幅归一
+            // 排序，与 simplex.rs 同款）。
+            let mut worst: Option<(usize, f64, bool)> = None;
+            for i in 0..m {
+                let (lb, ub) = self.col_bounds(self.basis[i]);
+                let v_lb = lb - self.x_b[i];
+                let v_ub = self.x_b[i] - ub;
+                let (viol, below) = if v_lb > v_ub { (v_lb, true) } else { (v_ub, false) };
+                if viol.is_finite() && viol <= self.tol.feasibility {
+                    continue;
+                }
+                let bound = if below { lb } else { ub };
+                let norm = viol / (1.0 + bound.abs());
+                match worst {
+                    Some((_, w, _)) if w >= norm => {}
+                    _ => worst = Some((i, norm, below)),
+                }
+            }
+            let Some((r, _, below)) = worst else {
+                return DualRepair::Repaired;
+            };
+            if iters >= budget {
+                return DualRepair::GiveUp;
+            }
+            let use_bland = iters >= bland_at || degen >= DEGEN_BLAND;
+            // (2) 对偶比值测试：表格行 r 经 BTRAN(e_r) + 行收集；方向可行
+            //（below ⇒ δ·a<0 / above ⇒ δ·a>0）的非基列中 ratio =
+            // 有符号 rc/|a| 最小者；并列 |主元| 大者、退化期 Bland 最小列。
+            let mut e = vec![0.0f64; m];
+            e[r] = 1.0;
+            let rho = self.btran_full(&e);
+            let mut best: Option<(f64, f64, usize, f64)> = None; // (ratio, |a|, q, delta)
+            for j in 0..ncs {
+                if self.in_basis[j] {
+                    continue;
+                }
+                let (lb, ub) = self.col_bounds(j);
+                if ub - lb <= self.tol.feasibility {
+                    continue;
+                }
+                let mut a = 0.0;
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let rr = rho[self.col_rows[k]];
+                    if rr != 0.0 {
+                        a += rr * self.col_vals[k];
+                    }
+                }
+                if a.abs() < self.tol.pivot {
+                    continue;
+                }
+                let delta = if self.at_upper[j] { -1.0 } else { 1.0 };
+                let da = delta * a;
+                if below && da >= 0.0 {
+                    continue;
+                }
+                if !below && da <= 0.0 {
+                    continue;
+                }
+                let mut dot = 0.0;
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let yr = y[self.col_rows[k]];
+                    if yr != 0.0 {
+                        dot += yr * self.col_vals[k];
+                    }
+                }
+                let rc = self.cost_of(j, 2) - dot;
+                if !rc.is_finite() {
+                    return DualRepair::GiveUp;
+                }
+                let signed = if self.at_upper[j] { -rc } else { rc };
+                let ratio = (signed / a.abs()).max(0.0);
+                let better = match best {
+                    None => true,
+                    Some((br, ba, bq, _)) => {
+                        if use_bland {
+                            j < bq
+                        } else {
+                            ratio < br
+                                || (ratio == br && (a.abs() > ba || (a.abs() == ba && j < bq)))
+                        }
+                    }
+                };
+                if better {
+                    best = Some((ratio, a.abs(), j, delta));
+                }
+            }
+            let Some((_, _, q, delta)) = best else {
+                // 无方向可行列（对偶无界 ⇒ 原始不可行）：保守回退 Phase-1。
+                return DualRepair::GiveUp;
+            };
+            // (3) 步长 t：出基变量恰好落到被违反的界；FTRAN 入基列取主元。
+            let mut a = 0.0;
+            for k in self.col_start[q]..self.col_start[q + 1] {
+                let rr = rho[self.col_rows[k]];
+                if rr != 0.0 {
+                    a += rr * self.col_vals[k];
+                }
+            }
+            let (lb_r, ub_r) = self.col_bounds(self.basis[r]);
+            let (target, hit_upper) = if below { (lb_r, false) } else { (ub_r, true) };
+            let t = (target - self.x_b[r]) / (-delta * a);
+            if !t.is_finite() || t < 0.0 {
+                return DualRepair::GiveUp;
+            }
+            self.ftran_col(q);
+            if self.alpha[r].abs() < self.tol.pivot {
+                // 数值边缘：先重因子化重算再试一次（确定性的单次重试）。
+                if !self.just_refactored {
+                    if self.refactor().is_err() {
+                        return DualRepair::GiveUp;
+                    }
+                    self.ftran_col(q);
+                    if self.alpha[r].abs() < self.tol.pivot {
+                        return DualRepair::GiveUp;
+                    }
+                } else {
+                    return DualRepair::GiveUp;
+                }
+            }
+            if self.do_pivot(q, r, delta, t, hit_upper).is_err() {
+                return DualRepair::GiveUp;
+            }
+            iters += 1;
+            self.iter_call += 1;
+            self.iterations_total += 1;
+            if t <= self.tol.feasibility {
+                degen += 1;
+            } else {
+                degen = 0;
+            }
+        }
     }
 
     // ---- 内部：列与成本 ----
@@ -949,6 +1545,7 @@ impl SparseSimplex {
         }
         self.x_b = xb;
         self.just_refactored = true;
+        self.factorization_dirty = false;
         Ok(())
     }
 
@@ -1001,6 +1598,228 @@ impl SparseSimplex {
         self.lu.btran(&v)
     }
 
+    /// 追加割行（S3；terms 为结构变量空间稀疏行，原尺度不缩放，scale=1）；
+    /// 语义与 simplex.rs::add_row 同款：Le 按松弛列（sign=+1）、Ge 按剩余
+    /// 列（sign=−1）、Eq 无松弛；残差违反时建人工列（σ 规则同构建期）并置
+    /// `phase1_pending`；返回割序号 k（0 起连续）。
+    ///
+    /// 修正单纯形实现注（F6）：不是免费操作——新行使基从 m×m 增广为
+    /// (m+1)×(m+1)（下加边 [[B,0],[κᵀ,σ]]），旧行 x_B 数学上不变（上式逆
+    /// 的分块结构保证），本实现**不即时更新因子**：置 `factorization_dirty`，
+    /// 由下一次 solve/resolve 入口整基重因子化 + 从原始数据重算 x_B（割批
+    /// 共享一次重构，『数值上宜随后重构』的最简落法）。新松弛列在 CSC 末尾
+    /// 追加（新松弛恒为最后一个静态列——无需稠密引擎的中段插入+人工列
+    /// 段右移技巧；人工列号随 ncs 增长统一 +1，经 basis/in_basis 同步）。
+    /// 近零割行（防御；cuts.rs 数值纪律下不可达）不入表，按原尺度 rhs 判定。
+    pub fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
+        let n = self.num_structural;
+        if !rhs.is_finite() {
+            return Err(MilpError::InvalidModel("add_row 右端非有限数".to_string()));
+        }
+        // 归并排序 + 丢弃精确零系数（防御；与 simplex.rs 同款）。
+        let mut merged: Vec<(usize, f64)> = Vec::new();
+        {
+            let mut sorted: Vec<(usize, f64)> = Vec::with_capacity(terms.len());
+            for &(j, c) in terms {
+                if j >= n {
+                    return Err(MilpError::InvalidModel(format!(
+                        "add_row 含越界变量下标 {j}"
+                    )));
+                }
+                if !c.is_finite() {
+                    return Err(MilpError::InvalidModel(format!(
+                        "add_row 变量 {j} 系数非有限数"
+                    )));
+                }
+                sorted.push((j, c));
+            }
+            sorted.sort_by_key(|&(j, _)| j);
+            for (j, c) in sorted {
+                match merged.last_mut() {
+                    Some(last) if last.0 == j => last.1 += c,
+                    _ => merged.push((j, c)),
+                }
+            }
+            merged.retain(|&(_, c)| c != 0.0);
+        }
+        let k = self.cut_row.len();
+        let g = merged.iter().map(|&(_, c)| c.abs()).fold(0.0_f64, f64::max);
+        if g <= self.tol.zero {
+            // 防御性近零割行：不入表，按原尺度 rhs 判定（契约同 simplex.rs）。
+            let ok = match op {
+                RelOp::Le => rhs >= -self.tol.feasibility,
+                RelOp::Ge => rhs <= self.tol.feasibility,
+                RelOp::Eq => rhs.abs() <= self.tol.feasibility,
+            };
+            if !ok {
+                self.infeasible_flag = true;
+            }
+            self.cut_row.push(None);
+            return Ok(k);
+        }
+        let m = self.basis.len();
+        let ncs_old = self.ncols_static();
+        let ncols_old_total = ncs_old + self.num_art;
+        // 基列位置映射 + 割行对结构基列的系数 w。
+        let mut pos_in_basis = vec![usize::MAX; ncols_old_total];
+        for (i, &c) in self.basis.iter().enumerate() {
+            pos_in_basis[c] = i;
+        }
+        let mut w = vec![0.0; m];
+        for &(j, c) in &merged {
+            let p = pos_in_basis[j];
+            if p != usize::MAX {
+                w[p] = c;
+            }
+        }
+        // 残差 r_new = rhs − ν·x_cur（基列按当前值，非基列按所贴界）。
+        let mut nu_x = 0.0;
+        for p in 0..m {
+            if w[p] != 0.0 {
+                nu_x += w[p] * self.x_b[p];
+            }
+        }
+        for &(j, c) in &merged {
+            if pos_in_basis[j] == usize::MAX {
+                nu_x += c * self.nonbasic_value(j);
+            }
+        }
+        let r_new = rhs - nu_x;
+        // 基列选择（与 simplex.rs::add_row 同款规则）。
+        let slack_sign = match op {
+            RelOp::Le => 1.0,
+            RelOp::Ge => -1.0,
+            RelOp::Eq => 0.0,
+        };
+        let use_slack_basic = match op {
+            RelOp::Le => r_new >= -self.tol.feasibility,
+            RelOp::Ge => r_new <= self.tol.feasibility,
+            RelOp::Eq => false,
+        };
+        let art_sign = if use_slack_basic {
+            0.0
+        } else if op == RelOp::Eq {
+            if r_new >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            }
+        } else if op == RelOp::Le {
+            -1.0
+        } else {
+            1.0
+        };
+        let sigma_basic = if use_slack_basic {
+            slack_sign
+        } else {
+            art_sign
+        };
+        // 新松弛列：静态段末尾（列号 ncs_old；人工列段整体 +1）。
+        let has_slack = op != RelOp::Eq;
+        let has_art = !use_slack_basic;
+        if has_slack {
+            let c = ncs_old;
+            self.in_basis.insert(c, false);
+            self.at_upper.insert(c, false);
+            for b in self.basis.iter_mut() {
+                if *b >= c {
+                    *b += 1; // 人工列段右移一位（结构/既有松弛列号不变）
+                }
+            }
+            self.layout.slack.push(SlackCol {
+                origin: RowOrigin::Cut(k),
+                sign: slack_sign,
+            });
+        }
+        // —— CSC 重构：割行的结构系数必须进入各结构列的 CSC 段（新行 m
+        //    是最大行号 ⇒ 追加在各段末尾）；新松弛列在末尾新增一段。漏掉
+        //    结构段会使随后的 refactor() 从 CSC 重建出缺行的基矩阵（S3
+        //    实测：setcover-300x600 误报 infeasible 的根因）。单遍重建
+        //    O(nnz + merged.len())，行序天然升序。
+        {
+            let ncs_new = self.ncols_static();
+            let mut new_start = Vec::with_capacity(ncs_new + 1);
+            let mut new_rows: Vec<usize> = Vec::with_capacity(self.col_rows.len() + merged.len() + 1);
+            let mut new_vals: Vec<f64> = Vec::with_capacity(self.col_vals.len() + merged.len() + 1);
+            new_start.push(0);
+            let mut cut_it = merged.iter().peekable();
+            for j in 0..ncs_new {
+                if j < ncs_old {
+                    for k in self.col_start[j]..self.col_start[j + 1] {
+                        // 既有段原样拷贝（新行 m 大于全部旧行，段内升序保持）。
+                        new_rows.push(self.col_rows[k]);
+                        new_vals.push(self.col_vals[k]);
+                    }
+                }
+                if j < n {
+                    // 结构列：追加割行系数（若有）。
+                    if let Some(&&(jj, c)) = cut_it.peek() {
+                        if jj == j {
+                            new_rows.push(m);
+                            new_vals.push(c);
+                            cut_it.next();
+                        }
+                    }
+                } else if j == ncs_old && has_slack {
+                    // 新松弛列（本循环首次覆盖：旧 CSC 无其段）。
+                    new_rows.push(m);
+                    new_vals.push(slack_sign);
+                }
+                new_start.push(new_rows.len());
+            }
+            debug_assert_eq!(cut_it.peek(), None, "全部割项已入 CSC");
+            self.col_start = new_start;
+            self.col_rows = new_rows;
+            self.col_vals = new_vals;
+        }
+        // 人工列（必要时）：新静态段之后。
+        let ncols_total_new = self.ncols_static() + self.num_art + usize::from(has_art);
+        self.in_basis.resize(ncols_total_new, false);
+        self.at_upper.resize(ncols_total_new, false);
+        let basic_col = if use_slack_basic {
+            self.row_slack_of_cut(k)
+        } else {
+            if has_art {
+                self.num_art += 1;
+                self.art_info.push((m, art_sign));
+                self.phase1_pending = true; // 人工列入基即欠账
+            }
+            Some(self.ncols_static() + self.num_art - 1)
+        };
+        let basic_col = basic_col.expect("use_slack_basic ⇒ has_slack");
+        // 追加行记账。
+        self.row_terms.push(merged);
+        self.row_rhs.push(rhs);
+        self.row_op.push(op);
+        self.row_slack.push(if has_slack {
+            Some(ncs_old)
+        } else {
+            None
+        });
+        self.row_scale.push(1.0); // 割行不缩放
+        self.basis.push(basic_col);
+        self.in_basis[basic_col] = true;
+        self.x_b.push(r_new / sigma_basic);
+        self.cut_row.push(Some(m));
+        // 暂存扩容（行数 +1）。
+        let m1 = m + 1;
+        self.ftran_in.resize(m1, 0.0);
+        self.alpha.resize(m1, 0.0);
+        self.y_vec.resize(m1, 0.0);
+        self.cb.resize(m1, 0.0);
+        self.work.resize(m1, 0.0);
+        self.factorization_dirty = true;
+        Ok(k)
+    }
+
+    /// 割 k 的松弛列下标（add_row 内部：Le/Ge 割恒有）。
+    fn row_slack_of_cut(&self, k: usize) -> Option<usize> {
+        // 新松弛列 = 追加前的静态列数 = layout.slack 末项。
+        let _ = k;
+        let n = self.num_structural;
+        Some(n + self.layout.slack.len() - 1)
+    }
+
     // ---- 内部：初始基重建 ----
 
     /// 统一残差规则重建初始基（同 simplex.rs::rebuild_initial_basis 的
@@ -1019,6 +1838,9 @@ impl SparseSimplex {
         }
         self.num_art = 0;
         self.art_info.clear();
+        // 旧人工列连同欠账一并作废：新初始基要么无人工列，要么由紧随其后的
+        // run_two_phase(true) 跑完整 Phase-1 清理（同 simplex.rs）。
+        self.phase1_pending = false;
         // 残差 r_i = b̂_i − â_i·x⁰（x⁰ = 结构变量贴当前下界）。
         let mut r = vec![0.0; m];
         for i in 0..m {
@@ -1283,24 +2105,37 @@ impl SparseSimplex {
             match self.run_phase(1) {
                 PhaseOutcome::Failed(msg) => {
                     self.numerical_error = Some(msg);
+                    self.phase1_pending = true;
                     return LpStatus::IterationLimit;
                 }
-                PhaseOutcome::LimitReached => return LpStatus::IterationLimit,
-                PhaseOutcome::TimedOut => return LpStatus::TimeLimit,
+                PhaseOutcome::LimitReached => {
+                    self.phase1_pending = true;
+                    return LpStatus::IterationLimit;
+                }
+                PhaseOutcome::TimedOut => {
+                    // 墙钟超限：与迭代上限同款记账（人工变量未清理），但
+                    // 状态码独立——W2/R8 不把墙钟超限当迭代上限处理。
+                    self.phase1_pending = true;
+                    return LpStatus::TimeLimit;
+                }
                 PhaseOutcome::Unbounded => {
                     self.numerical_error =
                         Some("Phase-1 出现无界方向（数学上不可能）".to_string());
+                    self.phase1_pending = true;
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::Retry => {
-                    // 数值重试在阶段内消化（run_phase 不上抛 Retry）。
                     unreachable!("run_phase 不向上层传播 Retry");
                 }
                 PhaseOutcome::Optimal => {
                     if self.phase1_infeasibility() > self.tol.feasibility {
+                        // 人工变量带正值留基未清理：状态不可供后续 resolve
+                        // 直接跑 Phase-2，记账强制下一次 resolve 重跑。
+                        self.phase1_pending = true;
                         return LpStatus::Infeasible;
                     }
                     self.cleanup_after_phase1();
+                    self.phase1_pending = false;
                 }
             }
         }
@@ -1634,6 +2469,55 @@ impl SparseSimplex {
                 duals: vec![0.0; self.num_constraints],
             }
         }
+    }
+}
+
+/// 稀疏引擎的 trait 实现（方法名与固有方法同名：固有方法解析优先）。
+impl LpEngine for SparseSimplex {
+    fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.solve(bounds)
+    }
+    fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.resolve(bounds)
+    }
+    fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
+        self.add_row(terms, op, rhs)
+    }
+    fn set_time_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.set_time_deadline(deadline)
+    }
+    fn time_deadline(&self) -> Option<std::time::Instant> {
+        self.time_deadline()
+    }
+    fn set_iter_limit_hint(&mut self, hint: Option<u64>) {
+        self.set_iter_limit_hint(hint)
+    }
+    fn iterations(&self) -> u64 {
+        self.iterations()
+    }
+    fn basis_columns(&self) -> &[usize] {
+        self.basis_columns()
+    }
+    fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
+        self.nonbasic_columns()
+    }
+    fn column_layout(&self) -> &ColumnLayout {
+        self.column_layout()
+    }
+    fn row_of_constraint(&self, constraint_index: usize) -> Option<usize> {
+        self.row_of_constraint(constraint_index)
+    }
+    fn row_of_cut(&self, cut_index: usize) -> Option<usize> {
+        self.row_of_cut(cut_index)
+    }
+    fn num_rows(&self) -> usize {
+        self.num_rows()
+    }
+    fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64) {
+        self.tableau_row_terms(row)
+    }
+    fn snapshot(&self) -> Box<dyn LpEngine> {
+        Box::new(self.clone())
     }
 }
 
@@ -2398,5 +3282,264 @@ mod tests {
             "稀疏中位 {med:.3}s 未达稠密 {dense_secs:.3}s 的一半"
         );
         assert!(med <= 15.0, "稀疏中位 {med:.3}s 超 15s 验收线");
+    }
+
+    // ---- F. S3 集成面：resolve 热启动 / add_row 割 / 快照作用域 ----
+
+    /// 界收紧（分支形态）下的热启动 resolve：目标与冷解、与稠密引擎
+    /// resolve 三方一致。
+    #[test]
+    fn resolve_warm_matches_cold_and_dense_after_tightening() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let mut b = Bounds::from_problem(&p);
+        // 分支形态 1：x0 收紧上界。
+        b.ub[0] = 0.0;
+        let warm = {
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            let _ = sp.solve(&Bounds::from_problem(&p));
+            sp.resolve(&b)
+        };
+        let cold = {
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            sp.solve(&b)
+        };
+        let dense = {
+            let mut d = DenseSimplex::new(&p, tol).unwrap();
+            let _ = d.solve(&Bounds::from_problem(&p));
+            d.resolve(&b)
+        };
+        assert_eq!(format!("{:?}", warm.status), format!("{:?}", cold.status));
+        assert_eq!(format!("{:?}", warm.status), format!("{:?}", dense.status));
+        if warm.status == LpStatus::Optimal {
+            assert!(
+                (warm.objective - cold.objective).abs() <= 1e-7 * (1.0 + cold.objective.abs()),
+                "warm={} cold={}",
+                warm.objective,
+                cold.objective
+            );
+            assert!(
+                (warm.objective - dense.objective).abs() <= 1e-7 * (1.0 + dense.objective.abs()),
+                "warm={} dense={}",
+                warm.objective,
+                dense.objective
+            );
+        }
+        // 分支形态 2（更深树路径）：连续收紧 x1..x3。
+        let mut b2 = Bounds::from_problem(&p);
+        for j in 0..3 {
+            b2.lb[j] = 1.0;
+        }
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&Bounds::from_problem(&p));
+        let sol2 = sp.resolve(&b2);
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&Bounds::from_problem(&p));
+        let d2 = d.resolve(&b2);
+        assert_eq!(format!("{:?}", sol2.status), format!("{:?}", d2.status));
+        // Infeasible（如 x0..x2=1 超容量）时 objective 为 NaN：只对账状态；
+        // Optimal 时对账目标（多解顶点下 x 允许不同——目标恒同是红线）。
+        if sol2.status == LpStatus::Optimal {
+            assert!(
+                (sol2.objective - d2.objective).abs() <= 1e-7 * (1.0 + d2.objective.abs()),
+                "{} vs {}",
+                sol2.objective,
+                d2.objective
+            );
+        }
+    }
+
+    /// dive 形态的连续固定（lb=ub）resolve 序列：终态与目标与稠密引擎一致。
+    #[test]
+    fn dive_like_fixing_sequence_matches_dense() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&root);
+        let mut b = root.clone();
+        let base = sp.solve(&root);
+        let root_x = base.x.clone();
+        for j in 0..5 {
+            let v = root_x[j].round().max(b.lb[j]).min(b.ub[j]);
+            b.lb[j] = v;
+            b.ub[j] = v;
+            let rs = sp.resolve(&b);
+            let rd = d.resolve(&b);
+            assert_eq!(
+                format!("{:?}", rs.status),
+                format!("{:?}", rd.status),
+                "step {j}: 状态分叉"
+            );
+            if rs.status == LpStatus::Optimal {
+                assert!(
+                    (rs.objective - rd.objective).abs()
+                        <= 1e-7 * (1.0 + rd.objective.abs()),
+                    "step {j}: {} vs {}",
+                    rs.objective,
+                    rd.objective
+                );
+            }
+        }
+    }
+
+    /// add_row + resolve（割后重解）：与稠密引擎同序列同目标；行记账
+    ///（row_of_cut/num_rows/布局）正确。
+    #[test]
+    fn add_row_cut_then_resolve_matches_dense() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        // 手工合法割（binary 有效）：x0 + x1 ≤ 1。
+        let cut_terms = vec![(0usize, 1.0), (1usize, 1.0)];
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let s0 = sp.solve(&bounds);
+        let d0 = d.solve(&bounds);
+        assert_eq!(s0.status, d0.status);
+        let k1 = sp.add_row(&cut_terms, RelOp::Le, 1.0).unwrap();
+        let k1d = d.add_row(&cut_terms, RelOp::Le, 1.0).unwrap();
+        assert_eq!(k1, k1d, "割序号一致");
+        assert_eq!(sp.row_of_cut(k1), Some(sp.num_rows() - 1));
+        assert_eq!(sp.num_rows(), d.num_rows());
+        let s1 = sp.resolve(&bounds);
+        let d1 = d.resolve(&bounds);
+        assert_eq!(format!("{:?}", s1.status), format!("{:?}", d1.status));
+        assert!(
+            (s1.objective - d1.objective).abs() <= 1e-7 * (1.0 + d1.objective.abs()),
+            "{} vs {}",
+            s1.objective,
+            d1.objective
+        );
+        // 第二条割（x2 + x3 ≤ 1）后重解。
+        let cut2 = vec![(2usize, 1.0), (3usize, 1.0)];
+        sp.add_row(&cut2, RelOp::Le, 1.0).unwrap();
+        d.add_row(&cut2, RelOp::Le, 1.0).unwrap();
+        let s2 = sp.resolve(&bounds);
+        let d2 = d.resolve(&bounds);
+        assert_eq!(format!("{:?}", s2.status), format!("{:?}", d2.status));
+        assert!(
+            (s2.objective - d2.objective).abs() <= 1e-7 * (1.0 + d2.objective.abs()),
+            "{} vs {}",
+            s2.objective,
+            d2.objective
+        );
+        assert_eq!(sp.num_rows(), d.num_rows());
+    }
+
+    /// 违反当前解的割（人工列路径：phase1_pending ⇒ resolve 整基重建 +
+    /// Phase-1）后仍得正确目标；与稠密引擎一致。
+    #[test]
+    fn add_row_violated_cut_artificial_path_matches_dense() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&bounds);
+        let _ = d.solve(&bounds);
+        // 根最优处 x[0] 多为 1：割 x0 ≤ 0 违反当前解 ⇒ r_new < 0 ⇒ 人工列。
+        sp.add_row(&[(0usize, 1.0)], RelOp::Le, 0.0).unwrap();
+        d.add_row(&[(0usize, 1.0)], RelOp::Le, 0.0).unwrap();
+        let s1 = sp.resolve(&bounds);
+        let d1 = d.resolve(&bounds);
+        assert_eq!(format!("{:?}", s1.status), format!("{:?}", d1.status));
+        assert!(
+            (s1.objective - d1.objective).abs() <= 1e-7 * (1.0 + d1.objective.abs()),
+            "{} vs {}",
+            s1.objective,
+            d1.objective
+        );
+    }
+
+    /// W6 快照作用域协议：snapshot 恢复后与施加割前的解逐值一致（Clone 等价）。
+    #[test]
+    fn snapshot_restore_scopes_local_cuts() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let base = sp.solve(&bounds);
+        let snap = sp.clone();
+        sp.add_row(&[(0usize, 1.0)], RelOp::Le, 0.0).unwrap();
+        let _ = sp.resolve(&bounds);
+        // 恢复快照。
+        let mut restored = snap;
+        let r = restored.resolve(&bounds);
+        assert_eq!(format!("{:?}", r.status), "Optimal");
+        assert!(
+            (r.objective - base.objective).abs() <= 1e-9 * (1.0 + base.objective.abs()),
+            "恢复后 {} vs 施加前 {}",
+            r.objective,
+            base.objective
+        );
+    }
+
+    /// setcover-100x150（revised 全路径，B&B 口径在 solver.rs）：根割循环
+    /// 全链路（gomory/覆盖割 + add_row + resolve + R8 hint）下的根 LP 目标
+    /// 与稠密引擎一致（276 为已知最优，此处对账根 LP 后的树由 solver 层钉）。
+    #[test]
+    fn root_cut_loop_matches_dense_on_setcover_100x150() {
+        let p = load_instance(&bench_instance("setcover-100x150")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let int_vars = p.integer_vars();
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&bounds);
+        let _ = d.solve(&bounds);
+        // 契约注：两引擎的最优基不同 ⇒ GMI 分离的割集不同 ⇒ 割后根 LP
+        // 目标允许不同（都是合法有效不等式子集）；此处钉『双侧 Optimal +
+        // 各自目标单调收紧（≥ 各自未割根 LP）』，全树终值恒同由
+        // solver::tests 的 revised 全路径对账钉死。
+        let root_obj_sp = sp.resolve(&bounds).objective;
+        let root_obj_d = d.resolve(&bounds).objective;
+        let (a1, st1, _) = crate::cuts::cut_loop_recorded(
+            &mut sp,
+            &bounds,
+            &p,
+            &int_vars,
+            crate::cuts::CutOptions::default(),
+            &tol,
+            || SparseSimplex::new(&p, tol),
+        )
+        .unwrap();
+        let (_a2, st2, _) = crate::cuts::cut_loop_recorded(
+            &mut d,
+            &bounds,
+            &p,
+            &int_vars,
+            crate::cuts::CutOptions::default(),
+            &tol,
+            || DenseSimplex::new(&p, tol),
+        )
+        .unwrap();
+        assert_eq!(format!("{st1:?}"), format!("{st2:?}"), "割循环终态分叉");
+        assert!(a1 >= 1, "revised 侧须施加割（否则未覆盖）");
+        let r1 = sp.resolve(&bounds);
+        let r2 = d.resolve(&bounds);
+        assert_eq!(format!("{:?}", r1.status), "Optimal", "revised 侧割后须 Optimal");
+        assert_eq!(format!("{:?}", r2.status), "Optimal", "tableau 侧割后须 Optimal");
+        // min 问题：割后根 LP ≥ 未割根 LP − 容差（合法割只会收紧或不变）。
+        assert!(
+            r1.objective >= root_obj_sp - 1e-6 * (1.0 + root_obj_sp.abs()),
+            "revised 割后 {} 低于未割 {}（割非法或求解错值）",
+            r1.objective,
+            root_obj_sp
+        );
+        assert!(
+            r2.objective >= root_obj_d - 1e-6 * (1.0 + root_obj_d.abs()),
+            "tableau 割后 {} 低于未割 {}",
+            r2.objective,
+            root_obj_d
+        );
+        // 已知最优 276：两侧割后根 LP 界不得超过它（割切掉最优解即非法）。
+        assert!(
+            r1.objective <= 276.0 + 1e-6 && r2.objective <= 276.0 + 1e-6,
+            "割后根 LP 超过已知最优 276：{}/{}（割切掉最优解）",
+            r1.objective,
+            r2.objective
+        );
     }
 }

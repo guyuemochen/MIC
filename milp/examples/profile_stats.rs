@@ -427,9 +427,16 @@ fn root_bound_after_root_cuts(problem: &Problem) -> Option<f64> {
     if root.status != LpStatus::Optimal {
         return None;
     }
-    let (_applied, cut_status, _recorded) =
-        cut_loop_recorded(&mut simplex, &bounds, &work, &int_vars, CutOptions::default(), &tol)
-            .ok()?;
+    let (_applied, cut_status, _recorded) = cut_loop_recorded(
+        &mut simplex,
+        &bounds,
+        &work,
+        &int_vars,
+        CutOptions::default(),
+        &tol,
+        || milp::simplex::Simplex::new(&work, tol),
+    )
+    .ok()?;
     if cut_status != LpStatus::Optimal {
         return None;
     }

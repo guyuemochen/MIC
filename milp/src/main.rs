@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine tableau|revised] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -40,7 +40,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine tableau|revised] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -108,6 +108,12 @@ struct Config {
     /// 选栈默认）；默认 Auto（仅 threads ≥ 2 生效）：类检测命中多维背包类
     /// ⇒ global，其余 ⇒ local；显式 local/global 覆盖优先。
     work_stack: WorkStackCli,
+    /// LP 引擎（`--lp-engine tableau|revised`，S3）；默认 tableau（稠密表格
+    /// 两阶段单纯形，输出与既有逐字节一致）；revised = 稀疏修正单纯形
+    /// （CSC + 稀疏 LU + ETA + 对偶热修复，simplex_sparse.rs）。**revised
+    /// 仅支持 threads=1**（并行 worker 直接构造稠密 Simplex——解析层交叉
+    /// 校验拒绝组合，库层 branch_and_bound_controlled 同款防御）。
+    lp_engine: milp::simplex_sparse::LpEngineKind,
     /// 确定性模式（`--determinism wall|budget`，W3）；默认 Wall（现状：
     /// 时限/自适应/降级全部按墙钟判定）。budget = 纯预算制：全部墙钟判定
     /// 改为等价节点数预算（`--time-limit-secs` 换算 6,000 节点/秒），决策
@@ -182,6 +188,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut mitm: Option<bool> = None;
     let mut work_stack: Option<WorkStackCli> = None;
     let mut determinism: Option<Determinism> = None;
+    let mut lp_engine: Option<milp::simplex_sparse::LpEngineKind> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -420,6 +427,30 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             determinism = Some(v);
+        } else if arg == "--lp-engine" || arg.starts_with("--lp-engine=") {
+            if lp_engine.is_some() {
+                return Err(format!("`--lp-engine` 重复出现（{USAGE}）"));
+            }
+            // 兼容 `--lp-engine=revised`（等号连写）与 `--lp-engine revised`
+            //（空格）两种形式（同 --scaling）。
+            let value: String = if let Some(v) = arg.strip_prefix("--lp-engine=") {
+                v.to_string()
+            } else if index + 1 < args.len() {
+                index += 1;
+                args[index].clone()
+            } else {
+                return Err(format!("`--lp-engine` 缺少参数 tableau|revised（{USAGE}）"));
+            };
+            let v = match value.as_str() {
+                "tableau" => milp::simplex_sparse::LpEngineKind::Tableau,
+                "revised" => milp::simplex_sparse::LpEngineKind::Revised,
+                other => {
+                    return Err(format!(
+                        "未知 --lp-engine 值 `{other}`（期望 tableau|revised，{USAGE}）"
+                    ))
+                }
+            };
+            lp_engine = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -437,6 +468,14 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     // 但 CLI 用户应看到用法信息而非「内部错误」前缀）。
     let determinism = determinism.unwrap_or(Determinism::Wall);
     let threads = threads.unwrap_or(1);
+    // S3 交叉校验：revised 引擎仅接线顺序路径——解析层就以用法错误拒绝
+    //（库层 branch_and_bound_controlled 对直接 API 调用者同款防御）。
+    let lp_engine = lp_engine.unwrap_or_default();
+    if lp_engine == milp::simplex_sparse::LpEngineKind::Revised && threads >= 2 {
+        return Err(format!(
+            "`--lp-engine revised` 仅支持 `--threads 1`（S3 接线范围：并行 worker 直接构造稠密 Simplex，静默忽略旗标会形成文档外行为分叉）（{USAGE}）"
+        ));
+    }
     if determinism == Determinism::Budget && threads >= 2 {
         return Err(format!(
             "`--determinism budget` 仅支持 `--threads 1`（t1 确定性契约：\
@@ -464,6 +503,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 wall（W3：现状零变化）；budget 仅 threads=1（解析层交叉校验
         // 已拒绝与 ≥2 的组合）。
         determinism,
+        // 默认 tableau（S3：本轮不改默认）；revised 仅 threads=1。
+        lp_engine,
     })
 }
 
@@ -499,6 +540,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             // 显式 local/global ⇒ auto=false、字段逐字生效（覆盖优先）。
             global_work_stack: config.work_stack == WorkStackCli::Global,
             work_stack_auto: config.work_stack == WorkStackCli::Auto,
+            lp_engine: config.lp_engine,
         },
         use_presolve: true,
         use_scaling: config.scaling,
@@ -716,6 +758,7 @@ mod tests {
             mitm: true,
             work_stack: WorkStackCli::Auto,
             determinism: Determinism::Wall,
+            lp_engine: milp::simplex_sparse::LpEngineKind::Tableau,
         }
     }
 
@@ -1075,6 +1118,43 @@ mod tests {
                 "参数 {bad:?} 应报错"
             );
         }
+    }
+
+    // —— lp-engine 解析与映射（S3）——
+
+    /// `--lp-engine`：默认 tableau（不改默认）；tableau/revised 两 token
+    /// 合法（含 `=` 连写与空格）；未知 token / 缺参 / 重复报错；revised ×
+    /// threads≥2 解析层交叉校验报错；→ BbOptions.lp_engine 映射正确。
+    #[test]
+    fn lp_engine_parsing_and_mapping() {
+        use milp::simplex_sparse::LpEngineKind;
+        // 默认 tableau。
+        let c = parse_args(&args(&["a.milp"])).unwrap();
+        assert_eq!(c.lp_engine, LpEngineKind::Tableau);
+        // 两种写法 + 旗标先于路径的顺序。
+        let c = parse_args(&args(&["a.milp", "--lp-engine", "revised"])).unwrap();
+        assert_eq!(c.lp_engine, LpEngineKind::Revised);
+        let c = parse_args(&args(&["a.milp", "--lp-engine=revised"])).unwrap();
+        assert_eq!(c.lp_engine, LpEngineKind::Revised);
+        let c = parse_args(&args(&["--lp-engine", "tableau", "a.milp"])).unwrap();
+        assert_eq!(c.lp_engine, LpEngineKind::Tableau);
+        // 未知 token / 缺参 / 重复。
+        assert!(parse_args(&args(&["a.milp", "--lp-engine", "fast"])).is_err());
+        assert!(parse_args(&args(&["a.milp", "--lp-engine"])).is_err());
+        assert!(parse_args(&args(&[
+            "a.milp", "--lp-engine", "revised", "--lp-engine", "tableau"
+        ]))
+        .is_err());
+        // S3 交叉校验：revised 仅 threads=1。
+        assert!(
+            parse_args(&args(&["a.milp", "--lp-engine", "revised", "--threads", "2"])).is_err()
+        );
+        assert!(
+            parse_args(&args(&["a.milp", "--lp-engine", "revised", "--threads", "1"])).is_ok()
+        );
+        // 映射：solve_options_from 携带引擎字段。
+        let c = parse_args(&args(&["a.milp", "--lp-engine", "revised"])).unwrap();
+        assert_eq!(solve_options_from(&c).bb.lp_engine, LpEngineKind::Revised);
     }
 
     // —— determinism 解析与映射（W3）——

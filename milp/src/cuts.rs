@@ -112,7 +112,8 @@
 
 use crate::error::Result;
 use crate::model::{Constraint, Problem, RelOp, Tolerances, VarType};
-use crate::simplex::{Bounds, LpStatus, RowOrigin, Simplex};
+use crate::simplex::{Bounds, LpStatus, RowOrigin};
+use crate::simplex_sparse::LpEngine;
 
 /// 割系数动态范围上限：显著项最大/最小绝对值之比超过即整条丢弃（契约值）。
 const MAX_COEF_RATIO: f64 = 1e9;
@@ -214,7 +215,7 @@ struct CutRecord {
 /// 调用前提：`bounds` 即 Simplex 最近一次 solve/resolve 所用界，且状态
 /// 为 Optimal。
 pub fn gomory_cuts(
-    s: &Simplex,
+    s: &dyn LpEngine,
     problem: &Problem,
     bounds: &Bounds,
     int_vars: &[usize],
@@ -226,7 +227,7 @@ pub fn gomory_cuts(
 
 /// 带割记账的割生成内核（cut_loop 私有路径）。
 fn gomory_cuts_inner(
-    s: &Simplex,
+    s: &dyn LpEngine,
     problem: &Problem,
     bounds: &Bounds,
     int_vars: &[usize],
@@ -450,7 +451,7 @@ fn gomory_cuts_inner(
 ///
 /// 返回 `None`（调用方按防御处理）：表格结构列数 ≠ `n`，或重建出现非有限值
 /// （表格与界不一致）。
-fn rebuild_x_bar(s: &Simplex, bounds: &Bounds, n: usize) -> Option<Vec<f64>> {
+fn rebuild_x_bar(s: &dyn LpEngine, bounds: &Bounds, n: usize) -> Option<Vec<f64>> {
     if bounds.lb.len() != n || bounds.ub.len() != n {
         return None;
     }
@@ -1203,7 +1204,7 @@ const AGG_MIR_MAX_PER_ROUND: usize = 8;
 /// 输出序确定：候选行升序 × 非基松弛列升序，尝试上限
 /// [`AGG_MIR_MAX_TRIES`]；交由 `cut_loop_recorded` 统一截断。
 fn aggregated_mir_cuts(
-    s: &Simplex,
+    s: &dyn LpEngine,
     problem: &Problem,
     bounds: &Bounds,
     int_vars: &[usize],
@@ -1618,7 +1619,7 @@ pub fn implied_bound_cuts(
 /// CutRecord 去重（ledger 只存在于根循环的跨轮记账；局部割生命周期
 /// ≤ 子树，重复 Le 行至多冗余不切错）。分离失败/维度不符返回空。
 pub fn separate_local_cuts(
-    s: &Simplex,
+    s: &dyn LpEngine,
     bounds: &Bounds,
     problem: &Problem,
     int_vars: &[usize],
@@ -1654,17 +1655,17 @@ pub fn separate_local_cuts(
 }
 
 /// IterationLimit 则如实作为终态返回。
-pub fn cut_loop(
-    s: &mut Simplex,
+pub fn cut_loop<E: LpEngine>(
+    s: &mut E,
     bounds: &Bounds,
     problem: &Problem,
     int_vars: &[usize],
     opts: CutOptions,
     tol: &Tolerances,
+    make: impl Fn() -> Result<E>,
 ) -> Result<(u64, LpStatus)> {
-    cut_loop_recorded(s, bounds, problem, int_vars, opts, tol).map(|(applied, status, _)| {
-        (applied, status)
-    })
+    cut_loop_recorded(s, bounds, problem, int_vars, opts, tol, make)
+        .map(|(applied, status, _)| (applied, status))
 }
 
 /// 与 [`cut_loop`] 完全相同的割循环，额外把施加的割按施加顺序原样返回
@@ -1684,13 +1685,14 @@ pub fn cut_loop(
 /// 关闭提升）**，再统一截断 `max_cuts_per_round`。x̄ 经 [`rebuild_x_bar`]
 /// 重建（每轮一次，割批共用）。全部割行照走 `add_row` + [`CutRecord`]
 /// 记账，worker 按序重放契约不变。
-pub fn cut_loop_recorded(
-    s: &mut Simplex,
+pub fn cut_loop_recorded<E: LpEngine>(
+    s: &mut E,
     bounds: &Bounds,
     problem: &Problem,
     int_vars: &[usize],
     opts: CutOptions,
     tol: &Tolerances,
+    make: impl Fn() -> Result<E>,
 ) -> Result<(u64, LpStatus, Vec<Cut>)> {
     let mut applied: u64 = 0;
     let mut ledger: Vec<CutRecord> = Vec::new();
@@ -1799,7 +1801,7 @@ pub fn cut_loop_recorded(
             recorded.truncate(recorded_before);
             applied = applied_before;
             let rollback_deadline = s.time_deadline();
-            let mut rebuilt = Simplex::new(problem, *tol)?;
+            let mut rebuilt = make()?;
             rebuilt.set_time_deadline(rollback_deadline);
             for rec in ledger.iter() {
                 rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
@@ -1819,6 +1821,7 @@ pub fn cut_loop_recorded(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simplex::Simplex;
     use crate::model::{Constraint, LinearExpr, Sense, Tolerances, VarType, Variable};
 
     // ===================== 聚合 MIR（R2-retry）=====================
@@ -2117,7 +2120,7 @@ mod tests {
         let b = Bounds::from_problem(&p);
         assert_eq!(s.solve(&b).status, LpStatus::Optimal);
         let (applied, status) =
-            cut_loop(&mut s, &b, &p, &p.integer_vars(), CutOptions::default(), &t).unwrap();
+            cut_loop(&mut s, &b, &p, &p.integer_vars(), CutOptions::default(), &t, || Simplex::new(&p, t)).unwrap();
         assert!(applied >= 1, "至少施加一条割");
         assert_eq!(status, LpStatus::Optimal);
         let sol = s.resolve(&b);
@@ -2148,7 +2151,7 @@ mod tests {
         let b = Bounds::from_problem(&p);
         assert_eq!(s.solve(&b).status, LpStatus::Optimal);
         let (applied, status) =
-            cut_loop(&mut s, &b, &p, &p.integer_vars(), CutOptions::default(), &t).unwrap();
+            cut_loop(&mut s, &b, &p, &p.integer_vars(), CutOptions::default(), &t, || Simplex::new(&p, t)).unwrap();
         assert_eq!(applied, 0);
         assert_eq!(status, LpStatus::Optimal);
     }
@@ -2164,7 +2167,7 @@ mod tests {
         let mut s1 = Simplex::new(&p, t).unwrap();
         assert_eq!(s1.solve(&b).status, LpStatus::Optimal);
         let (applied1, status1) =
-            cut_loop(&mut s1, &b, &p, &p.integer_vars(), CutOptions::default(), &t).unwrap();
+            cut_loop(&mut s1, &b, &p, &p.integer_vars(), CutOptions::default(), &t, || Simplex::new(&p, t)).unwrap();
 
         let mut s2 = Simplex::new(&p, t).unwrap();
         assert_eq!(s2.solve(&b).status, LpStatus::Optimal);
@@ -2175,6 +2178,7 @@ mod tests {
             &p.integer_vars(),
             CutOptions::default(),
             &t,
+            || Simplex::new(&p, t),
         )
         .unwrap();
 
@@ -2198,6 +2202,7 @@ mod tests {
             &p.integer_vars(),
             CutOptions::default(),
             &t,
+            || Simplex::new(&p, t),
         )
         .unwrap();
         assert!(applied >= 1, "wolsey 根 LP 41.25 处必产割");
@@ -2280,6 +2285,7 @@ mod tests {
             &p.integer_vars(),
             CutOptions::default(),
             &t,
+            || Simplex::new(&p, t),
         ) {
             Ok((applied, status, _)) => {
                 assert!(
@@ -2476,12 +2482,12 @@ mod tests {
         let sol1 = s1.solve(&b);
         assert_eq!(sol1.status, LpStatus::Optimal);
         assert!((sol1.objective - 3.75).abs() < 1e-9, "根 LP 应为 3.75");
-        let r1 = cut_loop_recorded(&mut s1, &b, &p, &int_vars, CutOptions::default(), &t)
+        let r1 = cut_loop_recorded(&mut s1, &b, &p, &int_vars, CutOptions::default(), &t, || Simplex::new(&p, t))
             .unwrap();
 
         let mut s2 = Simplex::new(&p, t).unwrap();
         assert_eq!(s2.solve(&b).status, LpStatus::Optimal);
-        let r2 = cut_loop_recorded(&mut s2, &b, &p, &int_vars, CutOptions::default(), &t)
+        let r2 = cut_loop_recorded(&mut s2, &b, &p, &int_vars, CutOptions::default(), &t, || Simplex::new(&p, t))
             .unwrap();
 
         assert_eq!(r1.0, r2.0, "applied 一致");
@@ -3060,7 +3066,7 @@ mod tests {
         let mut s = Simplex::new(&p, t).unwrap();
         assert_eq!(s.solve(&b).status, LpStatus::Optimal);
         let (applied, status, recorded) =
-            cut_loop_recorded(&mut s, &b, &p, &int_vars, opts, &t).unwrap();
+            cut_loop_recorded(&mut s, &b, &p, &int_vars, opts, &t, || Simplex::new(&p, t)).unwrap();
         assert!(applied >= 1, "根 LP 21.5 处必产割");
         assert_eq!(status, LpStatus::Optimal);
         assert_eq!(recorded.len(), applied as usize);
@@ -3076,6 +3082,7 @@ mod tests {
             &int_vars,
             CutOptions::default(),
             &t,
+            || Simplex::new(&p, t),
         )
         .unwrap();
         assert_eq!(recorded2.len(), applied2 as usize);
@@ -3125,7 +3132,7 @@ mod tests {
         let run = || {
             let mut s = Simplex::new(&p, t).unwrap();
             assert_eq!(s.solve(&b).status, LpStatus::Optimal);
-            cut_loop_recorded(&mut s, &b, &p, &int_vars, CutOptions::default(), &t).unwrap()
+            cut_loop_recorded(&mut s, &b, &p, &int_vars, CutOptions::default(), &t, || Simplex::new(&p, t)).unwrap()
         };
         let r1 = run();
         let r2 = run();
