@@ -1,6 +1,7 @@
-//! 稀疏修正单纯形 LP 求解器（S2 standalone 核心；S3 起经 [`LpEngine`]
-//! trait 接入主求解路径——CLI `--lp-engine revised` / 库
-//! `BbOptions::lp_engine`，默认 tableau 不变）。
+//! 稀疏修正单纯形 LP 求解器（S2 standalone 核心；S3 经 [`LpEngine`]
+//! trait 接入主求解路径；S4 起为**类自适应默认**的 revised 侧——
+//! `LpEngineKind::Auto`（默认）按 [`effective_engine`] 规则
+//! m×(n+m) ≥ 10^6 格 ⇒ 本引擎，否则稠密 tableau；显式指定覆盖优先）。
 //!
 //! # 与 [`crate::simplex`]（稠密表格引擎）的语义对齐契约
 //! - **同一 LP 语义**：内部统一 min（Maximize 取负，报告还原 + obj_offset）、
@@ -83,14 +84,27 @@ use crate::simplex::{
 
 /// LP 引擎选择（CLI `--lp-engine` / 库 `BbOptions::lp_engine` 两层）。
 ///
-/// 默认 [`LpEngineKind::Tableau`]（本轮不改默认——S3 只接线与对账，S4 才
-/// 议默认翻转）。`Revised` = 本模块稀疏修正单纯形；**仅接线顺序路径**
-///（threads=1）：并行引擎（parallel_bb）直接构造稠密 Simplex，revised ×
-/// threads≥2 在 `branch_and_bound_controlled` 入口显式报错（F5 冷审：静默
-/// 忽略旗标会形成文档外行为分叉）。
+/// 默认 [`LpEngineKind::Auto`]（S4 类自适应定档）：表格规模
+/// m×(n+m) ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]（10^6 格）⇒ [`LpEngineKind::Revised`]
+///（稀疏修正单纯形），否则 [`LpEngineKind::Tableau`]（稠密表格）。显式
+/// `Tableau`/`Revised` 覆盖优先。`Revised` **仅接线顺序路径**（threads=1）：
+/// 并行引擎（parallel_bb）直接构造稠密 Simplex，revised × threads≥2 在
+/// `branch_and_bound_controlled` 入口显式报错（F5 冷审：静默忽略旗标会
+/// 形成文档外行为分叉）。
+///
+/// 定档证据（S4 同窗 A/B，见轮次汇报）：revised 决定性胜出的是大规模
+/// **纯 LP 松弛主导**类——lp-sparse-4000x800（800×4800=3.84M 格）t1
+/// ~10.4s vs tableau ~35s（3.4×）、lp-wide-1000x2000（2000×3000=6M 格）
+/// 8.5s vs 15.1s（1.78×）；阈下回归或噪声级——setcover-100x150 revised
+/// 慢 2.3×、mknap-5x300（7.5k 格）revised 慢 3.6×、setcover-300x600
+///（270k 格）revised 1.43×（单窗噪声内，保守留 tableau）、knapsack/
+/// assign 小算例毫秒级差异。阈下小算例保持 tableau 兼防 codegen 扰动
+///（R1 教训：+1-2% 不可复现噪声）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LpEngineKind {
-    /// 稠密表格两阶段单纯形（simplex.rs，既有默认）。
+    /// 类自适应（默认）：按 [`effective_engine`] 的规模规则解析。
+    Auto,
+    /// 稠密表格两阶段单纯形（simplex.rs）。
     Tableau,
     /// 稀疏修正单纯形（本模块；CSC + 稀疏 LU + ETA + 对偶热修复）。
     Revised,
@@ -98,7 +112,29 @@ pub enum LpEngineKind {
 
 impl Default for LpEngineKind {
     fn default() -> Self {
-        LpEngineKind::Tableau
+        LpEngineKind::Auto
+    }
+}
+
+/// 类自适应规模阈（S4 定档）：m×(n+m) ≥ 该值 ⇒ revised。取 10^6——
+/// 落在 setcover-400x800（480k）与 lp-sparse（3.84M）之间的整数量级空带，
+/// 规则简单可解释（『表格超百万格』）。
+pub const ENGINE_AUTO_CELL_THRESHOLD: u64 = 1_000_000;
+
+/// 解析有效引擎（S4 类自适应）：`Auto` 按表格规模定档，显式指定原样
+/// 返回（覆盖优先）。m = 约束行数、n = 变量数、ncols ≈ n + m（松弛列）。
+pub fn effective_engine(problem: &Problem, kind: LpEngineKind) -> LpEngineKind {
+    match kind {
+        LpEngineKind::Auto => {
+            let m = problem.constraints.len() as u64;
+            let n = problem.vars.len() as u64;
+            if m.saturating_mul(n + m) >= ENGINE_AUTO_CELL_THRESHOLD {
+                LpEngineKind::Revised
+            } else {
+                LpEngineKind::Tableau
+            }
+        }
+        explicit => explicit,
     }
 }
 
@@ -148,9 +184,10 @@ pub fn new_engine(
     tol: Tolerances,
     kind: LpEngineKind,
 ) -> Result<Box<dyn LpEngine>> {
-    match kind {
+    match effective_engine(problem, kind) {
         LpEngineKind::Tableau => Ok(Box::new(Simplex::new(problem, tol)?)),
         LpEngineKind::Revised => Ok(Box::new(SparseSimplex::new(problem, tol)?)),
+        LpEngineKind::Auto => unreachable!("effective_engine 已解析 Auto"),
     }
 }
 
@@ -306,12 +343,48 @@ struct LuFactors {
     u_diag: Vec<f64>,
 }
 
-/// ETA（乘子形式基更新）：B_new = B_old·E，E = I 除第 r 列为 `col`
-///（= 当时 B_old⁻¹·A_q，行位空间稠密向量）。
+/// ETA（乘子形式基更新）：B_new = B_old·E，E = I 除第 r 列为该列
+///（= 当时 B_old⁻¹·A_q 的**非零项**稀疏存储，行位空间；主元项单独存。
+/// S4：稠密 ETA 在长解（setcover 根 LP 10k+ 迭代 × m=300）下施加成本占
+/// 每迭代 ~80%，稀疏化后只触非零项）。
 #[derive(Debug, Clone)]
 struct Eta {
+    /// 主元行位置。
     r: usize,
-    col: Vec<f64>,
+    /// 主元值（e_r）。
+    pivot: f64,
+    /// 其余非零项 (行位, 值)。
+    nz: Vec<(usize, f64)>,
+}
+
+/// factorize 的工作区（SparseSimplex 持有，跨 refactor 复用容量）。
+#[derive(Debug, Clone, Default)]
+struct LuScratch {
+    l_cols_f: Vec<Vec<(usize, f64)>>,
+    u_cols_f: Vec<Vec<(usize, f64)>>,
+    u_diag: Vec<f64>,
+    l_rows_f: Vec<Vec<(usize, f64)>>,
+    perm: Vec<usize>,
+    assigned: Vec<usize>,
+    x: Vec<f64>,
+    in_pattern: Vec<bool>,
+    pattern: Vec<usize>,
+    stack: Vec<usize>,
+    assigned_pat: Vec<usize>,
+    unassigned_pat: Vec<usize>,
+    lu_of: Vec<usize>,
+}
+
+impl LuScratch {
+    fn resize(&mut self, m: usize) {
+        self.l_cols_f.resize_with(m, Vec::new);
+        self.u_cols_f.resize_with(m, Vec::new);
+        self.l_rows_f.resize_with(m, Vec::new);
+        self.u_diag.resize(m, 0.0);
+        self.assigned.resize(m, usize::MAX);
+        self.x.resize(m, 0.0);
+        self.in_pattern.resize(m, false);
+    }
 }
 
 /// 因子化失败原因（奇异基）。
@@ -326,24 +399,73 @@ struct LuError(String);
 /// pos(c) < pos(r) 保证拓扑序，未分配行只依赖已分配分量、彼此独立，随后
 /// 任定序（取下标升序）计算）。
 /// 确定性：候选并列一律取最小原始行号；值计算升序单遍，与 DFS 遍历序无关。
+/// 一次性版（单元测试用；生产路径走 [`factorize_into`] 复用版）。
+#[cfg(test)]
 fn factorize(
     cols: &[Vec<(usize, f64)>],
     pivot_floor: f64,
     m: usize,
 ) -> std::result::Result<LuFactors, LuError> {
-    let mut l_cols_f: Vec<Vec<(usize, f64)>> = vec![Vec::new(); m];
-    let mut u_cols_f: Vec<Vec<(usize, f64)>> = vec![Vec::new(); m];
-    let mut u_diag = vec![0.0f64; m];
-    let mut l_rows_f: Vec<Vec<(usize, f64)>> = vec![Vec::new(); m];
-    let mut perm: Vec<usize> = Vec::with_capacity(m);
-    let mut assigned = vec![usize::MAX; m]; // 原始行 → LU 位置
+    let mut f = LuFactors::default();
+    let mut sc = LuScratch::default();
+    f.resize(m);
+    sc.resize(m);
+    factorize_into(cols, pivot_floor, m, &mut f, &mut sc)?;
+    Ok(f)
+}
 
-    // 工作区（跨列复用；每列末尾按模式清理，勿全量清零）。
-    let mut x = vec![0.0f64; m];
-    let mut in_pattern = vec![false; m];
-    let mut pattern: Vec<usize> = Vec::new();
-    let mut stack: Vec<usize> = Vec::new();
-    let mut assigned_pat: Vec<usize> = Vec::new();
+/// factorize 的复用版（S4）：`f` 与 `sc` 由调用方持久持有（SparseSimplex
+/// 字段），clear 复用容量——每次 refactor 的 ~10×m 次堆分配降为 0。
+/// 数值语义与一次性版逐位一致（同一算法，仅缓冲生命周期不同）。
+fn factorize_into(
+    cols: &[Vec<(usize, f64)>],
+    pivot_floor: f64,
+    m: usize,
+    f: &mut LuFactors,
+    sc: &mut LuScratch,
+) -> std::result::Result<(), LuError> {
+    let LuScratch {
+        l_cols_f,
+        u_cols_f,
+        u_diag,
+        l_rows_f,
+        perm,
+        assigned,
+        x,
+        in_pattern,
+        pattern,
+        stack,
+        assigned_pat,
+        unassigned_pat,
+        lu_of,
+    } = sc;
+    for v in l_cols_f.iter_mut() {
+        v.clear();
+    }
+    for v in u_cols_f.iter_mut() {
+        v.clear();
+    }
+    for v in l_rows_f.iter_mut() {
+        v.clear();
+    }
+    for v in u_diag.iter_mut() {
+        *v = 0.0;
+    }
+    perm.clear();
+    assigned.iter_mut().for_each(|a| *a = usize::MAX);
+    in_pattern.iter_mut().for_each(|b| *b = false);
+    x.iter_mut().for_each(|v| *v = 0.0);
+    pattern.clear();
+    stack.clear();
+    assigned_pat.clear();
+    unassigned_pat.clear();
+    f.l_rows.iter_mut().for_each(|v| v.clear());
+    f.l_cols.iter_mut().for_each(|v| v.clear());
+    f.u_rows.iter_mut().for_each(|v| v.clear());
+    f.u_cols.iter_mut().for_each(|v| v.clear());
+    f.u_diag.clear();
+    f.u_diag.resize(m, 0.0);
+    f.perm.clear();
 
     for k in 0..m {
         // —— 模式 + scatter：a_k 非零行（重复行条目累加）+ 经 L 列闭包
@@ -375,13 +497,13 @@ fn factorize(
         }
         // —— 值：按拓扑序单遍 L 前代（scatter 已在模式遍历中完成）——
         assigned_pat.clear();
-        for &r in &pattern {
+        for &r in pattern.iter() {
             if assigned[r] != usize::MAX {
                 assigned_pat.push(r);
             }
         }
         assigned_pat.sort_unstable_by_key(|&r| assigned[r]);
-        for &r in &assigned_pat {
+        for &r in assigned_pat.iter() {
             let mut acc = 0.0;
             for &(c, val) in &l_rows_f[r] {
                 let pr = perm[c];
@@ -391,13 +513,10 @@ fn factorize(
             }
             x[r] -= acc;
         }
-        let mut unassigned_pat: Vec<usize> = pattern
-            .iter()
-            .copied()
-            .filter(|&r| assigned[r] == usize::MAX)
-            .collect();
+        unassigned_pat.clear();
+        unassigned_pat.extend(pattern.iter().copied().filter(|&r| assigned[r] == usize::MAX));
         unassigned_pat.sort_unstable();
-        for &r in &unassigned_pat {
+        for &r in unassigned_pat.iter() {
             let mut acc = 0.0;
             for &(c, val) in &l_rows_f[r] {
                 let pr = perm[c];
@@ -411,7 +530,7 @@ fn factorize(
         //    行里取 l_rows_f 行密度最小（填充代理），并列取 |v| 大者、再
         //    并列取最小行号（实现上：先按 (fill, −|v|, 行号) 稳定选优）——
         let mut vmax = 0.0f64;
-        for &r in &unassigned_pat {
+        for &r in unassigned_pat.iter() {
             let a = x[r].abs();
             if a > vmax {
                 vmax = a;
@@ -424,7 +543,7 @@ fn factorize(
         }
         let cut = LU_THRESHOLD * vmax;
         let mut pick: Option<(usize, f64, usize)> = None; // (填充代理, |v|, 行)
-        for &r in &unassigned_pat {
+        for &r in unassigned_pat.iter() {
             let a = x[r].abs();
             if a < cut || a < pivot_floor {
                 continue;
@@ -442,14 +561,14 @@ fn factorize(
         }
         let (_, _, prow) = pick.expect("vmax ≥ floor 的候选必在集合内");
         // —— 记账：U 列 k（已分配模式行）+ 对角；L 列 k（其余未分配行）——
-        for &r in &assigned_pat {
+        for &r in assigned_pat.iter() {
             if x[r] != 0.0 {
                 u_cols_f[k].push((r, x[r]));
             }
         }
         u_diag[k] = x[prow];
         let piv = u_diag[k];
-        for &r in &unassigned_pat {
+        for &r in unassigned_pat.iter() {
             if r != prow && x[r] != 0.0 {
                 let l = x[r] / piv;
                 l_cols_f[k].push((r, l));
@@ -459,35 +578,26 @@ fn factorize(
         assigned[prow] = k;
         perm.push(prow);
         // 清理本列模式。
-        for &r in &pattern {
+        for &r in pattern.iter() {
             in_pattern[r] = false;
             x[r] = 0.0;
         }
     }
 
     // —— 重映射到 LU 空间（原始行 → lu_of；列内按 LU 行升序）——
-    let mut lu_of = vec![0usize; m];
+    lu_of.clear();
+    lu_of.resize(m, 0usize);
     for (i, &r) in perm.iter().enumerate() {
         lu_of[r] = i;
     }
-    let mut f = LuFactors {
-        m,
-        perm,
-        col_perm: (0..m).collect(),
-        l_rows: vec![Vec::new(); m],
-        l_cols: vec![Vec::new(); m],
-        u_rows: vec![Vec::new(); m],
-        u_cols: vec![Vec::new(); m],
-        u_diag,
-    };
     for (k, col) in l_cols_f.iter().enumerate() {
-        for &(r, v) in col {
+        for &(r, v) in col.iter() {
             f.l_cols[k].push((lu_of[r], v));
         }
         f.l_cols[k].sort_unstable_by_key(|&(i, _)| i);
     }
     for (k, col) in u_cols_f.iter().enumerate() {
-        for &(r, v) in col {
+        for &(r, v) in col.iter() {
             f.u_cols[k].push((lu_of[r], v));
         }
         f.u_cols[k].sort_unstable_by_key(|&(i, _)| i);
@@ -502,10 +612,24 @@ fn factorize(
             f.u_rows[i].push((j, v));
         }
     }
-    Ok(f)
+    f.u_diag.clone_from(u_diag);
+    f.perm.clone_from(perm);
+    f.col_perm.clear();
+    f.col_perm.extend(0..m);
+    Ok(())
 }
 
 impl LuFactors {
+    /// 维度预置（复用版 factorize_into 的目标容器；S4）。
+    fn resize(&mut self, m: usize) {
+        self.m = m;
+        self.l_rows.resize_with(m, Vec::new);
+        self.l_cols.resize_with(m, Vec::new);
+        self.u_rows.resize_with(m, Vec::new);
+        self.u_cols.resize_with(m, Vec::new);
+        self.u_diag.resize(m, 0.0);
+    }
+
     /// 基础 FTRAN：解 B α = a（a 稠密、原始行空间）→ 写 `out`（**基位置
     /// 空间**）。PBQ = LU：LUβ = Pa 解出 β（因子列空间），α[Q 列] = β：
     /// `out[col_perm[t]] = β[t]`。行解不外显（α 按列索引）。调用方保证
@@ -669,6 +793,10 @@ pub struct SparseSimplex {
     /// 的 prev_bounds 同款 swap 协议）。
     prev_bounds: Bounds,
     lu: LuFactors,
+    /// factorize 工作区（跨 refactor 复用容量；S4 分配消除）。
+    lu_scratch: LuScratch,
+    /// refactor 的基列收集缓冲（复用容量）。
+    refactor_cols: Vec<Vec<(usize, f64)>>,
     etas: Vec<Eta>,
     /// add_row 追加了行/列后的脏标记：下一次 solve/resolve 入口整基重
     /// 因子化 + 重算 x_B（割批共享一次；F6『数值上宜随后重构』的落法）。
@@ -805,6 +933,8 @@ impl SparseSimplex {
                 ub: Vec::new(),
             },
             lu: LuFactors::default(),
+            lu_scratch: LuScratch::default(),
+            refactor_cols: Vec::new(),
             etas: Vec::new(),
             factorization_dirty: false,
             phase1_pending: false,
@@ -1057,23 +1187,21 @@ impl SparseSimplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
-        if !self.has_run || self.factorization_dirty {
-            // 尚无可用热状态 / add_row 后的脏因子化：退化为冷启动
-            //（add_row 后保留基但因子化必须重建——refactor 内含整基
-            // 重因子化 + x_B 从原始数据重算，等价『随后重构』纪律）。
-            if self.factorization_dirty {
-                if let Err(msg) = self.refactor() {
-                    self.numerical_error = Some(msg);
-                    return self.build_solution(LpStatus::IterationLimit);
-                }
-            }
-            if !self.has_run {
-                self.bounds.lb.clone_from(&bounds.lb);
-                self.bounds.ub.clone_from(&bounds.ub);
-                self.rebuild_initial_basis();
-                let st = self.run_two_phase(true);
-                self.has_run = true;
-                return self.build_solution(st);
+        if !self.has_run {
+            // 尚无可用热状态：退化为冷启动（整基重建两阶段）。
+            self.bounds.lb.clone_from(&bounds.lb);
+            self.bounds.ub.clone_from(&bounds.ub);
+            self.rebuild_initial_basis();
+            let st = self.run_two_phase(true);
+            self.has_run = true;
+            return self.build_solution(st);
+        }
+        // 热状态可用：add_row 脏标记或 ETA 越限 ⇒ 先整基重因子化 + 重算
+        // x_B（基保持，等价『随后重构』纪律）。
+        if self.factorization_dirty || self.eta_over_limit() {
+            if let Err(msg) = self.refactor() {
+                self.numerical_error = Some(msg);
+                return self.build_solution(LpStatus::IterationLimit);
             }
         }
         // (1)(2) 非基贴界双向检查 + 传播（prev_bounds 换入上次有效界）。
@@ -1465,8 +1593,21 @@ impl SparseSimplex {
 
     // ---- 内部：因子化 / 三角求解 / ETA ----
 
+    /// ETA 越限判定（S4）：**flops 平衡 + 绝对上限**——ETA 施加成本
+    /// ≈ Σ|eta.nnz|/次三角求解，重因子化成本 ≈ O(LU fill) 一次性，比例
+    /// 失衡即重构。下限 64 为实测定档（setcover-300x600 全程 A/B：
+    /// floor 16/8 ⇒ 重构过频反亏 [124.9s]，64 最优 [47.1s]，128/200 ⇒
+    /// ETA 施加占优 [99.7-124.9s]）；上限 200 沿用稠密引擎
+    /// REFRESH_INTERVAL 语义。确定性：只依赖 m 与 LU 规模。
+    fn eta_over_limit(&self) -> bool {
+        let m = self.basis.len().max(1);
+        let lu_nnz = self.lu.l_rows.len() + self.lu.u_cols.len() + self.lu.u_diag.len();
+        let balance = (4 * lu_nnz) / m;
+        let limit = (balance as u64).clamp(64, REFACTOR_INTERVAL);
+        self.etas.len() as u64 >= limit
+    }
+
     /// 整基重因子化 + 从原始数据重算 x_B（漂移双保险；同时清空 ETA）。
-    /// 失败（奇异基/非有限）返回 Err。
     ///
     /// 因子化列序（Q）：单位列（松弛/人工/单非零结构列）按行序排前
     ///（零填充消元），多元素列按 (nnz 升序, 基位置升序) 排后——LP 基的
@@ -1495,10 +1636,14 @@ impl SparseSimplex {
         let mut order: Vec<usize> = units.iter().map(|&(_, bp)| bp).collect();
         order.extend(multis.iter().map(|&(_, bp)| bp));
         // 按因子化列序收集基列（原始行空间稀疏列）。
-        let mut cols: Vec<Vec<(usize, f64)>> = Vec::with_capacity(m);
-        for &bp in &order {
+        self.lu_scratch.resize(m);
+        self.lu.resize(m);
+        self.refactor_cols.clear();
+        self.refactor_cols.resize_with(m, Vec::new);
+        for (t, &bp) in order.iter().enumerate() {
             let j = self.basis[bp];
-            let mut col: Vec<(usize, f64)> = Vec::new();
+            let col = &mut self.refactor_cols[t];
+            col.clear();
             if j < ncs {
                 for k in self.col_start[j]..self.col_start[j + 1] {
                     if self.col_vals[k] != 0.0 {
@@ -1509,10 +1654,15 @@ impl SparseSimplex {
                 let (row, sigma) = self.art_info[j - ncs];
                 col.push((row, sigma));
             }
-            cols.push(col);
         }
-        let lu = factorize(&cols, self.tol.pivot, m).map_err(|e| e.0)?;
-        self.lu = lu;
+        factorize_into(
+            &self.refactor_cols,
+            self.tol.pivot,
+            m,
+            &mut self.lu,
+            &mut self.lu_scratch,
+        )
+        .map_err(|e| e.0)?;
         self.lu.col_perm = order;
         self.etas.clear();
         self.pivots_since_refactor = 0;
@@ -1566,16 +1716,13 @@ impl SparseSimplex {
         self.lu.ftran_dense(&self.ftran_in, &mut alpha);
         // ETA：旧 → 新顺序施加 E⁻¹（α_r' = α_r/e_r；其余 α_i −= e_i·α_r'）。
         for eta in &self.etas {
-            let r = eta.r;
-            let t = alpha[r] / eta.col[r];
+            let t = alpha[eta.r] / eta.pivot;
             if t != 0.0 {
-                for (i, &e) in eta.col.iter().enumerate() {
-                    if e != 0.0 && i != r {
-                        alpha[i] -= e * t;
-                    }
+                for &(i, e) in eta.nz.iter() {
+                    alpha[i] -= e * t;
                 }
             }
-            alpha[r] = t;
+            alpha[eta.r] = t;
         }
         self.alpha = alpha;
     }
@@ -1586,14 +1733,11 @@ impl SparseSimplex {
     fn btran_full(&self, c: &[f64]) -> Vec<f64> {
         let mut v = c.to_vec();
         for eta in self.etas.iter().rev() {
-            let r = eta.r;
             let mut acc = 0.0;
-            for (i, &e) in eta.col.iter().enumerate() {
-                if e != 0.0 && i != r {
-                    acc += e * v[i];
-                }
+            for &(i, e) in eta.nz.iter() {
+                acc += e * v[i];
             }
-            v[r] = (v[r] - acc) / eta.col[r];
+            v[eta.r] = (v[eta.r] - acc) / eta.pivot;
         }
         self.lu.btran(&v)
     }
@@ -2063,17 +2207,27 @@ impl SparseSimplex {
         }
         self.x_b[r] = entering_old + delta * t;
         let leaving = self.basis[r];
+        let mut nz: Vec<(usize, f64)> = Vec::new();
+        for (i, &v) in self.alpha.iter().enumerate() {
+            if i != r && v != 0.0 {
+                nz.push((i, v));
+            }
+        }
         self.etas.push(Eta {
             r,
-            col: self.alpha.clone(),
+            pivot: self.alpha[r],
+            nz,
         });
         self.basis[r] = q;
         self.in_basis[leaving] = false;
         self.in_basis[q] = true;
         self.at_upper[leaving] = hit_upper;
-        self.pivots_since_refactor = self.pivots_since_refactor.saturating_add(1);
         self.just_refactored = false;
-        if self.pivots_since_refactor >= REFACTOR_INTERVAL {
+        // 触发用 **ETA 实际数量**（跨 resolve 生命周期）：start_call 每次调用
+        // 复位本次主元计数，逐次短 resolve 永不触发周期重构 ⇒ ETA 无界增长
+        //（S4 实测 setcover-300x600 上 470 条，每次 FTRAN/BTRAN 多付
+        // |etas|×m 次乘加，节点级热启动被拖垮）。
+        if self.eta_over_limit() {
             self.refactor()?;
         }
         Ok(())

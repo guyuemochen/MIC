@@ -792,6 +792,157 @@ mod tests {
         assert_eq!(full.status, SolveStatus::Optimal);
     }
 
+    /// S4 类自适应规则解析：m×(n+m) ≥ 10^6 ⇒ revised，否则 tableau；
+    /// 显式指定覆盖优先；SolveOptions/BbOptions 默认 Auto。
+    #[test]
+    fn auto_engine_resolution_rule() {
+        use crate::simplex_sparse::{
+            effective_engine, LpEngineKind, ENGINE_AUTO_CELL_THRESHOLD,
+        };
+        // 默认 Auto（三层同源）。
+        assert_eq!(SolveOptions::default().bb.lp_engine, LpEngineKind::Auto);
+        assert_eq!(
+            crate::branch_bound::BbOptions::default().lp_engine,
+            LpEngineKind::Auto
+        );
+        // 合成规模：阈下（m=300, n=600 ⇒ 270k）与阈上（m=800, n=4000 ⇒
+        // 3.84M；lp-sparse 同款规模）。
+        let mut small = Problem::new("s", Sense::Maximize);
+        for j in 0..600 {
+            small.add_var(&format!("x{j}"), VarType::Continuous).unwrap();
+        }
+        for _ in 0..300 {
+            small
+                .add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0)
+                .unwrap();
+        }
+        let mut big = Problem::new("b", Sense::Maximize);
+        for j in 0..4000 {
+            big.add_var(&format!("x{j}"), VarType::Continuous).unwrap();
+        }
+        for _ in 0..800 {
+            big.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0)
+                .unwrap();
+        }
+        assert_eq!(
+            effective_engine(&small, LpEngineKind::Auto),
+            LpEngineKind::Tableau,
+            "270k 格 < 10^6 ⇒ tableau"
+        );
+        assert_eq!(
+            effective_engine(&big, LpEngineKind::Auto),
+            LpEngineKind::Revised,
+            "3.84M 格 ≥ 10^6 ⇒ revised（lp-sparse 同款规模）"
+        );
+        // 显式覆盖优先（大算例显式 tableau / 小算例显式 revised 均原样）。
+        assert_eq!(
+            effective_engine(&big, LpEngineKind::Tableau),
+            LpEngineKind::Tableau
+        );
+        assert_eq!(
+            effective_engine(&small, LpEngineKind::Revised),
+            LpEngineKind::Revised
+        );
+        assert_eq!(ENGINE_AUTO_CELL_THRESHOLD, 1_000_000);
+    }
+
+    /// Auto 默认在小算例上走 tableau（与显式 tableau 同目标；默认组合
+    /// 阈下行为不变的应用层证据）。
+    #[test]
+    fn auto_default_small_instance_matches_tableau() {
+        let mut p = Problem::new("k5", Sense::Maximize);
+        for name in ["a", "b", "c", "d", "e"] {
+            p.add_var(name, VarType::Binary).unwrap();
+        }
+        p.set_objective(vec![(0, 10.0), (1, 7.0), (2, 6.0), (3, 4.0), (4, 2.0)], 0.0)
+            .unwrap();
+        p.add_constraint(
+            None,
+            vec![(0, 5.0), (1, 4.0), (2, 3.0), (3, 2.0), (4, 1.0)],
+            RelOp::Le,
+            9.0,
+        )
+        .unwrap();
+        let auto = solve_default(&p).unwrap();
+        let tab = solve(
+            &p,
+            &SolveOptions {
+                bb: crate::branch_bound::BbOptions {
+                    lp_engine: crate::simplex_sparse::LpEngineKind::Tableau,
+                    ..crate::branch_bound::BbOptions::default()
+                },
+                ..SolveOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(auto.status, tab.status);
+        assert_eq!(auto.objective, tab.objective);
+        assert_eq!(auto.stats.nodes, tab.stats.nodes);
+        assert_close(auto.objective.unwrap(), 18.0);
+    }
+
+    /// Auto × threads≥2 × 大算例（有效引擎 = revised）在库层显式报错
+    ///（解析层不知规模不拦 auto；小算例 auto→tableau × threads≥2 正常）。
+    #[test]
+    fn auto_engine_threads_guard_by_effective_kind() {
+        let mut big = Problem::new("b", Sense::Maximize);
+        for j in 0..4000 {
+            big.add_var(&format!("x{j}"), VarType::Continuous).unwrap();
+        }
+        for _ in 0..800 {
+            big.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0)
+                .unwrap();
+        }
+        let ctrl2 = SearchControl {
+            threads: 2,
+            ..SearchControl::default()
+        };
+        // 关 presolve：合成大问题会被预处理清空（简约后 m=0 ⇒ 有效引擎
+        // 回 tableau，守卫不触发）；关掉后问题原样到达派发层。
+        let opts_big = SolveOptions {
+            use_presolve: false,
+            ..SolveOptions::default()
+        };
+        let r = solve_controlled(&big, &opts_big, &ctrl2, None);
+        assert!(matches!(r, Err(MilpError::InvalidModel(_))), "实际 {r:?}");
+        // 小算例（auto→tableau）× threads≥2 走并行路径正常求解。
+        let mut small = Problem::new("m", Sense::Maximize);
+        small.add_var("x", VarType::Integer).unwrap();
+        small.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        small.add_constraint(None, vec![(0, 2.0)], RelOp::Le, 7.0).unwrap();
+        let r = solve_controlled(&small, &SolveOptions::default(), &ctrl2, None);
+        assert!(r.is_ok());
+    }
+
+    /// t1 确定性（Auto 默认在大算例上解析为 revised）：同参数双跑全部
+    /// 行为字段逐字节相同（lp-wide-1000x2000，6M 格；重负载 #[ignore]，
+    /// 与 acceptance 显式跑同款）。
+    #[test]
+    #[ignore]
+    fn auto_engine_deterministic_double_run_large() {
+        let p = crate::instance::load_instance(&bench_instance("lp-wide-1000x2000")).unwrap();
+        assert_eq!(
+            crate::simplex_sparse::effective_engine(
+                &p,
+                crate::simplex_sparse::LpEngineKind::Auto
+            ),
+            crate::simplex_sparse::LpEngineKind::Revised,
+            "前提：该算例按规则解析为 revised"
+        );
+        let a = solve_default(&p).unwrap();
+        let b = solve_default(&p).unwrap();
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.objective.unwrap().to_bits(), b.objective.unwrap().to_bits());
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.values, b.values);
+        assert!(
+            (a.objective.unwrap() - 112.600268).abs() <= 1e-5,
+            "obj = {}（S4 A/B 双引擎一致值 112.600268）",
+            a.objective.unwrap()
+        );
+    }
+
     /// 验收目标（重负载，#[ignore]；`cargo test --release --lib solver::tests
     /// -- --ignored --test-threads=1` 显式跑）：revised 下 mknap-5x300 =
     /// 4762、setcover-300x600 = 144（已知最优，与 tableau 口径一致）。

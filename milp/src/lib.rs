@@ -37,7 +37,8 @@ pub mod solver;
 pub mod search_ctrl;
 pub mod parallel_bb;
 pub mod scaling;
-// S2-S3：稀疏修正单纯形（CSC + GP 稀疏 LU + FTRAN/BTRAN + ETA + 有界原
-// 单纯形 + 对偶热修复 + add_row；经 LpEngine trait 接入主求解路径，CLI
-// --lp-engine revised（默认 tableau 不变；revised 仅 threads=1）。
+// S2-S4：稀疏修正单纯形（CSC + GP 稀疏 LU + FTRAN/BTRAN + 稀疏 ETA +
+// 有界原单纯形 + 对偶热修复 + add_row）；S4 起类自适应默认 Auto 的
+// revised 侧（m×(n+m) ≥ 10^6 格 ⇒ revised，否则 tableau；显式指定覆盖
+// 优先，revised 仅 threads=1）。
 pub mod simplex_sparse;

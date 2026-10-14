@@ -183,12 +183,14 @@ pub struct BbOptions {
     /// 调整 6 的机制 spike 结论）。仅顺序路径；并行 worker 不施加（窃取
     /// 交错会使局部割泄漏到子树外——共享 Simplex 无行作用域）。默认 true。
     pub local_cuts: bool,
-    /// LP 引擎选择（S3）：默认 [`LpEngineKind::Tableau`]（本轮不改默认；
-    /// CLI `--lp-engine tableau|revised` / 库字段两层接线）。`Revised` =
-    /// 稀疏修正单纯形（simplex_sparse.rs，CSC+稀疏 LU+ETA+对偶热修复），
-    /// **仅接线顺序路径**：threads ≥ 2 在 [`branch_and_bound_controlled`]
-    /// 入口显式报错（并行 worker 直接构造稠密 Simplex——F5 冷审：静默
-    /// 忽略旗标会形成文档外行为分叉）。
+    /// LP 引擎选择：默认 [`LpEngineKind::Auto`]（S4 类自适应——表格规模
+    /// m×(n+m) ≥ 10^6 格 ⇒ revised，否则 tableau；定档证据见
+    /// `simplex_sparse::effective_engine` 文档）；CLI
+    /// `--lp-engine auto|tableau|revised` / 库字段两层接线，显式指定
+    /// 覆盖优先。`Revised` **仅接线顺序路径**：threads ≥ 2 在
+    /// [`branch_and_bound_controlled`] 入口按**有效引擎**显式报错（并行
+    /// worker 直接构造稠密 Simplex——F5 冷审：静默忽略旗标会形成文档外
+    /// 行为分叉；Auto 在大算例上解析为 revised 时同样被拦）。
     pub lp_engine: LpEngineKind,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
@@ -422,12 +424,20 @@ pub fn branch_and_bound_controlled(
     if ctrl.threads >= 2 {
         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
         // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
-        // 旗标会形成文档外行为分叉）。CLI 层已在解析层给出用法错误。
-        if opts.lp_engine == LpEngineKind::Revised {
-            return Err(MilpError::InvalidModel(
-                "--lp-engine revised 仅支持 threads=1（S3 接线范围：并行引擎直接构造稠密 Simplex）"
-                    .to_string(),
-            ));
+        // 旗标会形成文档外行为分叉）。S4：按**有效引擎**判定——Auto 在
+        // 大算例（m×(n+m) ≥ 10^6）上解析为 revised 时同样被拦（消息点名
+        // 有效引擎与成因，CLI 解析层只拦显式 revised × threads≥2）。
+        let eff = crate::simplex_sparse::effective_engine(problem, opts.lp_engine);
+        if eff == LpEngineKind::Revised {
+            return Err(MilpError::InvalidModel(format!(
+                "LP 引擎 {} 在 threads≥2 下不可用（revised 仅接线顺序路径：\
+                 并行引擎直接构造稠密 Simplex；显式 --lp-engine tableau 可回表格式）",
+                match opts.lp_engine {
+                    LpEngineKind::Auto => "auto（该算例按规模规则解析为 revised）",
+                    LpEngineKind::Revised => "revised",
+                    LpEngineKind::Tableau => unreachable!(),
+                }
+            )));
         }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
