@@ -65,6 +65,7 @@ use milp::cuts::{cut_loop_recorded, CutOptions};
 use milp::instance::load_instance;
 use milp::model::{Problem, SolveStatus, Tolerances};
 use milp::presolve;
+use milp::search_ctrl::Determinism;
 use milp::simplex::{Bounds, LpStatus, Simplex};
 use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions};
 
@@ -100,6 +101,10 @@ struct Config {
     /// 命中多维背包类 ⇒ global，否则 local）。global = 全局 DFS 栈，压并行
     /// 节点膨胀（P1 取证 §5 M1 提案的接线点）。
     work_stack: WorkStack,
+    /// 确定性模式（`--determinism wall|budget`，W3）；默认 wall（复刻 CLI
+    /// 默认）。budget = 纯预算制（time-limit 换算节点预算、决策路径零墙钟
+    /// 读点、双跑逐字节相同；仅 threads=1，与 ≥2 组合由求解层报错）。
+    determinism: Determinism,
 }
 
 /// 并行工作栈模式（与 CLI main.rs 同口径的三态）。
@@ -188,6 +193,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut pc_probes: Option<usize> = None;
     let mut root_cuts: Option<bool> = None;
     let mut work_stack: Option<WorkStack> = None;
+    let mut determinism: Option<Determinism> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -319,6 +325,24 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             work_stack = Some(mode);
             index += 1;
+        } else if arg == "--determinism" {
+            if determinism.is_some() {
+                return Err(format!("`--determinism` 重复出现（{USAGE}）"));
+            }
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("`--determinism` 缺少参数 wall|budget（{USAGE}）"));
+            };
+            let mode = match value.as_str() {
+                "wall" => Determinism::Wall,
+                "budget" => Determinism::Budget,
+                unknown => {
+                    return Err(format!(
+                        "`--determinism` 的参数 `{unknown}` 未知（期望 wall|budget）（{USAGE}）"
+                    ));
+                }
+            };
+            determinism = Some(mode);
+            index += 1;
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -341,6 +365,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto（W1，复刻 CLI 多线程默认：类检测命中 ⇒ global，否则
         // local）；显式 local/global 供 A/B 消融。
         work_stack: work_stack.unwrap_or(WorkStack::Auto),
+        // 默认 wall（复刻 CLI 默认）；budget 供确定性双跑测量。
+        determinism: determinism.unwrap_or(Determinism::Wall),
     })
 }
 
@@ -379,6 +405,7 @@ fn search_control_from(config: &Config) -> SearchControl {
     SearchControl {
         threads: config.threads,
         adaptive_heuristics: true,
+        determinism: config.determinism,
         ..SearchControl::default()
     }
 }

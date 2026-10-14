@@ -82,8 +82,9 @@ use crate::error::{MilpError, Result};
 use crate::heuristics::{self, Incumbent};
 use crate::model::{objective_is_integral, Problem, RelOp, Sense, SolveStatus, Tolerances, VarType};
 use crate::search_ctrl::{
-    aggregate_bound, gap_percent, AutoDegrade, DegradePolicy, DegradeSnapshot, HeuristicConfig,
-    HeuristicController, HeuristicDecision, ProgressInfo, Pseudocosts, SearchSnapshot,
+    aggregate_bound, gap_percent, AutoDegrade, DegradePolicy, DegradeSnapshot, Determinism,
+    HeuristicConfig, HeuristicController, HeuristicDecision, ProgressInfo, Pseudocosts,
+    SearchSnapshot,
 };
 use crate::simplex::{Bounds, LpSolution, LpStatus, Simplex};
 
@@ -231,6 +232,10 @@ pub struct SearchControl {
     pub adaptive_heuristics: bool,
     /// 周期进度行的间隔秒数。默认 None = 不输出周期行（首行仍随钩子发出）。
     pub log_period_secs: Option<f64>,
+    /// 确定性模式（W3，默认 [`Determinism::Wall`] = 现状）：budget = 纯
+    /// 预算制——全部墙钟判定改为等价节点数预算（详见 [`Determinism`]），
+    /// 决策路径零墙钟读点、仅支持 threads=1。
+    pub determinism: Determinism,
     /// 策略级自动降级参数（「继续证最优」vs「提前返回最好解」）。仅在
     /// `adaptive_heuristics = true` 且给了时间预算（`BbOptions::time_limit_ms
     /// != 0`）时评估；触发时与 mipgap 同径提前终止（LimitReached +
@@ -241,14 +246,15 @@ pub struct SearchControl {
 
 impl Default for SearchControl {
     /// 默认值：threads=1 / mipgap_percent=None / adaptive_heuristics=false /
-    /// log_period_secs=None / degrade=DegradePolicy::default()（= 现版本
-    /// 行为，零变化）。
+    /// log_period_secs=None / determinism=Wall / degrade=DegradePolicy::default()
+    ///（= 现版本行为，零变化）。
     fn default() -> Self {
         SearchControl {
             threads: 1,
             mipgap_percent: None,
             adaptive_heuristics: false,
             log_period_secs: None,
+            determinism: Determinism::Wall,
             degrade: DegradePolicy::default(),
         }
     }
@@ -418,13 +424,34 @@ fn sequential_bb(
     // 整数目标门控（cutoff 剪枝 + est 弹出剪枝共用；纯问题属性，算一次）。
     let obj_integral = objective_is_integral(problem);
     let mut stats = BbStats::default();
+    // —— W3 确定性模式：budget = 纯预算制——time_limit 换算为节点预算，
+    // 决策通道的进度量单位从墙钟秒改为节点数（progress_units 注入），节点
+    // 边界截断改查节点预算；决策路径零墙钟读点（展示通道——进度行时刻/
+    // stats.time_ms——仍读钟，不参与任何判定）。wall（默认）零变化。
+    let budget_mode = ctrl.determinism == Determinism::Budget;
+    // budget 模式的等价节点预算（time_limit_ms > 0 才有；0 = 不限 ⇒ None，
+    // 降级与预算保护关闭，行为 ≡ 无时限）。
+    let budget_node_cap = (budget_mode && opts.time_limit_ms > 0).then(|| budget_node_cap_of(opts));
+    // 决策通道的预算量（单位与进度量一致）：budget = 节点数 / wall = 秒。
+    let budget_progress_cap: Option<f64> = if budget_mode {
+        budget_node_cap.map(|n| n as f64)
+    } else if opts.time_limit_ms == 0 {
+        None
+    } else {
+        Some(opts.time_limit_ms as f64 / 1000.0)
+    };
     // 割丢弃回退（根割 IterationLimit 重建 Simplex）前累计的 LP 迭代数：
     // finish 以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
     let mut base_lp_iterations: u64 = 0;
     let mut simplex = Simplex::new(problem, tol)?;
     // W2 内部墙钟时限：0（不限）= None ⇒ 零墙钟读点（条件读钟）；重建
-    // Simplex（预割轮 / R8 回滚）同款重注入。
-    let time_deadline = bb_time_deadline(&start, opts);
+    // Simplex（预割轮 / R8 回滚）同款重注入。W3：budget 模式不注入（决策
+    // 路径零墙钟读点契约；时限语义已换算为节点预算）。
+    let time_deadline = if budget_mode {
+        None
+    } else {
+        bb_time_deadline(&start, opts)
+    };
     simplex.set_time_deadline(time_deadline);
     let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
@@ -752,10 +779,11 @@ fn sequential_bb(
         }
     }
 
-    // 根启发式供应的 incumbent 记为根阶段末尾时刻的改进（降级停滞锚点）。
+    // 根启发式供应的 incumbent 记为根阶段末尾时刻的改进（降级停滞锚点；
+    // W3：budget 模式锚点单位 = 节点数——根 = 1）。
     if let Some(state) = adaptive.as_mut() {
         if incumbent.is_some() {
-            state.last_improvement_secs = start.elapsed().as_secs_f64();
+            state.last_improve_progress = progress_units(&start, stats.nodes, budget_mode);
         }
     }
 
@@ -783,7 +811,8 @@ fn sequential_bb(
         &mut trail,
         &mut simplex,
         stats.nodes,
-        start.elapsed().as_secs_f64(),
+        progress_units(&start, stats.nodes, budget_mode),
+        budget_progress_cap,
         &mut pc,
         adaptive.as_mut(),
     );
@@ -837,10 +866,11 @@ fn sequential_bb(
             }
             // ③ 策略级自动降级（仅 auto 模式且给了时间预算）：资格预检通过
             // 才聚合前沿界（避免逐节点 O(栈) 开销）；双停滞（incumbent 与界
-            // 都不再前进）⇒ 与 ② 同径提前终止，证据口径一致。
-            if let (Some(state), true) = (adaptive.as_mut(), opts.time_limit_ms != 0) {
-                let now = start.elapsed().as_secs_f64();
-                let budget = opts.time_limit_ms as f64 / 1000.0;
+            // 都不再前进）⇒ 与 ② 同径提前终止，证据口径一致。W3：budget
+            // 模式的进度/预算/停滞锚点单位 = 节点数（progress_units 注入，
+            // 零墙钟读点）。
+            if let (Some(state), Some(budget)) = (adaptive.as_mut(), budget_progress_cap) {
+                let now = progress_units(&start, stats.nodes, budget_mode);
                 if AutoDegrade::eligible(state.degrade.cfg(), now, Some(budget)) {
                     let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
                     let snap = DegradeSnapshot {
@@ -848,7 +878,7 @@ fn sequential_bb(
                         elapsed_secs: now,
                         budget_secs: Some(budget),
                         has_incumbent: incumbent.is_some(),
-                        last_improvement_secs: state.last_improvement_secs,
+                        last_improvement_secs: state.last_improve_progress,
                         bound: db,
                     };
                     if state.degrade.decide(&snap) {
@@ -875,12 +905,18 @@ fn sequential_bb(
                 }
             }
         }
-        // 节点/时间上限：每次 resolve 前检查；0 = 不限。
+        // 节点/时间上限：每次 resolve 前检查；0 = 不限。W3：budget 模式的
+        // 时限语义 = 节点预算（确定性，零墙钟读点）；wall 模式照旧墙钟检查。
         if opts.node_limit != 0 && stats.nodes >= opts.node_limit {
             limit_hit = true;
             break;
         }
-        if opts.time_limit_ms != 0 && time_exceeded(&start, opts.time_limit_ms) {
+        if let Some(cap) = budget_node_cap {
+            if stats.nodes >= cap {
+                limit_hit = true;
+                break;
+            }
+        } else if opts.time_limit_ms != 0 && time_exceeded(&start, opts.time_limit_ms) {
             limit_hit = true;
             break;
         }
@@ -940,7 +976,8 @@ fn sequential_bb(
             &mut trail,
             &mut simplex,
             stats.nodes,
-            start.elapsed().as_secs_f64(),
+            progress_units(&start, stats.nodes, budget_mode),
+            budget_progress_cap,
             &mut pc,
             adaptive.as_mut(),
         );
@@ -1432,7 +1469,10 @@ fn branch_or_close(
     trail: &mut Vec<TrailEntry>,
     simplex: &mut Simplex,
     nodes: u64,
+    // 决策通道进度量（wall = 墙钟秒 / budget = 节点数，W3 单位契约）。
     elapsed_secs: f64,
+    // 决策通道预算量（单位与 elapsed_secs 一致；None = 不限）。
+    budget_progress_cap: Option<f64>,
     pc: &mut Pseudocosts,
     mut adaptive: Option<&mut AdaptiveState>,
 ) {
@@ -1464,7 +1504,7 @@ fn branch_or_close(
         if let Some(state) = adaptive {
             if improved {
                 state.last_improvement_node = nodes;
-                state.last_improvement_secs = elapsed_secs;
+                state.last_improve_progress = elapsed_secs;
             }
         }
         return;
@@ -1475,11 +1515,8 @@ fn branch_or_close(
             nodes,
             incumbent: incumbent.as_ref().map(|(o, _)| *o),
             nodes_since_improvement: nodes.saturating_sub(state.last_improvement_node),
-            time_budget_secs: if opts.time_limit_ms == 0 {
-                None
-            } else {
-                Some(opts.time_limit_ms as f64 / 1000.0)
-            },
+            // W3 单位契约：budget 模式下 elapsed/预算均为节点数（调用方注入）。
+            time_budget_secs: budget_progress_cap,
             elapsed_secs,
         };
         if state.controller.decide(&snap) == HeuristicDecision::Run {
@@ -1497,7 +1534,7 @@ fn branch_or_close(
             state.controller.record(hit);
             if hit {
                 state.last_improvement_node = nodes;
-                state.last_improvement_secs = elapsed_secs;
+                state.last_improve_progress = elapsed_secs;
             }
             // dive 扰动了 Simplex 内部基：用本节点真实界 resolve 回取
             //（记账性，不计节点；分支决策仍基于传入的本节点 LP 解 sol）。
@@ -1574,9 +1611,10 @@ fn branch_or_close(
 struct AdaptiveState {
     controller: HeuristicController,
     last_improvement_node: u64,
-    /// 最近一次 incumbent 严格改进的时刻（秒；根启发式供应的解记根阶段
-    /// 末尾时刻）。策略级自动降级的双停滞信号之一。
-    last_improvement_secs: f64,
+    /// 最近一次 incumbent 严格改进时的进度量（wall = 墙钟秒 / budget =
+    /// 节点数，W3 单位契约——根启发式供应的解记根阶段末尾进度）。策略级
+    /// 自动降级的双停滞信号之一。
+    last_improve_progress: f64,
     /// 策略级自动降级判定器（窗口界基准有状态）。
     degrade: AutoDegrade,
 }
@@ -1586,7 +1624,7 @@ impl AdaptiveState {
         AdaptiveState {
             controller: HeuristicController::new(cfg),
             last_improvement_node: 0,
-            last_improvement_secs: 0.0,
+            last_improve_progress: 0.0,
             degrade: AutoDegrade::new(degrade_policy),
         }
     }
@@ -1624,6 +1662,38 @@ fn time_exceeded(start: &Instant, limit_ms: u64) -> bool {
 pub(crate) fn bb_time_deadline(start: &Instant, opts: &BbOptions) -> Option<Instant> {
     (opts.time_limit_ms > 0)
         .then(|| *start + std::time::Duration::from_millis(opts.time_limit_ms))
+}
+
+/// W3 budget 模式的时限→节点预算换算率（节点/秒，**固定常量、机器无关**）。
+/// 标定（ask 风险栏的两参照）：
+/// - mknap-5x300 健康态 t1 吞吐 87,800 节点 / 12.8-13.7s ≈ 6.4-6.9k 节点/s
+///   （本窗实测 6.7-6.9k、R8 窗 6.4-7.6k）——取 6,000 略保守：30s 名义
+///   预算 = 180,000 节点 > 完备需求 87,800，且降级资格线（start_frac 0.5 ×
+///   180k = 90k）也高于之 ⇒ budget-30s 恒完备最优 4762@87,800（恢复 R8
+///   窗参照行为，消除 wall 模式的 optimal/auto_degraded 漂移）；
+/// - marketsplit-4x30 参照：根闭合 1 节点即最优，任何预算下不受影响。
+/// 语义边界：budget 模式以确定性优先于墙钟诚实——慢机上墙钟可超名义值
+/// （换算率不随机器浮动，这正是逐字节可复现的来源）。
+pub(crate) const BUDGET_NODES_PER_SEC: f64 = 6_000.0;
+
+/// W3：budget 模式下 `time_limit_ms` 的等价节点预算（确定性换算；
+/// `time_limit_ms = 0` = 不限 ⇒ None——降级与预算保护关闭，行为 ≡ 无时限）。
+/// ceil + max(1)：任何正时限至少允许 1 个节点（根）。
+fn budget_node_cap_of(opts: &BbOptions) -> u64 {
+    debug_assert!(opts.time_limit_ms > 0);
+    let secs = opts.time_limit_ms as f64 / 1000.0;
+    ((secs * BUDGET_NODES_PER_SEC).ceil() as u64).max(1)
+}
+
+/// W3：决策通道的「进度量」——wall 模式 = 墙钟秒（现状）；budget 模式 =
+/// 节点数（**不读钟**）。注入 SearchSnapshot/DegradeSnapshot 的进度字段与
+/// 自适应锚点（单位契约见 search_ctrl 各快照文档）。
+fn progress_units(start: &Instant, nodes: u64, budget_mode: bool) -> f64 {
+    if budget_mode {
+        nodes as f64
+    } else {
+        start.elapsed().as_secs_f64()
+    }
 }
 
 /// 组装结果并补全统计（耗时与累计迭代 = `base_iters` + 当前 Simplex 迭代——
@@ -1746,6 +1816,14 @@ fn parallel_entry(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    // W3：budget 确定性模式仅支持 threads=1——并行侧无确定性契约（README
+    // 口径：nodes/迭代/耗时/取值跨运行可变），节点预算语义也未在并行引擎
+    // 定义；显式报错优于静默给出无契约的组合。
+    if ctrl.determinism == Determinism::Budget {
+        return Err(MilpError::Internal(
+            "--determinism budget 仅支持 threads=1（t1 确定性契约：决策路径零墙钟读点、双跑逐字节相同）；并行侧无确定性契约".to_string(),
+        ));
+    }
     // —— W1 按类选栈解析（仅并行路径；t1 不读该字段）——
     let (opts, auto_stack) = resolve_work_stack_mode(problem, opts);
     let opts = &opts;
@@ -2074,6 +2152,133 @@ mod tests {
             r.best_objective.is_none(),
             "纯 LP 截断不携带 best（无 incumbent 概念，不冒充）"
         );
+    }
+
+    // ===================== W3：确定性模式（budget） ======================
+
+    /// （W3）budget 模式双跑逐字节：mknap-3x100 + 100ms 时限（换算 600 节点
+    /// 预算 < t1 完备需求 2,120 ⇒ 必截断）+ 自适应启发式（auto——wall 模式
+    /// 下的漂移源）。两次求解的**全部行为字段**逐字节相同（status/objective/
+    /// values/nodes/lp_iterations/cuts/bound/gap_terminated/auto_degraded），
+    /// 仅 time_ms 计时字段不同。
+    #[test]
+    fn budget_mode_double_run_byte_identical() {
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let opts = BbOptions {
+            time_limit_ms: 100, // budget 换算：ceil(0.1 × 6000) = 600 节点 < 2,120
+            ..BbOptions::default()
+        };
+        let ctrl = SearchControl {
+            adaptive_heuristics: true,
+            determinism: Determinism::Budget,
+            ..SearchControl::default()
+        };
+        let a = branch_and_bound_controlled(&problem, &opts, &ctrl, tol(), None).unwrap();
+        let b = branch_and_bound_controlled(&problem, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(a.status, b.status, "终态逐字节");
+        assert_eq!(a.best_objective, b.best_objective, "目标逐字节");
+        assert_eq!(a.best_values, b.best_values, "取值逐字节");
+        assert_eq!(a.stats.nodes, b.stats.nodes, "节点数逐字节");
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.stats.cuts, b.stats.cuts);
+        assert_eq!(a.bound, b.bound);
+        assert_eq!(a.gap_terminated, b.gap_terminated);
+        assert_eq!(a.auto_degraded, b.auto_degraded);
+        // 截断形态确认：600 节点预算（完备需求 2,120）⇒ 非完备终态。
+        assert_eq!(
+            a.status,
+            SolveStatus::LimitReached,
+            "预算 600 < 完备需求 2,120 ⇒ 截断（实际 nodes={}）",
+            a.stats.nodes
+        );
+        assert!(a.stats.nodes <= 600, "节点预算不超限（实际 {}）", a.stats.nodes);
+    }
+
+    /// （W3）budget 节点预算的确定性截断点：time_limit_ms=100 ⇒
+    /// ceil(0.1 × BUDGET_NODES_PER_SEC) = 600 节点——截断恰在预算处（pop 后
+    /// resolve 前检查），双跑恒 600。
+    #[test]
+    fn budget_node_cap_conversion() {
+        assert_eq!(BUDGET_NODES_PER_SEC, 6_000.0);
+        let opts = BbOptions {
+            time_limit_ms: 100,
+            ..BbOptions::default()
+        };
+        assert_eq!(budget_node_cap_of(&opts), 600);
+        // 1ms ⇒ ceil(6) = 6；极大值饱和不 panic。
+        let tiny = BbOptions {
+            time_limit_ms: 1,
+            ..BbOptions::default()
+        };
+        assert_eq!(budget_node_cap_of(&tiny), 6);
+        let huge = BbOptions {
+            time_limit_ms: u64::MAX,
+            ..BbOptions::default()
+        };
+        assert!(budget_node_cap_of(&huge) > 0, "饱和转换不 panic");
+    }
+
+    /// （W3）budget + threads ≥ 2 显式报错（并行无确定性契约；不做静默
+    /// 降级语义）。
+    #[test]
+    fn budget_mode_rejects_parallel() {
+        let p = Problem::new("tiny", Sense::Maximize);
+        let r = branch_and_bound_controlled(
+            &p,
+            &BbOptions::default(),
+            &SearchControl {
+                threads: 2,
+                determinism: Determinism::Budget,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        );
+        assert!(matches!(r, Err(MilpError::Internal(_))), "budget+threads=2 应报错");
+    }
+
+    /// （W3）budget 无时限 ≡ wall 无时限（无预算 ⇒ 降级/预算保护关闭，
+    /// 决策通道零差异）：同算例两模式行为字段全等——同时钉住「wall 默认
+    /// 零变化」的结构性对照。
+    #[test]
+    fn budget_no_limit_equals_wall_no_limit() {
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let wall = branch_and_bound_controlled(
+            &problem,
+            &BbOptions::default(),
+            &SearchControl::default(),
+            tol(),
+            None,
+        )
+        .unwrap();
+        let budget = branch_and_bound_controlled(
+            &problem,
+            &BbOptions::default(),
+            &SearchControl {
+                determinism: Determinism::Budget,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(wall.status, SolveStatus::Optimal);
+        assert_eq!(budget.status, wall.status);
+        assert_eq!(budget.best_objective, wall.best_objective);
+        assert_eq!(budget.stats.nodes, wall.stats.nodes);
+        assert_eq!(budget.stats.lp_iterations, wall.stats.lp_iterations);
+        assert_eq!(budget.stats.cuts, wall.stats.cuts);
+        assert_eq!(budget.bound, wall.bound);
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为

@@ -7,7 +7,10 @@
 //!   [`aggregate_bound`]（空迭代 ⇒ None，无哨兵毒化）；
 //! - 自适应启发式控制器 [`HeuristicController`]（『无 incumbent ⇄ stall ⇄
 //!   近期命中率高』三条件 + 节流 + 时间预算保护 + 停滞退避：连续 miss
-//!   ≥ K 起节流间隔指数回退、任一命中复位）。
+//!   ≥ K 起节流间隔指数回退、任一命中复位）；
+//! - 确定性模式 [`Determinism`]（W3）：budget 模式下快照的「时间」字段
+//!   单位由秒改为节点数——本模块判定逻辑只做同单位的无量纲分数比较，
+//!   不感知单位（单位契约见各快照字段文档）。
 //!
 //! 纪律：本模块不含锁、线程与真实计时——时间一律经 [`SearchSnapshot`]
 //! 注入，测试可伪造；多线程编排见 [`crate::parallel_bb`]。
@@ -20,6 +23,24 @@ use crate::model::Sense;
 
 /// 相对 gap 的分母保护阈值：|incumbent| 低于该值时相对口径无意义。
 const TINY_DENOM: f64 = 1e-10;
+
+/// 求解确定性模式（W3）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Determinism {
+    /// 现状（默认）：自适应启发式预算保护 / 策略级自动降级 / 时限截断全部
+    /// 按墙钟判定——长跑终态随机器功率态漂移（mknap-5x300 30s 名义值在
+    /// optimal 4762@87,800 与 auto_degraded 4754@39,533 之间漂移，实证
+    /// 留档 docs/parallel-profiling.md §12）。
+    #[default]
+    Wall,
+    /// 纯预算制：全部墙钟判定改为等价**节点数**预算——`--time-limit-secs`
+    /// 换算为节点预算（`BUDGET_NODES_PER_SEC` 节点/秒，固定常量），注入
+    /// 快照的进度/预算/停滞锚点单位从秒改为节点数（分数预算与 plateau
+    /// 窗结构不变），节点边界截断改为节点预算检查，Simplex 内部 deadline
+    /// 不注入 ⇒ **决策路径零墙钟读点**，同参数双跑全部行为字段逐字节
+    /// 相同。仅支持 threads=1（并行无确定性契约，组合在派发层报错）。
+    Budget,
+}
 
 /// 进度快照（进度行与 gap 判定唯一数据源）。
 #[derive(Debug, Clone, Copy)]
@@ -180,6 +201,11 @@ pub enum HeuristicDecision {
 }
 
 /// 决策输入（纯数据可伪造 ⇒ 测试不依赖真实计时）。
+///
+/// **单位契约（W3）**：`elapsed_secs`/`time_budget_secs` 的单位由注入方
+/// 按确定性模式决定——wall 模式 = 墙钟秒；budget 模式 = **节点数**（分数
+/// 比较 `elapsed > frac × budget` 在两种单位下同结构成立）。判定逻辑只做
+/// 同单位的无量纲比较，不感知单位。
 #[derive(Debug, Clone, Copy)]
 pub struct SearchSnapshot {
     /// 当前已处理节点数。
@@ -188,9 +214,9 @@ pub struct SearchSnapshot {
     pub incumbent: Option<f64>,
     /// 距上次改进的节点数。
     pub nodes_since_improvement: u64,
-    /// 时间预算（秒）；None = 不限时。
+    /// 预算（wall = 秒 / budget = 节点数）；None = 不限。
     pub time_budget_secs: Option<f64>,
-    /// 已耗时（秒）。
+    /// 已消耗进度（wall = 墙钟秒 / budget = 节点数）。
     pub elapsed_secs: f64,
 }
 
@@ -481,17 +507,22 @@ impl Default for DegradePolicy {
 }
 
 /// 降级判定输入（纯数据可伪造 ⇒ 测试不依赖真实计时）。
+///
+/// **单位契约（W3）**：`elapsed_secs`/`budget_secs`/`last_improvement_secs`
+/// 的单位由注入方按确定性模式决定——wall = 墙钟秒；budget = **节点数**
+///（分数预算与 plateau 窗比较在两种单位下同结构成立）。
 #[derive(Debug, Clone, Copy)]
 pub struct DegradeSnapshot {
     /// 目标方向（决定对偶界的改进朝向）。
     pub sense: Sense,
-    /// 已耗时（秒）。
+    /// 已消耗进度（wall = 墙钟秒 / budget = 节点数）。
     pub elapsed_secs: f64,
-    /// 时间预算（秒）；None = 无预算（永不降级）。
+    /// 预算（wall = 秒 / budget = 节点数）；None = 无预算（永不降级）。
     pub budget_secs: Option<f64>,
     /// 是否已有 incumbent（无解时绝不降级——没有可返回的东西）。
     pub has_incumbent: bool,
-    /// 最近一次 incumbent 严格改进的时刻（秒）。
+    /// 最近一次 incumbent 严格改进时的进度（wall = 时刻秒 / budget =
+    /// 节点数）。
     pub last_improvement_secs: f64,
     /// 当前前沿聚合对偶界（仅有限值语义；None ⇒ 本次不判）。
     pub bound: Option<f64>,

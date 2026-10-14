@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -35,12 +35,12 @@ use std::sync::Arc;
 use milp::branch_bound::{BbOptions, BranchRule, NodeRule, SearchControl, SearchHooks};
 use milp::instance::load_instance;
 use milp::model::{Problem, SolveStatus, Tolerances};
-use milp::search_ctrl::{format_progress_line, ProgressInfo};
+use milp::search_ctrl::{format_progress_line, Determinism, ProgressInfo};
 use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveReport};
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -108,6 +108,12 @@ struct Config {
     /// 选栈默认）；默认 Auto（仅 threads ≥ 2 生效）：类检测命中多维背包类
     /// ⇒ global，其余 ⇒ local；显式 local/global 覆盖优先。
     work_stack: WorkStackCli,
+    /// 确定性模式（`--determinism wall|budget`，W3）；默认 Wall（现状：
+    /// 时限/自适应/降级全部按墙钟判定）。budget = 纯预算制：全部墙钟判定
+    /// 改为等价节点数预算（`--time-limit-secs` 换算 6,000 节点/秒），决策
+    /// 路径零墙钟读点 ⇒ 同参数双跑全部行为字段逐字节相同；仅支持
+    /// threads=1（与 `--threads ≥ 2` 组合报错）。
+    determinism: Determinism,
 }
 
 fn main() -> ExitCode {
@@ -175,6 +181,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut scaling: Option<bool> = None;
     let mut mitm: Option<bool> = None;
     let mut work_stack: Option<WorkStackCli> = None;
+    let mut determinism: Option<Determinism> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -388,6 +395,31 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             work_stack = Some(v);
+        } else if arg == "--determinism" || arg.starts_with("--determinism=") {
+            if determinism.is_some() {
+                return Err(format!("`--determinism` 重复出现（{USAGE}）"));
+            }
+            let value: String = if let Some(v) = arg.strip_prefix("--determinism=") {
+                v.to_string()
+            } else {
+                let Some(v) = args.get(index + 1) else {
+                    return Err(format!(
+                        "`--determinism` 缺少参数 wall|budget（{USAGE}）"
+                    ));
+                };
+                index += 1; // 额外消费模式 token
+                v.clone()
+            };
+            let v = match value.as_str() {
+                "wall" => Determinism::Wall,
+                "budget" => Determinism::Budget,
+                other => {
+                    return Err(format!(
+                        "未知 --determinism 值 `{other}`（期望 wall|budget，{USAGE}）"
+                    ))
+                }
+            };
+            determinism = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -400,12 +432,24 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let Some(instance_path) = instance_path else {
         return Err(format!("缺少算例路径（{USAGE}）"));
     };
+    // W3 交叉校验：budget 确定性模式仅支持 threads=1——在解析层就以用法
+    // 错误拒绝（库层 parallel_entry 对直接 API 调用者保留同款防御性检查，
+    // 但 CLI 用户应看到用法信息而非「内部错误」前缀）。
+    let determinism = determinism.unwrap_or(Determinism::Wall);
+    let threads = threads.unwrap_or(1);
+    if determinism == Determinism::Budget && threads >= 2 {
+        return Err(format!(
+            "`--determinism budget` 仅支持 `--threads 1`（t1 确定性契约：\
+             决策路径零墙钟读点、双跑逐字节相同；并行侧无确定性契约）（{USAGE}）"
+        ));
+    }
     Ok(Config {
         instance_path,
         time_limit_secs,
         verbose,
-        // 默认 1 = 纯顺序路径（输出与升级前逐字节一致）。
-        threads: threads.unwrap_or(1),
+        // 默认 1 = 纯顺序路径（输出与升级前逐字节一致）；上方交叉校验用
+        // 解析后的值。
+        threads,
         log_secs,
         mipgap_percent,
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
@@ -417,6 +461,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto（W1 按类选栈：多线程下类检测命中 ⇒ global，否则 local；
         // 显式 local/global 覆盖优先）。threads=1 顺序路径不受该默认影响。
         work_stack: work_stack.unwrap_or(WorkStackCli::Auto),
+        // 默认 wall（W3：现状零变化）；budget 仅 threads=1（解析层交叉校验
+        // 已拒绝与 ≥2 的组合）。
+        determinism,
     })
 }
 
@@ -469,6 +516,7 @@ fn search_control_from(config: &Config) -> SearchControl {
         mipgap_percent: config.mipgap_percent,
         adaptive_heuristics: config.heuristic_mode == HeuristicModeCli::Auto,
         log_period_secs: config.log_secs,
+        determinism: config.determinism,
     }
 }
 
@@ -666,6 +714,7 @@ mod tests {
             scaling: true,
             mitm: true,
             work_stack: WorkStackCli::Auto,
+            determinism: Determinism::Wall,
         }
     }
 
@@ -1025,6 +1074,56 @@ mod tests {
                 "参数 {bad:?} 应报错"
             );
         }
+    }
+
+    // —— determinism 解析与映射（W3）——
+
+    /// `--determinism`：默认 wall；wall/budget 两 token 合法（含 `=` 连写）；
+    /// 未知 token / 缺参 / 重复报错；→ SearchControl.determinism 映射正确。
+    #[test]
+    fn determinism_parsing_and_mapping() {
+        // 默认 wall。
+        assert_eq!(
+            parse_args(&args(&["a.milp"])).unwrap().determinism,
+            Determinism::Wall
+        );
+        for (token, mode) in [("wall", Determinism::Wall), ("budget", Determinism::Budget)] {
+            assert_eq!(
+                parse_args(&args(&["a.milp", "--determinism", token]))
+                    .unwrap()
+                    .determinism,
+                mode,
+                "token {token}"
+            );
+            assert_eq!(
+                parse_args(&args(&[&format!("--determinism={token}"), "a.milp"]))
+                    .unwrap()
+                    .determinism,
+                mode,
+                "连写 token {token}"
+            );
+        }
+        // → SearchControl 直通。
+        let config = Config {
+            determinism: Determinism::Budget,
+            ..config_with(None)
+        };
+        assert_eq!(search_control_from(&config).determinism, Determinism::Budget);
+        // 非法：未知 token（大小写敏感）/ 缺参 / 重复。
+        for bad in [
+            &["a.milp", "--determinism", "clock"][..],
+            &["a.milp", "--determinism=WALL"][..],
+            &["a.milp", "--determinism"][..],
+            &["a.milp", "--determinism", "wall", "--determinism", "budget"][..],
+        ] {
+            assert!(parse_args(&args(bad)).is_err(), "参数 {bad:?} 应报错");
+        }
+        // 交叉校验：budget + threads ≥ 2 在解析层即拒（用法错误而非求解期
+        // 「内部错误」前缀）；budget + threads 1 / 缺省合法。
+        assert!(parse_args(&args(&["a.milp", "--determinism", "budget", "--threads", "4"])).is_err());
+        assert!(parse_args(&args(&["a.milp", "--determinism=budget", "--threads", "2"])).is_err());
+        assert!(parse_args(&args(&["a.milp", "--determinism", "budget", "--threads", "1"])).is_ok());
+        assert!(parse_args(&args(&["a.milp", "--determinism", "budget"])).is_ok());
     }
 
     // —— time_limit_secs → time_limit_ms 映射 ——

@@ -636,3 +636,84 @@ milp/README.md 已有 `--work-stack` 条目（参数表）且默认 local 未变
 4. t4 并行侧 TimeLimit 的终态原因码经 limit_hit/STOP_TIME 复合映射为
    LimitReached（BbResult 不区分 Node/Time 触发原因——CLI 语义同为
    limit_reached，与既有口径一致）。
+
+
+## 12. W3 实现轮（2026-10-14）：t1 确定性模式（--determinism budget，纯预算制）
+
+> 现状（本轮前）：自适应启发式与自动降级判定读墙钟（search_ctrl 的
+> elapsed>frac×budget、plateau 窗）+ 节点边界 time_exceeded + W2 内部
+> deadline——45s 级长跑终态漂移（工作区既录：mknap-5x300 30s t1 =
+> auto_degraded 4754@39,533 vs R8 窗 optimal 4762@87,800）。
+> **验收达成：budget 模式 mknap-5x300 30s 双跑全部行为字段逐字节相同
+>（optimal 4762@87,800/lpi 1,747,982/cuts 70）；wall 默认（含 W2 机制）
+> 行为不变（10 算例无时限逐字节 + lp-sparse 30s=30.48s 诚实截断）。**
+
+### 12.1 实现与语义定义（冷审调整 2/3 的契约点）
+
+1. **`--time-limit-secs` 在 budget 模式的语义 = 节点预算**（冷审要求先
+   定义）：`⌈N × BUDGET_NODES_PER_SEC⌉`，`BUDGET_NODES_PER_SEC = 6,000`
+   **固定常量（机器无关）**。标定（ask 风险栏两参照）：mknap-5x300 健康态
+   t1 吞吐 87,800 节点 / 12.8-13.7s ≈ 6.4-6.9k/s（本窗 6.7-6.9k、R8 窗
+   6.4-7.6k）取 6,000 略保守 ⇒ 30s 预算 = 180k 节点 > 完备需求 87,800、
+   降级资格线 0.5×180k = 90k 亦高于之（**不过度降级**）；marketsplit-4x30
+   根闭合 1 节点，任何预算下零影响（实测 wall/budget 全等 optimal 15.0@1）。
+   无时限（N 缺省）⇒ 无预算 ⇒ 降级/预算保护关闭，行为 ≡ wall 无时限。
+2. **单位重诠释而非逻辑重写**：`search_ctrl` 的判定逻辑（分数预算/plateau
+   窗）只做同单位无量纲比较——budget 模式下注入方（sequential_bb 经
+   `progress_units`）把快照的进度/预算/停滞锚点单位从墙钟秒改为节点数
+   （`SearchSnapshot`/`DegradeSnapshot` 字段文档明确单位契约；私有
+   `AdaptiveState.last_improvement_secs` 更名 `last_improve_progress`）。
+   search_ctrl 判定代码零改动（29/29 测试原样通过）。
+3. **决策路径零墙钟读点**（冷审 grep 审计契约）：budget 模式下
+   - 节点边界：`budget_node_cap` 命中 ⇒ 截断（wall 分支 time_exceeded
+     不执行）；
+   - 降级/预算保护：`progress_units` budget 态返回节点数（不读钟）；
+   - W2 内部 deadline：不注入（`bb_time_deadline` 在 budget 态跳过）。
+   审计（grep branch_bound.rs 全部 start.elapsed/Instant 读点逐条分类）：
+   决策通道读点在 budget 态 **0 个**；展示/报告通道保留（进度行时刻
+   branch_bound.rs:832/842/1754、stats.time_ms:1715、锚点 :421——不参与
+   任何判定，行为字段不含）。solver.rs 零钟点（grep = 0）。
+4. **threads ≥ 2 + budget 显式报错**：并行无确定性契约（README 口径），
+   节点预算语义未在并行引擎定义——报错优于静默无契约组合。双层：CLI
+   解析层交叉校验（用法错误 + USAGE，实测 `--determinism budget
+   --threads 4` ⇒ exit 1）+ 库层 parallel_entry 前置检查（直接 API 调用者
+   的防御，Err(Internal)）。
+5. CLI/探针/USAGE/README 同步：`--determinism wall|budget`（默认 wall）
+   进 main.rs 与 profile_stats.rs（测量入口）；README 参数表 + 专节。
+
+### 12.2 验收数字（本轮实跑）
+
+- **主验收——mknap-5x300 budget 30s 双跑**：rep0/rep1 全部行为字段
+  （status/objective/nodes/lp_iterations/cuts/presolve_reductions/bound/
+  gap_percent/root_bound）**逐字节相同**：optimal 4762.0 @ 87,800 节点 /
+  1,747,982 lpi / 70 割（墙钟 16.71/17.23s 各异——计时字段不在行为契约）。
+  budget 无时限亦全同（18.02s）——**R8 窗参照行为确定性恢复**。
+- **wall 漂移对照（同窗实捕获）**：wall 30s 双跑 rep0 = optimal 4762@
+  87,800（21.07s）、rep1 = **auto_degraded 4754@48,852（15.00s）**——同
+  参数同窗两终态；wall 15s ×3 = auto_degraded 4754 但节点 28,612/28,791/
+  30,508 漂移（±6.6%）。跨窗证据另有工作区既录（39,533@15.4s vs R8 窗
+  87,800）。
+- **budget 15s ×3（紧预算确定性）**：auto_degraded 4754.0 @ **45,001
+  节点 ×3 完全一致**（降级触发点确定性：资格线 0.5×90k=45k + plateau
+  22.5k 节点窗双停滞）。与 wall 15s 的触发点（~29k 节点）同量级——
+  换算标定的等价性合理（墙钟 15s×~3k 节点/s 节流态 ≈ 45k 亦同量级）。
+- **目标值恒为已知最优**：budget 模式全部求解 4762（optimal 态）或
+  4754（诚实 auto_degraded 态，< 4762 不冒充）；marketsplit-4x30
+  wall/budget 全等 optimal 15.0@1。
+- **wall 默认不变**：pre-W3 二进制 vs W3 二进制无时限 t1 行为字段
+  **10 算例全等**（knapsack-500/5000、mixed、mknap-3x100/5x300、
+  setcover-100x150、marketsplit-4x40（854,952）/5x50（2M）、lp-wide/
+  lp-sparse）；30s 时限路径 W2 机制保持（lp-sparse 30.48s limit_reached）。
+- **测试**：lib 252/252（新增 4：budget 双跑逐字节（mknap-3x100+100ms
+  预算+auto）、换算常量与饱和、budget+threads2 报错、budget 无时限 ≡
+  wall 无时限）、bin milp 22/22（新增 determinism 解析/映射）、
+  acceptance 13/13、warm_cold_parity 1/1。
+
+### 12.3 已知边界
+
+1. 换算率 6,000 是**全局常量**：单算例吞吐差异（knapsack-5000 ~15 节点/s
+   vs mknap ~6.8k/s）使「N 秒名义预算」的等价节点数跨类不齐——budget
+   模式的合同是**确定性**而非墙钟等价；需要墙钟语义时用默认 wall。
+2. budget 模式下 `--log-secs` 进度行的时刻字段仍读钟（展示契约），
+   不影响行为字段；`stats.time_ms`/`wall_secs` 同理。
+3. t1 budget + `--mipgap`/`--node-limit` 组合不受影响（本就确定性）。

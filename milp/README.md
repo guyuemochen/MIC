@@ -39,7 +39,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -58,6 +58,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
+| `--determinism wall\|budget` | 确定性模式（W3）：`wall`（默认）= 现状（时限/自适应/降级按墙钟判定，长跑终态随机器状态漂移）；`budget` = 纯预算制——`--time-limit-secs` 换算为节点预算（6,000 节点/秒），全部墙钟判定改为等价节点数预算，决策路径零墙钟读点 ⇒ **同参数双跑全部行为字段逐字节相同**（仅 `--threads 1`，与 ≥2 组合报错；慢机上墙钟可超名义值——确定性优先） | `wall` | 非 `wall\|budget` token / 重复出现报错 |
 | `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
 
 ### 输出格式
@@ -196,6 +197,35 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 - **与 `--mipgap` 的关系**：`--mipgap` 是手动的「gap 到多少就停」；
   自动降级是求解器自己判断「这预算内证不完了，别耗着」。两者可并用，
   谁先满足谁终止。
+
+### 确定性模式（--determinism budget，W3）
+
+墙钟判定的代价是**终态漂移**：`wall` 模式（默认）下时限截断、自适应
+预算保护与自动降级全部按 `start.elapsed()` 判定，45s 级长跑的节点数/
+终态随机器功率态漂移——mknap-5x300 `--time-limit-secs 30` 同参数跨
+运行在 `optimal 4762@87,800` 与 `auto_degraded 4754@39,533` 之间漂移
+（同窗实测甚至出现 optimal@21.1s 与 degraded@15.0s 并存，见
+`docs/parallel-profiling.md` §12）。
+
+`--determinism budget`（仅 threads=1）把全部墙钟判定改为等价**节点数**
+预算：
+
+- `--time-limit-secs N` 换算为节点预算 `⌈N × 6,000⌉`（固定常量、机器
+  无关；按 mknap-5x300 健康态 t1 吞吐 ~6.4-6.9k 节点/s 标定取 6,000——
+  30s 名义预算 = 180k 节点 > 该例完备需求 87,800 且降级资格线 90k 亦
+  高于之 ⇒ budget-30s 恒完备最优，消除漂移）；
+- 自适应预算保护（elapsed > 0.8×预算）与自动降级（start_frac/plateau
+  分数与停滞窗）的注入单位从秒改为节点数（`search_ctrl` 判定逻辑只做
+  同单位无量纲比较，结构不变）；
+- 节点边界截断改查节点预算；Simplex 内部 deadline 不注入（W2 条件读钟
+  在 budget 模式零执行）⇒ **决策路径零墙钟读点**（进度行时刻与
+  `stats.time_ms` 等展示/报告字段仍读钟，不参与任何判定）；
+- 效果：**同参数双跑全部行为字段（status/objective/values/nodes/
+  lp_iterations/cuts/bound/…）逐字节相同**；无时限时行为 ≡ wall 无时限
+  （mknap-3x100 双模式全等实测）；
+- 语义边界：确定性优先于墙钟诚实——慢机上墙钟可超名义值（换算率不随
+  机器浮动正是可复现性的来源）；与 `--threads ≥ 2` 组合显式报错（并行
+  无确定性契约）。
 
 ## 并行架构与确定性（--threads）
 
