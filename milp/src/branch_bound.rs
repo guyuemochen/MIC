@@ -422,6 +422,10 @@ fn sequential_bb(
     // finish 以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
     let mut base_lp_iterations: u64 = 0;
     let mut simplex = Simplex::new(problem, tol)?;
+    // W2 内部墙钟时限：0（不限）= None ⇒ 零墙钟读点（条件读钟）；重建
+    // Simplex（预割轮 / R8 回滚）同款重注入。
+    let time_deadline = bb_time_deadline(&start, opts);
+    simplex.set_time_deadline(time_deadline);
     let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
     let mut incumbent: Option<(f64, Vec<f64>)> = None;
@@ -447,7 +451,10 @@ fn sequential_bb(
             LpStatus::Optimal => SolveStatus::Optimal,
             LpStatus::Infeasible => SolveStatus::Infeasible,
             LpStatus::Unbounded => SolveStatus::Unbounded,
-            LpStatus::IterationLimit => SolveStatus::LimitReached,
+            // W2：纯 LP 单节点正是节点边界检查的盲区——根 LP 内部墙钟超限
+            // ⇒ 诚实 LimitReached（不冒充 Optimal；纯 LP 无 incumbent 概念，
+            // 不携带 best）。
+            LpStatus::IterationLimit | LpStatus::TimeLimit => SolveStatus::LimitReached,
         };
         let lp_obj = sol.objective;
         let incumbent = if sol.status == LpStatus::Optimal {
@@ -488,16 +495,16 @@ fn sequential_bb(
     // 根 solve 非 Optimal ⇒ 不进割循环与启发式（gomory_cuts 的前提是 Optimal
     // 表格），直接按 (a)/(b)/(c) 终局。
     if let Some(status) = root_terminal(classify_node(sol.status, true))? {
-        // R8（③）终态 incumbent 提取：根 solve 以 IterationLimit 收场时，
-        // Phase-2 中断点的基是**原始可行**的（比值测试每步保持 rhs 在界内、
-        // Phase-1 已完成），x 非最优但可行——round_and_check（原始问题逐约
-        // 杆 + 整数性复核，不依赖表格语义）通过则作为 incumbent 随
+        // R8（③）终态 incumbent 提取：根 solve 以 IterationLimit 或 TimeLimit
+        //（W2：中断点同为原始可行——比值测试每步保持 rhs 在界内、Phase-1
+        // 已完成，x 非最优但可行）收场时，round_and_check（原始问题逐约束
+        // + 整数性复核，不依赖表格语义）通过则作为 incumbent 随
         // LimitReached 携带返回：终态诚实不变（仍 limit_reached），但不再
         // 以零 incumbent 传播（setcover-300x600/400x800 类根 LP 上限锁的
         // 失败模式）。Infeasible/Unbounded 不提取（不可行信号不得吞）；提取
         // 失败（分数点取整违反约束）如实保持无 incumbent。
         let extracted = if status == SolveStatus::LimitReached
-            && sol.status == LpStatus::IterationLimit
+            && matches!(sol.status, LpStatus::IterationLimit | LpStatus::TimeLimit)
             && opts.heuristics
         {
             heuristics::round_and_check(problem, &bounds, &sol.x, &tol)
@@ -572,6 +579,7 @@ fn sequential_bb(
         // （与下方 PruneLimit 重建路径同款），不丢数。
         base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
         simplex = Simplex::new(problem, tol)?;
+        simplex.set_time_deadline(time_deadline);
         sol = simplex.solve(&bounds);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             // 首行进度：根阶段终局汇合点（先发射再返回）。
@@ -614,6 +622,7 @@ fn sequential_bb(
                 base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
                 stats.cuts = 0; // 割已随 Simplex 一起丢弃，如实清零
                 simplex = Simplex::new(problem, tol)?;
+                simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
                     // 首行进度：根阶段终局汇合点（先发射再返回）。
@@ -901,6 +910,13 @@ fn sequential_bb(
                 limit_hit = true;
                 continue;
             }
+            // W2：节点内墙钟超限 ⇒ 与 PruneLimit 同处置（剪枝 + limit_hit
+            // 粘滞），下一轮顶部的节点/时间上限检查立即停树 ⇒ 诚实
+            // LimitReached。
+            NodeAction::TruncateTime => {
+                limit_hit = true;
+                continue;
+            }
             NodeAction::FailUnbounded => return Err(nonroot_unbounded_error()),
             NodeAction::TreeUnbounded => {
                 return Err(MilpError::Internal(
@@ -975,6 +991,12 @@ enum NodeAction {
     Prune,
     /// (c) 迭代上限 ⇒ 剪枝并置 limit_hit 标记。
     PruneLimit,
+    /// (c') 内部墙钟超限（W2，[`LpStatus::TimeLimit`]）⇒ 诚实截断：树节点
+    /// 侧与 PruneLimit 同处置（剪枝 + limit_hit 粘滞，随后节点边界检查立即
+    /// 停树）；**根侧刻意与 PruneLimit 分离**——割循环据此走「直接
+    /// LimitReached 终态」而非 R8 回滚（回滚重建+重放是又一次整段根 LP，
+    /// 会把超限点再拖过 deadline，见 cuts.rs 回滚语义注）。
+    TruncateTime,
     /// (b) 根节点无界 ⇒ 整树终止返回 [`SolveStatus::Unbounded`]。
     TreeUnbounded,
     /// (b) 非根节点无界（父有界时理论不发生的数值异常）⇒ 整树终止
@@ -984,11 +1006,13 @@ enum NodeAction {
     Process,
 }
 
-/// 节点 resolve 状态分类：(a) 不可行、(b) 无界（根/非根分流）、(c) 迭代上限。
+/// 节点 resolve 状态分类：(a) 不可行、(b) 无界（根/非根分流）、(c) 迭代
+/// 上限 / (c') 内部墙钟超限（W2，独立动作，防与 R8 回滚混淆）。
 fn classify_node(status: LpStatus, is_root: bool) -> NodeAction {
     match status {
         LpStatus::Infeasible => NodeAction::Prune,
         LpStatus::IterationLimit => NodeAction::PruneLimit,
+        LpStatus::TimeLimit => NodeAction::TruncateTime,
         LpStatus::Unbounded => {
             if is_root {
                 NodeAction::TreeUnbounded
@@ -1012,6 +1036,9 @@ fn root_terminal(action: NodeAction) -> Result<Option<SolveStatus>> {
         NodeAction::Process => Ok(None),
         NodeAction::Prune => Ok(Some(SolveStatus::Infeasible)),
         NodeAction::PruneLimit => Ok(Some(SolveStatus::LimitReached)),
+        // W2：墙钟超限 ⇒ 诚实 LimitReached 终态（无 R8 回滚，见
+        // NodeAction::TruncateTime 文档）。
+        NodeAction::TruncateTime => Ok(Some(SolveStatus::LimitReached)),
         NodeAction::TreeUnbounded => Ok(Some(SolveStatus::Unbounded)),
         NodeAction::FailUnbounded => Err(MilpError::Internal(
             "根节点分类不可能返回非根无界动作".to_string(),
@@ -1589,6 +1616,16 @@ fn time_exceeded(start: &Instant, limit_ms: u64) -> bool {
     start.elapsed().as_millis() >= limit_ms as u128
 }
 
+/// W2 内部墙钟时限合成（pub(crate) 供并行侧共用）：`time_limit_ms > 0` ⇒
+/// 求解起点 + 预算的绝对 deadline（注入 Simplex，迭代循环每
+/// [`crate::simplex`] TIME_CHECK_INTERVAL 次主元条件读钟，超限
+/// `LpStatus::TimeLimit` 诚实截断）；`0 = 不限` ⇒ None（**零墙钟读点**，
+/// 无时限路径 t1 确定性零扰动——条件读钟红线）。
+pub(crate) fn bb_time_deadline(start: &Instant, opts: &BbOptions) -> Option<Instant> {
+    (opts.time_limit_ms > 0)
+        .then(|| *start + std::time::Duration::from_millis(opts.time_limit_ms))
+}
+
 /// 组装结果并补全统计（耗时与累计迭代 = `base_iters` + 当前 Simplex 迭代——
 /// 割丢弃回退重建过 Simplex 时 base 计入重建前的根 LP + 割循环迭代）；
 /// bound/gap_terminated 口径由调用方按终态类别给出（见 [`BbResult::bound`]
@@ -1961,6 +1998,82 @@ mod tests {
         let (r5, w5) = resolve_work_stack_mode(&p, &r);
         assert_eq!(r5.global_work_stack, r.global_work_stack);
         assert!(!r5.work_stack_auto && !w5);
+    }
+
+    /// （W2）内部墙钟时限分类：TimeLimit ⇒ 独立动作 TruncateTime（根/非根
+    /// 一致），根侧诚实映射 LimitReached（不进 R8 回滚——PruneLimit 专属）；
+    /// 迭代上限仍为 PruneLimit（回归钉：两状态码不得混淆）。
+    #[test]
+    fn classify_node_time_limit_is_distinct_from_iteration_limit() {
+        assert_eq!(classify_node(LpStatus::TimeLimit, true), NodeAction::TruncateTime);
+        assert_eq!(classify_node(LpStatus::TimeLimit, false), NodeAction::TruncateTime);
+        assert_eq!(classify_node(LpStatus::IterationLimit, true), NodeAction::PruneLimit);
+        assert_eq!(classify_node(LpStatus::IterationLimit, false), NodeAction::PruneLimit);
+        assert_eq!(
+            root_terminal(NodeAction::TruncateTime).unwrap(),
+            Some(SolveStatus::LimitReached)
+        );
+        assert_eq!(
+            root_terminal(NodeAction::PruneLimit).unwrap(),
+            Some(SolveStatus::LimitReached)
+        );
+    }
+
+    /// （W2）时限开启 ⇒ 诚实截断终态：setcover-100x150（根 LP 数百 ms）以
+    /// 1ms 预算求解必在时限内截断——status = LimitReached、不得冒充 Optimal、
+    /// 求解快速返回（不把整段根 LP 跑满——节点边界检查盲区已消除）。
+    #[test]
+    fn tiny_time_limit_truncates_root_lp_honestly() {
+        let path = format!(
+            "{}/../bench/instances/setcover-100x150.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let opts = BbOptions {
+            time_limit_ms: 1,
+            ..BbOptions::default()
+        };
+        let t0 = std::time::Instant::now();
+        let r = branch_and_bound(&problem, &opts, tol()).unwrap();
+        let elapsed = t0.elapsed();
+        assert_eq!(
+            r.status,
+            SolveStatus::LimitReached,
+            "1ms 预算下根 LP（数百 ms）必须诚实截断"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "截断必须及时（实测 {elapsed:?}）——盲区消除"
+        );
+    }
+
+    /// （W2）纯 LP 捷径的内部时限：lp-wide-200x300（全连续，根 LP ~15ms）
+    /// 以 1ms 预算 ⇒ LimitReached 且不携带 objective（纯 LP 无 incumbent
+    /// 概念）；无预算 ⇒ Optimal 不受影响（对照）。
+    #[test]
+    fn pure_lp_time_limit_truncates_without_fake_objective() {
+        let path = format!(
+            "{}/../bench/instances/lp-wide-200x300.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        // 对照：无预算 ⇒ Optimal（既有行为）。
+        let full = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        assert_eq!(full.status, SolveStatus::Optimal);
+        assert!(full.best_objective.is_some());
+        // 1ms 预算 ⇒ 诚实 LimitReached、无 objective。
+        let opts = BbOptions {
+            time_limit_ms: 1,
+            ..BbOptions::default()
+        };
+        let r = branch_and_bound(&problem, &opts, tol()).unwrap();
+        assert_eq!(r.status, SolveStatus::LimitReached);
+        assert!(
+            r.best_objective.is_none(),
+            "纯 LP 截断不携带 best（无 incumbent 概念，不冒充）"
+        );
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为

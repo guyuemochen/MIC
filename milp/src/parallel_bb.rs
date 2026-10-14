@@ -780,6 +780,10 @@ pub fn parallel_branch_and_bound(
     // 终局统计以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
     let mut base_iters: u64 = 0;
     let mut simplex = Simplex::new(problem, tol)?;
+    // W2 内部墙钟时限（与顺序侧同源合成；0 = None ⇒ 零墙钟读点）。重建
+    // Simplex（预割轮 / IterationLimit 回滚）同款重注入。
+    let time_deadline = crate::branch_bound::bb_time_deadline(&start, opts);
+    simplex.set_time_deadline(time_deadline);
     let bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
     let mut incumbent: Option<(f64, Vec<f64>)> = None;
@@ -802,7 +806,9 @@ pub fn parallel_branch_and_bound(
             }
             LpStatus::Infeasible => SolveStatus::Infeasible,
             LpStatus::Unbounded => SolveStatus::Unbounded,
-            LpStatus::IterationLimit => SolveStatus::LimitReached,
+            // W2：纯 LP 单节点正是节点边界检查的盲区——根 LP 内部墙钟超限
+            // ⇒ 诚实 LimitReached（不冒充 Optimal；纯 LP 无 incumbent 概念）。
+            LpStatus::IterationLimit | LpStatus::TimeLimit => SolveStatus::LimitReached,
         });
     } else {
         // 根 solve 非 Optimal ⇒ 不进割循环与启发式，直接终局。
@@ -854,6 +860,7 @@ pub fn parallel_branch_and_bound(
             // base_iters，不丢数。
             base_iters = base_iters.saturating_add(simplex.iterations());
             simplex = Simplex::new(problem, tol)?;
+            simplex.set_time_deadline(time_deadline);
             sol = simplex.solve(&bounds);
             if let Some(status) = root_terminal_status(sol.status) {
                 terminal = Some(status);
@@ -869,6 +876,9 @@ pub fn parallel_branch_and_bound(
                 CutOptions::default(),
                 &tol,
             )?;
+            // R8 回滚只对迭代上限触发（W2：TimeLimit 走 else 分支直接诚实
+            // 终态——回滚重建+重放是又一次整段根 LP，会把超限点拖过
+            // deadline）。
             if st == LpStatus::IterationLimit {
                 // 割后 resolve 触发迭代上限：割循环停在非 Optimal 态，不可作
                 // 为树搜索根态，也不作整树终态——丢弃全部根割（recorded_cuts
@@ -881,6 +891,7 @@ pub fn parallel_branch_and_bound(
                 base_iters = base_iters.saturating_add(simplex.iterations());
                 stats.cuts = 0;
                 simplex = Simplex::new(problem, tol)?;
+                simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
                 if let Some(status) = root_terminal_status(sol.status) {
                     terminal = Some(status);
@@ -1292,6 +1303,9 @@ fn worker_run(
             return 0;
         }
     };
+    // W2：worker 的节点 resolve 同受内部墙钟时限（超限 ⇒ LpStatus::TimeLimit
+    // ⇒ 剪枝 + limit_hit，随后节点边界的 wall_exceeded 检查置 STOP_TIME）。
+    simplex.set_time_deadline(crate::branch_bound::bb_time_deadline(&start, &opts));
     // 按序重放根阶段记录的割清单（与根线程 add_row 顺序一致）。
     for (terms, rhs) in cuts {
         if let Err(error) = simplex.add_row(terms, RelOp::Le, *rhs) {
@@ -1364,7 +1378,10 @@ fn worker_run(
             //     顺序 PruneLimit ⇒ {limit_hit = true; continue}）：树继续
             //     探索其余节点，终态仍诚实映射 LimitReached——两路径终态与
             //     探索范围一致，不再以粘滞 stop 截断整树。
-            LpStatus::IterationLimit => {
+            // (c') TimeLimit（W2）⇒ 同处置（剪枝 + limit_hit）；超限后
+            //     worker 下一节点边界的 wall_exceeded 检查立即置 STOP_TIME，
+            //     终态经 TimeLimit 诚实映射 LimitReached。
+            LpStatus::IterationLimit | LpStatus::TimeLimit => {
                 shared.limit_hit.store(true, Ordering::SeqCst);
                 shared.complete_node(w, Vec::new(), sense, mipgap, false);
                 continue;
@@ -1565,13 +1582,16 @@ fn progress_loop(
 // 根阶段辅助：终局分类与记录式割循环
 // ===========================================================================
 
-/// 根节点 LP 状态 → 整树终态（`None` = Optimal，继续树搜索）。
+/// 根节点 LP 状态 → 整树终态（`None` = Optimal，继续树搜索）。W2：根 LP
+/// 内部墙钟超限（TimeLimit）⇒ 诚实 LimitReached——独立于 IterationLimit，
+/// 不触发根割的 R8 回滚（回滚重放是又一次整段根 LP，会把超限点拖过
+/// deadline）。
 fn root_terminal_status(status: LpStatus) -> Option<SolveStatus> {
     match status {
         LpStatus::Optimal => None,
         LpStatus::Infeasible => Some(SolveStatus::Infeasible),
         LpStatus::Unbounded => Some(SolveStatus::Unbounded),
-        LpStatus::IterationLimit => Some(SolveStatus::LimitReached),
+        LpStatus::IterationLimit | LpStatus::TimeLimit => Some(SolveStatus::LimitReached),
     }
 }
 
@@ -1598,7 +1618,9 @@ enum DiveBackAction {
 fn dive_back_action(status: LpStatus) -> DiveBackAction {
     match status {
         LpStatus::Optimal => DiveBackAction::Refresh,
-        LpStatus::Infeasible | LpStatus::IterationLimit => DiveBackAction::Discard,
+        LpStatus::Infeasible | LpStatus::IterationLimit | LpStatus::TimeLimit => {
+            DiveBackAction::Discard
+        }
         LpStatus::Unbounded => DiveBackAction::Fail,
     }
 }
@@ -1910,7 +1932,9 @@ mod tests {
     /// （P0-2 回归）dive 回取状态分流：节点 LP 可行性已由 dive 前 resolve
     /// 证实——回取 Infeasible 是扰基数值伪影，必须 Discard（弃用结果继续
     /// 分支，**不得 closed 丢子树**；曾在此丢失含最优解的子树窗口）；
-    /// IterationLimit 同 Discard；Optimal ⇒ Refresh；Unbounded ⇒ Fail。
+    /// IterationLimit 同 Discard；TimeLimit（W2）同 Discard（回取不参与
+    /// 节点判定，超限由节点边界检查停树）；Optimal ⇒ Refresh；
+    /// Unbounded ⇒ Fail。
     #[test]
     fn dive_back_action_discards_infeasible_artifact() {
         assert_eq!(
@@ -1919,6 +1943,7 @@ mod tests {
             "回取 Infeasible = 数值伪影 ⇒ 弃用结果，不 closed、不丢子树"
         );
         assert_eq!(dive_back_action(LpStatus::IterationLimit), DiveBackAction::Discard);
+        assert_eq!(dive_back_action(LpStatus::TimeLimit), DiveBackAction::Discard);
         assert_eq!(dive_back_action(LpStatus::Optimal), DiveBackAction::Refresh);
         assert_eq!(dive_back_action(LpStatus::Unbounded), DiveBackAction::Fail);
     }

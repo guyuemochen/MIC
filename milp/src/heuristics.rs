@@ -184,8 +184,13 @@ pub fn dive(
                     return round_and_check(problem, bounds, &cur_x, tol);
                 }
             }
-            LpStatus::Unbounded | LpStatus::IterationLimit | LpStatus::Infeasible => {
-                // 修复失败：退化为对失败前点的取整复核。
+            LpStatus::Unbounded
+            | LpStatus::IterationLimit
+            | LpStatus::TimeLimit
+            | LpStatus::Infeasible => {
+                // 修复失败（含 W2 墙钟超限的 TimeLimit：时限本就非确定，
+                // 中途弃潜不损正确性——dive 只是启发式供源）：退化为对失败
+                // 前点的取整复核。
                 return round_and_check(problem, bounds, &cur_x, tol);
             }
         }

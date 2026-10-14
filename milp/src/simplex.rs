@@ -53,7 +53,9 @@
 //!   每 200 次主元用原始数据重算 B⁻¹b；NaN/Inf 立即按数值失败处理。迭代
 //!   上限 max(10_000, 20×(m+n))（割循环内经 set_iter_limit_hint 收紧为
 //!   max(3_000, 12×(m+n))，R8）⇒ IterationLimit（诚实上报，不冒充
-//!   Optimal）。Bland 释放（R8）：停滞/总迭代两种触发的 Bland 均在非退化
+//!   Optimal）；内部墙钟时限（W2，[`Simplex::set_time_deadline`] 注入，
+//!   每 256 次主元条件读钟）超限 ⇒ [`LpStatus::TimeLimit`]（独立状态码，
+//!   不触发 R8 回滚；未注入 ⇒ 零墙钟读点）。Bland 释放（R8）：停滞/总迭代两种触发的 Bland 均在非退化
 //!   步（目标真改善 ⇒ 已脱离触发退化区）+ 驻留满 8 步后回 Dantzig 定价
 //!   （每次调用最多 64 次重入；总迭代触发的置位逐迭代重申，故释放只给出
 //!   单步 Dantzig 窗口；预算耗尽后 Bland 永久驻留——无循环定理的终止路径
@@ -112,7 +114,7 @@ const REFRESH_INTERVAL: u64 = 200;
 /// Bland 触发的总迭代因子：本次调用总迭代 > BLAND_TOTAL_FACTOR×(m+n) 触发。
 const BLAND_TOTAL_FACTOR: u64 = 3;
 /// 比值测试并列带宽的绝对上限系数：band = min(feas·(1+|t_min|), feas·CAP)。
-/// 相对项在 |t_min| ≈ 1e6 时膨胀到 ≈1e-3，会把真正更小的界翻转/出基候选
+/// 相对项在 |t_min| ≈ 1e6 时膨胀到 ≈ 1e-3，会把真正更小的界翻转/出基候选
 /// （差距 1e-4 量级）吞进并列集合、按 |主元| 破键输给假并列的 Leave——
 /// 步长越过真最小比值，基变量越界至 band·|α|（2026-10 第三轮在合成算例
 /// 冷解上实测观察到，见 test_ratio_test_band_large_magnitude）。取小后：
@@ -121,6 +123,17 @@ const BLAND_TOTAL_FACTOR: u64 = 3;
 /// 数量级以上，真并列不被拆散）；收窄并列集合只会让选择更贴近最小比值，
 /// 真 t_min 候选恒在集合内，不引入误剪。
 const RATIO_BAND_CAP: f64 = 1e3;
+
+/// 内部墙钟检查间隔（主元数，W2）：`time_deadline` 注入后 run_phase 每
+/// 该数量级的主元读一次墙钟（首迭代即检查——start_call 把计数器预置到
+/// 阈值，已超限的重建调用零主元即返回）。64 在 bench 两大慢 LP
+///（lp-sparse-4000x800 每主元 ~2-4ms（节流态）、setcover-400x800 ~1-60ms）
+/// 下给出 ≤ ~0.26s 的超限粒度（实测 256 时 lp-sparse 30s 名义值超窗至
+/// 31.2s，收紧后回到 30-31s 验收窗内）；读钟本身 ~20-50ns，对 µs-ms 级
+/// 主元成本的摊薄份额 <0.001%（「周期检查须足够稀疏」约束裕量充足）；
+/// deadline 未注入（None，默认）时**零墙钟读点**（每迭代仅 Option 判别式
+/// 检查，且计数器只在注入态递增）。
+const TIME_CHECK_INTERVAL: u32 = 64;
 
 // —— 稀疏混合表格（轴1：行级非零索引簿记，规模阈值后置）——
 
@@ -156,6 +169,14 @@ pub enum LpStatus {
     Unbounded,
     /// 触发迭代上限（诚实上报，不冒充 Optimal）。
     IterationLimit,
+    /// 触发内部墙钟时限（W2）：迭代循环每 [`TIME_CHECK_INTERVAL`] 次主元
+    /// 检查一次 [`Simplex::set_time_deadline`] 注入的 deadline，超过即返回
+    /// 本状态（诚实上报，不冒充 Optimal）。与 [`LpStatus::IterationLimit`]
+    /// **刻意分离**：割循环的 R8 回滚只对迭代上限触发——墙钟超限不回滚
+    /// （回滚重建+重放是又一次整段根 LP，会把超限点再拖过 deadline），
+    /// 直接向上传播为诚实截断终态。仅当调用方显式注入 deadline 才可能出现
+    ///（未注入 ⇒ 零墙钟读点，t1 确定性路径零扰动）。
+    TimeLimit,
 }
 
 /// 结构变量当前上下界（分支定界只改这个，不改 Problem）。
@@ -372,6 +393,17 @@ pub struct Simplex {
     bland_rearms: u32,
     /// 距上次 B⁻¹b 重算的主元数。
     pivots_since_refresh: u64,
+    /// 内部墙钟时限（W2）：Some(deadline) ⇒ 迭代循环按
+    /// [`TIME_CHECK_INTERVAL`] 周期读钟，超过返回 [`LpStatus::TimeLimit`]；
+    /// None（默认）= 关闭且**零墙钟读点**（时限关闭时 t1 确定性路径零扰动
+    /// ——条件读钟红线）。由调用方（branch_bound/parallel_bb 持有
+    /// `BbOptions::time_limit_ms` 的层）经 [`Simplex::set_time_deadline`]
+    /// 注入；割循环 R8 回滚的重建 Simplex 经 [`Simplex::time_deadline`]
+    /// 透传，防止回滚重放把超限点再拖过 deadline。
+    time_deadline: Option<std::time::Instant>,
+    /// 距上次墙钟检查的主元计数（仅 deadline 注入态递增；start_call 预置到
+    /// [`TIME_CHECK_INTERVAL`] ⇒ 每次 solve/resolve 首迭代即检查一次）。
+    pivots_since_time_check: u32,
     // —— 热路径暂存（容量跨迭代/跨调用复用，消除每迭代分配）——
     /// 批量检验数暂存（全列空间长度；三入口各自入口重算，见
     /// [`Simplex::compute_rc_batch`] 的新鲜度契约）。
@@ -531,6 +563,8 @@ impl Simplex {
             bland_dwell: 0,
             bland_rearms: 0,
             iter_limit_hint: None,
+            time_deadline: None,
+            pivots_since_time_check: 0,
             pivots_since_refresh: 0,
             rc_scratch: Vec::new(),
             cb_scratch: Vec::new(),
@@ -1052,6 +1086,23 @@ impl Simplex {
     /// 累计单纯形迭代次数。
     pub fn iterations(&self) -> u64 {
         self.iterations_total
+    }
+
+    /// 设置内部墙钟时限（W2）：Some(deadline) ⇒ 此后每次 solve/resolve 的
+    /// 迭代循环每 [`TIME_CHECK_INTERVAL`] 次主元检查一次墙钟，超过即返回
+    /// [`LpStatus::TimeLimit`]（诚实截断，不冒充 Optimal）；None = 关闭且
+    /// **零墙钟读点**（默认态，t1 无时限确定性路径零扰动——条件读钟）。
+    /// deadline 为绝对时刻（调用方由求解起点 + `time_limit_ms` 合成），
+    /// 对实例内全部 LP 调用（节点 resolve / dive / 探测 / 割循环）统一生效。
+    pub fn set_time_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.time_deadline = deadline;
+    }
+
+    /// 当前内部墙钟时限（cuts.rs R8 回滚的重建 Simplex 透传用：回滚重放
+    /// 同样受时限约束，防止「迭代上限触发回滚、回滚 resolve 又把超限点
+    /// 拖过 deadline」的双重越窗）。
+    pub fn time_deadline(&self) -> Option<std::time::Instant> {
+        self.time_deadline
     }
 
     // ===================== 内部：列与成本 =====================
@@ -1923,7 +1974,7 @@ impl Simplex {
     // ===================== 内部：阶段循环 =====================
 
     /// 单阶段主循环。返回 Optimal / Unbounded（仅 Phase-2 合法）/ LimitReached
-    /// / Failed（数值异常）。
+    /// / TimedOut（内部墙钟超限，W2）/ Failed（数值异常）。
     fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
         let m = self.basis.len();
         let n = self.num_structural;
@@ -1933,6 +1984,19 @@ impl Simplex {
         loop {
             if self.iter_call >= limit {
                 return PhaseOutcome::LimitReached;
+            }
+            // 内部墙钟检查（W2，条件读钟）：deadline 注入态每
+            // TIME_CHECK_INTERVAL 次主元读一次钟（start_call 预置计数器 ⇒
+            // 首迭代即检查，重建后已超限的调用零主元即返回）；未注入态仅
+            // Option 判别式检查、**零墙钟读点**（无时限路径零扰动红线）。
+            if let Some(deadline) = self.time_deadline {
+                self.pivots_since_time_check = self.pivots_since_time_check.saturating_add(1);
+                if self.pivots_since_time_check >= TIME_CHECK_INTERVAL {
+                    self.pivots_since_time_check = 0;
+                    if std::time::Instant::now() >= deadline {
+                        return PhaseOutcome::TimedOut;
+                    }
+                }
             }
             // 初始 false 仅在 Flip/Leave 两臂都被覆盖（其余臂直接 return），
             // 尾部释放检查读取的是本步结果——初始值语法上必需但语义上不达。
@@ -2082,6 +2146,13 @@ impl Simplex {
                     self.phase1_pending = true;
                     return LpStatus::IterationLimit;
                 }
+                PhaseOutcome::TimedOut => {
+                    // 墙钟超限（W2）：与 LimitReached 同款记账（人工变量未清理
+                    // ⇒ 下次 resolve 需重跑 Phase-1），但状态码独立——调用方
+                    // （含割循环 R8 回滚判定）不把它当迭代上限处理。
+                    self.phase1_pending = true;
+                    return LpStatus::TimeLimit;
+                }
                 PhaseOutcome::Unbounded => {
                     self.numerical_error = Some("Phase-1 出现无界方向（数学上不可能）".to_string());
                     self.phase1_pending = true;
@@ -2104,6 +2175,7 @@ impl Simplex {
             PhaseOutcome::Optimal => LpStatus::Optimal,
             PhaseOutcome::Unbounded => LpStatus::Unbounded,
             PhaseOutcome::LimitReached => LpStatus::IterationLimit,
+            PhaseOutcome::TimedOut => LpStatus::TimeLimit,
             PhaseOutcome::Failed(msg) => {
                 self.numerical_error = Some(msg);
                 LpStatus::IterationLimit
@@ -2457,6 +2529,9 @@ impl Simplex {
         self.degenerate_streak = 0;
         self.bland = false;
         self.bland_permanent = false;
+        // W2：预置到阈值 ⇒ run_phase 首迭代即检查一次墙钟（重建后已超限的
+        // 调用零主元即 TimeLimit 返回；未注入 deadline 时该计数器不被读）。
+        self.pivots_since_time_check = TIME_CHECK_INTERVAL;
         self.bland_dwell = 0;
         self.bland_rearms = 0;
         self.pivots_since_refresh = 0;
@@ -2581,6 +2656,8 @@ enum PhaseOutcome {
     Optimal,
     Unbounded,
     LimitReached,
+    /// 内部墙钟超限（W2，见 [`LpStatus::TimeLimit`]）。
+    TimedOut,
     Failed(String),
 }
 
@@ -2593,6 +2670,57 @@ mod tests {
     use super::*;
     use crate::error::MilpError;
     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+
+    /// （W2）内部墙钟时限：deadline 已过 ⇒ TimeLimit 诚实截断（不冒充
+    /// Optimal、不为凑检查周期白烧主元——首迭代即检查）；未注入（None，
+    /// 默认）⇒ 正常求解且 get/set 往返一致；注入后 clear 回 None ⇒ 行为
+    /// 与从未注入逐字节一致（条件读钟：None 态零墙钟读点）。
+    #[test]
+    fn time_deadline_truncates_honestly_and_is_conditional() {
+        // 中等规模 LP（setcover-100x150 量级：150 变量 × 100 行），冷解需
+        // 数百 ms ⇒ 过期 deadline 必然截断。
+        let n = 150usize;
+        let vars: Vec<Variable> = (0..n)
+            .map(|j| var(&format!("x{j}"), 0.0, 1.0))
+            .collect();
+        let obj: Vec<(usize, f64)> = (0..n).map(|j| (j, (7 * j % 19 + 1) as f64)).collect();
+        let mut cons: Vec<(Vec<(usize, f64)>, RelOp, f64)> = Vec::new();
+        for i in 0..100usize {
+            // 每行 6 个非零（确定性散布，模回绕后重排保证升序——prob 辅助
+            // 要求 terms 升序无重复），覆盖 rhs = 3。
+            let mut terms: Vec<(usize, f64)> = (0..6)
+                .map(|k| ((i * 7 + k * 23) % n, (3 * k + 1) as f64))
+                .collect();
+            terms.sort_by_key(|&(j, _)| j);
+            cons.push((terms, RelOp::Ge, 3.0));
+        }
+        let p = prob(Sense::Minimize, vars, obj, cons);
+        let b = Bounds {
+            lb: vec![0.0; n],
+            ub: vec![1.0; n],
+        };
+        // (1) 无 deadline：正常 Optimal（既有默认态）。
+        let mut s1 = Simplex::new(&p, tol()).unwrap();
+        assert_eq!(s1.time_deadline(), None, "默认未注入");
+        let r1 = s1.solve(&b);
+        assert_eq!(r1.status, LpStatus::Optimal);
+        // (2) 过期 deadline：TimeLimit 截断，目标 NaN（绝不冒充 Optimal）。
+        let mut s2 = Simplex::new(&p, tol()).unwrap();
+        let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        s2.set_time_deadline(Some(past));
+        assert_eq!(s2.time_deadline(), Some(past), "get/set 往返");
+        let r2 = s2.solve(&b);
+        assert_eq!(r2.status, LpStatus::TimeLimit, "过期 deadline 必截断");
+        assert!(r2.objective.is_nan(), "截断目标 NaN，不冒充最优值");
+        // (3) 清除 deadline ⇒ 与从未注入逐字节一致（行为级条件读钟验证）。
+        let mut s3 = Simplex::new(&p, tol()).unwrap();
+        s3.set_time_deadline(Some(past));
+        s3.set_time_deadline(None);
+        let r3 = s3.solve(&b);
+        assert_eq!(r3.status, r1.status);
+        assert_eq!(r3.x, r1.x, "清除后与从未注入逐字节一致");
+        assert_eq!(s3.iterations(), s1.iterations(), "迭代数一致（零扰动）");
+    }
 
     /// 构造默认容差（不可调用 Tolerances::default()——WP1 桩未实现）。
     fn tol() -> Tolerances {

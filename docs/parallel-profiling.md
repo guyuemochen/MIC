@@ -535,3 +535,104 @@ milp/README.md 已有 `--work-stack` 条目（参数表）且默认 local 未变
    并行各发一次）——纯外观，文档已记。
 3. mknap-10x200 在 global 栈下节点 −17.6% 但墙钟持平——节点收益被
    每节点成本膨胀吃掉（P1 §4.2 二义未分辨，M2a 仍缺位）。
+
+
+## 11. W2 实现轮（2026-10-14）：纯 LP 路径内部时限检查（节点边界盲区消除）
+
+> 现状（本轮前）：时限只在节点边界检查，纯 LP 单节点跑满全程——
+> lp-sparse-4000x800 gate 名义 30s 实测 39.8-44.0s optimal（W1 窗）/
+> 41.3s（工作区既录）。实现：Simplex 迭代循环内周期性条件读钟，超限诚实
+> 截断。**红线达成：时限关闭时求解路径零墙钟读点（t1 逐字节不变，17 算例
+> 对账），时限开启时 30s 名义值实测 30.1-30.3s 内诚实终态。**
+
+### 11.1 实现
+
+1. **`LpStatus::TimeLimit`（独立状态码，刻意与 IterationLimit 分离）**：
+   R8 割循环回滚只对迭代上限触发——墙钟超限若复用同一状态码，「回滚
+   重建 + 重放整段根 LP」会把超限点再拖过 deadline（冷审风险 4 的场景）。
+   TimeLimit 在割循环出口走 `!= Optimal` 分支如实传播（整树诚实
+   LimitReached 终态，不做回滚）；迭代上限触发的回滚若在重放中撞上墙钟
+   ⇒ 重建 Simplex **透传原 deadline**（cuts.rs:1760-1762），TimeLimit
+   诚实传播、不冒充 Optimal。
+2. **条件读钟（红线）**：`Simplex::time_deadline: Option<Instant>`（默认
+   None）+ `set_time_deadline`/`time_deadline`；run_phase 循环顶部仅当
+   `Some(deadline)` 时递增计数器、每 `TIME_CHECK_INTERVAL = 64` 次主元读
+   一次钟（`start_call` 预置计数器 ⇒ 首迭代即检查——重建后已超限的调用
+   零主元即返回）。None 态每迭代只有 Option 判别式检查，**零墙钟读点**。
+   读钟审计：simplex.rs 全文 `Instant::now()` 恰 1 处（run_phase 检查点，
+   `if let Some(deadline)` 门内）——`grep -n "Instant::now" milp/src/
+   simplex.rs` 实测仅 simplex.rs:1996（测试内 2709 不计）。
+3. **间隔取值（实测定档）**：256 ⇒ lp-sparse 30s 三 rep 30.41/31.20/
+   30.55s（rep1 超出 30-31s 验收窗——节流态每主元 ~4ms × 256 ≈ 1s 粒度）；
+   收紧到 64 ⇒ 30.17/30.20/30.34s 全入窗。64 次主元读一次钟（~20-50ns）
+   对 µs-ms 级主元成本的摊薄份额 <0.001%（「足够稀疏」约束裕量充足），
+   且计数器只在注入态递增。
+4. **deadline 接线（`branch_bound::bb_time_deadline`，pub(crate) 共用）**：
+   `time_limit_ms > 0` ⇒ 求解层起点 + 预算的绝对时刻；锚定沿用既有约定
+   （各引擎层自身 start——sequential_bb / parallel 根 / worker 各自锚定；
+   W1 门未命中时并行从零重锚，探测前缀不占并行预算、前缀本身 ≤ 512 小
+   LP 节点有界）。注入点：sequential_bb 初始 + 预割重建 + R8 回滚重建（3
+   处）、parallel 根同 3 处、worker 1 处、cuts.rs 回滚重建透传 1 处。
+5. **全匹配点语义**（编译器驱动的 7 处穷尽匹配 + 相等比较审计）：
+   - 纯 LP 捷径（顺序/并行根）：TimeLimit ⇒ LimitReached（不携带 best——
+     纯 LP 无 incumbent 概念，实测 knapsack-5000 1s 预算 obj=None）；
+   - 根终局映射（root_terminal / root_terminal_status）：LimitReached；
+   - MILP 根 IterationLimit 终态的 incumbent 提取（R8 ③）扩展到
+     TimeLimit（中断点同为原始可行——round_and_check 复核后随
+     LimitReached 携带）；
+   - 树节点（顺序 classify_node → 新 `NodeAction::TruncateTime`；并行
+     worker match）：与 PruneLimit 同处置（剪枝 + limit_hit 粘滞），随后
+     节点边界检查立即停树（并行侧 wall_exceeded 置 STOP_TIME）；
+   - dive 内部修复失败臂（heuristics.rs）：退化为取整复核（同
+     IterationLimit）；dive 回取（dive_back_action）：Discard；
+   - probe_one：`== Optimal` 才记账——TimeLimit 自然跳过（探测只读界并
+     恢复，无正确性影响）。
+6. **文件清单对账**：solver.rs **零改动**（grep 证实无 LpStatus 引用，
+   SolveStatus 映射全在 branch_bound）；main.rs **零改动**（输出契约已
+   覆盖 limit_reached + best 行）；README 三处口径同步（参数表 / 终态
+   诚实判定节 / lp-sparse 算例行）。
+
+### 11.2 验收数字（本轮实跑）
+
+- **lp-sparse-4000x800 30s（目标算例）**：t1 ×3 = 30.17/30.20/30.34s、
+  t4 ×1 = 30.11s，全部 `limit_reached` 诚实终态（对照本轮前 39.8-44.0s
+  optimal 越窗）——**验收线达成**。
+- **无时限路径逐字节不变**：W2 二进制 vs pre-W1 基线二进制 t1 行为字段
+  （status/objective/nodes/lp_iterations/cuts/presolve_reductions/bound/
+  gap_percent/root_bound）**17 算例全等**——含 lp-sparse（1 节点 / 7,774
+  lpi / 5893.705757）、mknap-5x300（87,800 / 1,747,982 / 4762.0）、
+  marketsplit-4x40（854,952 节点）、marketsplit-5x50（2M 上限）等全部
+  大件。此对账横跨 W1+W2 两轮（pre-W1 基线传递覆盖两轮红线）。
+- **R8 交互（冷审调整 3 的用例）**：mknap-5x300 `--time-limit-secs 3` ⇒
+  auto_degraded 4727.0@10,962 节点 **cuts=70（割集完整保留）**；
+  `--time-limit-secs 10` ⇒ auto_degraded 4754.0@27,176 cuts=70；
+  knapsack-5000 `1s` ⇒ limit_reached、wall=1.00s（贴 deadline 截断、
+  obj=None 不冒充）；setcover-100x150 `1s` ⇒ optimal 276.0（0.53s 内
+  完成，不受扰）。全部终态诚实，无错误状态。
+- **gate 集翻转表（t1 + 30s，pre-W2 基线 vs W2 各 1 rep）**：
+  knapsack-200/setcover-100x150/knapsack-2000 输出不变；**lp-sparse
+  39.8s optimal → 30.1s limit_reached（编排方需重钉的既录基线翻转）**；
+  setcover-400x800 两轮同为 limit_reached@nodes=1（该例终态由 24k 迭代
+  上限先于/后于 deadline 决定：快 rep 18-25s 迭代上限收场、节流 rep 此后
+  由内部墙钟封在 ~30s——本轮前节流态曾越窗至 65s）；mknap-5x300 本窗
+  12.8-13.1s optimal@87,800（机器快态未触截断，与 pre-W2 逐位同）。
+- **测试**：lib 248/248（新增 4：simplex 条件读钟/截断/清除复原、
+  classify_node 两状态码分离向量、setcover-100x150 1ms 预算诚实截断、
+  纯 LP 截断不冒充 objective；扩展 1：dive_back_action 补 TimeLimit ⇒
+  Discard 断言）、bin milp 21/21、acceptance 13/13、warm_cold_parity
+  1/1。全量套件由编排脚本统一跑。
+
+### 11.3 已知边界与交接
+
+1. 超窗残余 = 预处理/收尾开销 + ≤64 主元检查粒度（lp-sparse 实测
+   +0.1~0.3s）；deadline 锚在各引擎层自身 start（既有约定），wall 口径
+   差异为 solve_controlled 包裹的 presolve/postsolve。
+2. 纯 LP 截断不携带 best（无 incumbent 概念）；MILP 根截断经 round_and_check
+   复核可携带诚实 incumbent（R8 ③ 口径扩展）。
+3. **W3 交接（冷审调整 2/3 的契约点）**：budget 模式（时限换算为节点/
+   迭代预算）下，求解路径零墙钟读点的实现口径 = **不注入 deadline**
+   （`bb_time_deadline` 是唯一注入点，budget 化时返回 None 即可）+ 既有
+   节点边界 `time_exceeded` 的抑制/换算；grep 审计口径见 11.1.2。
+4. t4 并行侧 TimeLimit 的终态原因码经 limit_hit/STOP_TIME 复合映射为
+   LimitReached（BbResult 不区分 Node/Time 触发原因——CLI 语义同为
+   limit_reached，与既有口径一致）。

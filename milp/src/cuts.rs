@@ -1748,10 +1748,18 @@ pub fn cut_loop_recorded(
             // 的根界保留（树搜索受益），不再以 limit_reached 无解终态传播。
             // 回滚后状态与上一轮末逐字节一致（确定性冷重建路径 + 同割集），
             // 终态必为 Optimal；防御性保留非 Optimal 映射（不冒充）。
+            // W2 注：回滚只对**迭代上限**触发——墙钟超限返回独立的
+            // LpStatus::TimeLimit，走下方 `!= Optimal` 出口如实传播（整树
+            // 诚实 LimitReached，不做「再解一次整段根 LP」的回滚重放，那
+            // 会把超限点拖过 deadline）；重建 Simplex 透传原 deadline，
+            // 迭代上限触发的回滚若在重放中撞上墙钟 ⇒ TimeLimit 诚实传播
+            // （防御性非 Optimal 映射，不冒充 Optimal）。
             ledger.truncate(ledger_before);
             recorded.truncate(recorded_before);
             applied = applied_before;
+            let rollback_deadline = s.time_deadline();
             let mut rebuilt = Simplex::new(problem, *tol)?;
+            rebuilt.set_time_deadline(rollback_deadline);
             for rec in ledger.iter() {
                 rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
             }
