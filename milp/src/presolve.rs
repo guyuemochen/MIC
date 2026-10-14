@@ -45,9 +45,13 @@ pub struct PostsolveMap {
     /// 缩减问题变量下标 → 原始变量下标（W5：聚合变量槽位为 usize::MAX
     /// 占位，还原走 aggregations）。
     pub var_map: Vec<usize>,
-    /// W5 等价列聚合：(成员原始下标列表, 聚合变量缩减下标)。还原时
-    /// t = round(x') ∈ [0, m]，前 t 个成员置 1、其余置 0（组内可交换）。
-    pub aggregations: Vec<(Vec<usize>, usize)>,
+    /// W5 等价列聚合：(成员原始下标列表, 聚合变量缩减下标, 固定值回退)。
+    /// 还原时 t = round(x') ∈ [0, m]，前 t 个成员置 1、其余置 0（组内
+    /// 可交换）。复核修复 1：聚合变量在后续轮被 R4 收紧到单点并经 R2
+    /// 固定时（缩减下标 = usize::MAX、变量已不在缩减问题中），t 改取
+    /// 固定值（Some(v) ⇒ round(v)）——原先该路径被 postsolve 双重跳过
+    ///（扩展下标 fixed 记录不还原 + MAX 缩减下标 unwrap_or(0) 全员置 0）。
+    pub aggregations: Vec<(Vec<usize>, usize, Option<f64>)>,
 }
 
 /// 预处理工作行（原始变量下标空间；alive 标记是否仍存续）。
@@ -284,7 +288,17 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
                     continue;
                 }
                 for &(j, a) in &row.terms {
-                    if !var_alive[j] || types[j] != VarType::Binary {
+                    // 复核修复 2：成员界必须仍是精确 [0,1]——同轮先行的 R4
+                    // 可能把某成员收紧到单点（[0,0]/[1,1]，行已删、界记在
+                    // lb/ub）：收紧后的成员与其他成员不再可交换（还原拆分
+                    // 会违反其收紧界），且其界不会传导给聚合变量（x'∈[0,m]
+                    // 按成员数计）——聚合它 = 丢约束（缩减问题成松弛）。
+                    // 收紧到单点的成员由次轮 R2 正常固定替换，不进聚合。
+                    if !var_alive[j]
+                        || types[j] != VarType::Binary
+                        || lb[j] != 0.0
+                        || ub[j] != 1.0
+                    {
                         continue;
                     }
                     sigs.push(((ri, a), j));
@@ -405,10 +419,21 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
             });
         }
     }
-    // 聚合记录补缩减下标：(members, merged_orig_idx) → (members, reduced_idx)。
-    let aggregations: Vec<(Vec<usize>, usize)> = aggregations
+    // 聚合记录补缩减下标：(members, merged_ext_idx) → (members, reduced_idx,
+    // fixed 回退)。复核修复 1：聚合变量已死（后续轮 R4 单点收紧 → R2 固定）
+    // ⇒ 缩减下标 MAX、从 fixed 表提取其固定值（并从 fixed 移除——postsolve
+    // 的 fixed 循环按原始下标空间还原，扩展下标条目不进该循环）。
+    let aggregations: Vec<(Vec<usize>, usize, Option<f64>)> = aggregations
         .into_iter()
-        .map(|(members, merged)| (members, new_index[merged]))
+        .map(|(members, merged)| {
+            if var_alive[merged] {
+                (members, new_index[merged], None)
+            } else {
+                let pos = fixed.iter().position(|&(j, _)| j == merged);
+                let value = pos.map(|at| fixed.remove(at).1);
+                (members, usize::MAX, value)
+            }
+        })
         .collect();
     let obj = LinearExpr {
         terms: obj_terms
@@ -473,13 +498,19 @@ pub fn postsolve(
             x[orig] = reduced_x.get(reduced_idx).copied().unwrap_or(f64::NAN);
         }
     }
-    // W5 聚合还原：t = round(x')（钳到 [0, m]），前 t 个成员置 1。
-    for (members, reduced_idx) in &map.aggregations {
-        let t = reduced_x
-            .get(*reduced_idx)
-            .copied()
-            .map(|v| (v.round() as i64).clamp(0, members.len() as i64) as usize)
-            .unwrap_or(0);
+    // W5 聚合还原：t = round(x')（钳到 [0, m]），前 t 个成员置 1。复核
+    // 修复 1：聚合变量被后续轮固定 ⇒ t 取固定值（Some 分支）；防御性
+    // 兜底（既无缩减下标也无固定值）保持 0。
+    for (members, reduced_idx, fixed_value) in &map.aggregations {
+        let t = if let Some(v) = fixed_value {
+            (v.round() as i64).clamp(0, members.len() as i64) as usize
+        } else {
+            reduced_x
+                .get(*reduced_idx)
+                .copied()
+                .map(|v| (v.round() as i64).clamp(0, members.len() as i64) as usize)
+                .unwrap_or(0)
+        };
         for (k, &orig) in members.iter().enumerate() {
             if orig < num_orig_vars {
                 x[orig] = if k < t { 1.0 } else { 0.0 };
@@ -715,7 +746,8 @@ mod tests {
         let (q, map) = presolve(&p, &tol()).unwrap();
         // 结构：一组聚合（3 成员）+ x4 独立存活 ⇒ 缩减 2 变量 1 行。
         assert_eq!(map.aggregations.len(), 1);
-        let (members, agg_red) = &map.aggregations[0];
+        let (members, agg_red, agg_fixed) = &map.aggregations[0];
+        assert!(agg_fixed.is_none(), "存活聚合变量无固定回退");
         assert_eq!(members, &vec![x1, x2, x3]);
         assert_eq!(q.vars.len(), 2);
         // 缩减下标序：x4（原始下标 3）在前、聚合变量（扩展下标 4）在后。
@@ -746,6 +778,170 @@ mod tests {
         // 部分还原向量：x'=2 ⇒ 前 2 个成员置 1、第 3 个 0。
         let full2 = postsolve(&map, &[0.0, 2.0], p.vars.len(), &tol());
         assert_eq!(full2, vec![1.0, 1.0, 0.0, 0.0]);
+    }
+
+    /// （复核修复 1 回归钉）聚合变量在后续轮被 R4 收紧到单点、经 R2 固定：
+    /// 缩减下标 MAX + 固定值回退 Some(v)（原先扩展下标的 fixed 记录被
+    /// postsolve 跳过且 MAX 下标 unwrap_or(0) 全员置 0——安全网拦截报
+    /// Err、最优解丢失）。端到端：真最优 3 必须还原。
+    #[test]
+    fn agg_var_fixed_after_aggregation_restores_via_fallback() {
+        // max 3x1+3x2 s.t. x1+x2≥1, x1+x2≤1（两行同列同价 ⇒ 聚合 x'∈[0,2]，
+        // 聚合行成为 x'≥1 / x'≤1 的单系数行 ⇒ 次轮 R4 点位收紧 ⇒ 再次轮
+        // R2 固定 x'=1）。
+        let mut p = Problem::new("bug1", Sense::Maximize);
+        let x1 = p.add_var("x1", VarType::Binary).unwrap();
+        let x2 = p.add_var("x2", VarType::Binary).unwrap();
+        p.set_objective(vec![(x1, 3.0), (x2, 3.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(x1, 1.0), (x2, 1.0)], RelOp::Ge, 1.0)
+            .unwrap();
+        p.add_constraint(None, vec![(x1, 1.0), (x2, 1.0)], RelOp::Le, 1.0)
+            .unwrap();
+        let rep = crate::solver::solve(
+            &p,
+            &crate::solver::SolveOptions {
+                use_presolve: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("求解失败：{e}"));
+        assert_eq!(rep.status, crate::model::SolveStatus::Optimal);
+        assert_close(rep.objective.expect("应有最优值"), 3.0);
+        let values = rep.values.expect("应有取值");
+        let sum: f64 = values.iter().sum();
+        assert_close(sum, 1.0, );
+        assert!(original_feasible(&p, &values), "还原解对原始约束可行");
+        // 结构钉：聚合变量已死 ⇒ MAX 缩减下标 + Some(1.0) 回退。
+        let (q, map) = presolve(&p, &tol()).unwrap();
+        assert!(q.vars.is_empty(), "两成员聚合且聚合变量被固定 ⇒ 缩减问题无变量");
+        assert_eq!(map.aggregations.len(), 1);
+        let (members, red, fixed_value) = &map.aggregations[0];
+        assert_eq!(members, &vec![x1, x2]);
+        assert_eq!(*red, usize::MAX);
+        assert_eq!(*fixed_value, Some(1.0));
+        assert!(map.fixed.is_empty(), "扩展下标固定值已转移到聚合回退");
+    }
+
+    /// （复核修复 2 回归钉）同轮 R4 收紧成员界（y1≤0 ⇒ ub[y1]=0）后 R5
+    /// 不得再聚合该成员：收紧后的成员与其他成员不可交换（还原拆分会违反
+    /// 其收紧界），且界不传导给 x'（聚合 = 丢约束，缩减问题成松弛——原先
+    /// 安全网拦截报 Err）。端到端：真最优 2（y1=0, y2=1）。
+    #[test]
+    fn member_tightened_same_round_excluded_from_aggregation() {
+        // max 2y1+2y2 s.t. y1≤0, y1+y2≤5。
+        let mut p = Problem::new("bug2", Sense::Maximize);
+        let y1 = p.add_var("y1", VarType::Binary).unwrap();
+        let y2 = p.add_var("y2", VarType::Binary).unwrap();
+        p.set_objective(vec![(y1, 2.0), (y2, 2.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(y1, 1.0)], RelOp::Le, 0.0).unwrap();
+        p.add_constraint(None, vec![(y1, 1.0), (y2, 1.0)], RelOp::Le, 5.0)
+            .unwrap();
+        let rep = crate::solver::solve(
+            &p,
+            &crate::solver::SolveOptions {
+                use_presolve: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("求解失败：{e}"));
+        assert_eq!(rep.status, crate::model::SolveStatus::Optimal);
+        assert_close(rep.objective.expect("应有最优值"), 2.0);
+        let values = rep.values.expect("应有取值");
+        assert_close(values[y1], 0.0);
+        assert_close(values[y2], 1.0);
+        assert!(original_feasible(&p, &values));
+        // 结构钉：y1 界被收紧 ⇒ 不进聚合；y2 无同列伙伴 ⇒ 无聚合组。
+        let (_, map) = presolve(&p, &tol()).unwrap();
+        assert!(map.aggregations.is_empty(), "收紧成员不得被聚合");
+        assert!(map.fixed.contains(&(y1, 0.0)), "y1 经 R4→R2 正常固定在 0");
+    }
+
+    /// （复核修复后的加固）presolve 开/关等价性 fuzz：随机小二元 MIP
+    ///（确定性 LCG 种子），两路径 objective 必须相等、开启路径还原解必须
+    /// 对原始约束可行——覆盖聚合/固定/单点收紧的组合交互（复核 1/2 的
+    /// 两个缺陷均为此类：结构上正确的大规则在轮间组合下漏还原/丢界）。
+    #[test]
+    fn presolve_equivalence_fuzz_small_binaries() {
+        let mut seed: u64 = 0x243F_6A88_85A3_08D3;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..60 {
+            let n = 2 + (next() % 4) as usize; // 2..=5 变量
+            let m = 1 + (next() % 3) as usize; // 1..=3 行
+            let sense = if next() & 1 == 0 { Sense::Maximize } else { Sense::Minimize };
+            let mut p = Problem::new(&format!("fuzz{case}"), sense);
+            for j in 0..n {
+                p.add_var(&format!("x{j}"), VarType::Binary).unwrap();
+            }
+            let obj: Vec<(usize, f64)> = (0..n)
+                .map(|j| (j, ((next() % 7) as f64) - 3.0))
+                .collect();
+            p.set_objective(obj, 0.0).unwrap();
+            for i in 0..m {
+                // 每行 1..=n 个 ±1..±3 系数（含单系数行——R4/R5 交互源）。
+                let nnz = 1 + (next() % n as u64) as usize;
+                let mut terms: Vec<(usize, f64)> = (0..nnz)
+                    .map(|k| {
+                        (
+                            ((next() as usize) + k) % n,
+                            if next() & 1 == 0 { 1.0 } else { -1.0 } * (1.0 + (next() % 3) as f64),
+                        )
+                    })
+                    .collect();
+                terms.sort_by_key(|&(j, _)| j);
+                terms.dedup_by_key(|&mut (j, _)| j);
+                if terms.is_empty() {
+                    continue;
+                }
+                let op = match next() % 3 {
+                    0 => RelOp::Le,
+                    1 => RelOp::Ge,
+                    _ => RelOp::Eq,
+                };
+                let rhs = ((next() % 5) as f64) - 1.0;
+                p.add_constraint(Some(&format!("r{i}")), terms, op, rhs).unwrap();
+            }
+            let off = crate::solver::solve(
+                &p,
+                &crate::solver::SolveOptions {
+                    use_presolve: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("case {case} 关 presolve 失败：{e}"));
+            let on = crate::solver::solve(
+                &p,
+                &crate::solver::SolveOptions {
+                    use_presolve: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("case {case} 开 presolve 失败：{e}"));
+            // 等价断言：status 与 objective（Optimal 时）两路径一致；开启
+            // 路径的还原解对原始约束可行。
+            assert_eq!(
+                off.status, on.status,
+                "case {case} 终态不一致：{:?} vs {:?}",
+                off.status, on.status
+            );
+            if off.status == crate::model::SolveStatus::Optimal {
+                let a = off.objective.expect("off 应有目标");
+                let b = on.objective.expect("on 应有目标");
+                assert!(
+                    (a - b).abs() <= 1e-7 * (1.0 + a.abs()),
+                    "case {case} 目标不一致：{a} vs {b}"
+                );
+                let values = on.values.expect("on 应有取值");
+                assert!(
+                    original_feasible(&p, &values),
+                    "case {case} 还原解违反原始约束"
+                );
+            }
+        }
     }
 
     /// postsolve：近整数分量取整、分数分量与固定值不动、缺失分量 NaN 示警。

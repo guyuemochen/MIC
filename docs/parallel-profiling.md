@@ -1035,3 +1035,32 @@ M2a 的带宽主导签名 + lp-sparse 每主元 ~2-5ms 的现实 ⇒ ①+② 是
   0.091s 量级），行为字段（nodes/lpi/obj）零变化；其余算例零变化。
 - 原验收对象（lp-sparse/setcover-400x800 ≥15%）按调整 1 记档为结构性
   不可达（已在稀疏路径）；它们的下一步收益在布局侧（16.3），不在门槛。
+
+
+### 14.5 复核修复（独立复核发现 2 个高危，2026-10-14 同日）
+
+复核实测复现两个 R5 聚合的轮间组合缺陷（均在安全网终检处拦截为 Err、
+未输出错解，但最优解丢失/还原破坏）：
+
+1. **聚合变量后续轮被固定的还原破坏**：模型 max 3x1+3x2 s.t. x1+x2≥1,
+   x1+x2≤1——R5 聚合后聚合行成为单系数行，次轮 R4 点位收紧、再次轮 R2
+   固定 x'=1；fixed 记录携带扩展下标（≥n）被 postsolve 的
+   `orig < num_orig_vars` 跳过，同时已死聚合变量的缩减下标 = usize::MAX
+   使 `unwrap_or(0)` 把全部成员还原为 0。修复：aggregations 扩为三元组
+   （成员, 缩减下标, 固定值回退）——构建期从 fixed 表提取已死聚合变量
+   的固定值并移除该扩展下标条目，postsolve 按 t=round(v) 拆分成员。
+2. **同轮 R4 收紧成员界后 R5 仍聚合（丢约束）**：模型 max 2y1+2y2 s.t.
+   y1≤0, y1+y2≤5——轮序 R4→R5 下 y1 的 ub 先被收紧到 0（行已删、界在
+   lb/ub），R5 仍按「Binary + 存活」聚它进 x'∈[0,m]：收紧界既不生成固定
+   记录也不传导给聚合变量，缩减问题成原问题松弛。修复：R5 成员资格加
+   「界仍精确 [0,1]」检查——收紧成员不进聚合，由次轮 R2 正常固定替换。
+
+回归钉：`agg_var_fixed_after_aggregation_restores_via_fallback`（端到端
+最优 3 + 结构断言 MAX/Some(1.0)/fixed 空）、
+`member_tightened_same_round_excluded_from_aggregation`（端到端最优 2、
+y1=0/y2=1 + 结构断言无聚合组、y1 固定在 0）；另加
+`presolve_equivalence_fuzz_small_binaries`（60 确定性种子随机小二元 MIP，
+presolve 开/关目标等价 + 还原解原始可行——主守卫是上述两个定向回归钉，
+fuzz 为补充加固）。修复后：lib 257/257、bin 22/22、acceptance 13/13、
+warm_cold_parity 1/1；背包族聚合量不变（43/210/1,596/4,590）、目标恒同
+DP 真值、节点/墙钟与 §14.2 逐位一致；其余类目标/节点抽查全部不变。

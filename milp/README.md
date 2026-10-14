@@ -643,7 +643,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 ```text
 milp/
 ├── src/
-│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode/branch-rule/scaling/mitm/work-stack）
+│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode/branch-rule/scaling/mitm/work-stack/determinism）
 │   ├── error.rs         # MilpError 与 Result 别名（WP1）
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）

@@ -130,7 +130,7 @@ pub fn solve_controlled(
             + map
                 .aggregations
                 .iter()
-                .map(|(members, _)| members.len().saturating_sub(1))
+                .map(|(members, _, _)| members.len().saturating_sub(1))
                 .sum::<usize>();
         (reduced, Some(map), reductions)
     } else {

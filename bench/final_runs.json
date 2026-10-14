@@ -2,7 +2,7 @@
   {
     "instance": "assign-16x16",
     "threads": 1,
-    "wall_secs": 0.003642,
+    "wall_secs": 0.002658,
     "status": "optimal",
     "objective": 165.0,
     "nodes": 1
@@ -10,7 +10,7 @@
   {
     "instance": "assign-16x16",
     "threads": 4,
-    "wall_secs": 0.003902,
+    "wall_secs": 0.002498,
     "status": "optimal",
     "objective": 165.0,
     "nodes": 1
@@ -18,7 +18,7 @@
   {
     "instance": "lp-wide-200x300",
     "threads": 1,
-    "wall_secs": 0.013428,
+    "wall_secs": 0.010878,
     "status": "optimal",
     "objective": 112.668615,
     "nodes": 1
@@ -26,7 +26,7 @@
   {
     "instance": "lp-wide-200x300",
     "threads": 4,
-    "wall_secs": 0.013633,
+    "wall_secs": 0.010484,
     "status": "optimal",
     "objective": 112.668615,
     "nodes": 1
@@ -34,7 +34,7 @@
   {
     "instance": "milp-mixed-120i30c",
     "threads": 1,
-    "wall_secs": 0.006674,
+    "wall_secs": 0.004584,
     "status": "optimal",
     "objective": 980.853268,
     "nodes": 47
@@ -42,7 +42,7 @@
   {
     "instance": "milp-mixed-120i30c",
     "threads": 4,
-    "wall_secs": 0.007948,
+    "wall_secs": 0.004465,
     "status": "optimal",
     "objective": 980.853268,
     "nodes": 47
@@ -50,7 +50,7 @@
   {
     "instance": "milp-mixed-250i40c",
     "threads": 1,
-    "wall_secs": 0.023783,
+    "wall_secs": 0.013913,
     "status": "optimal",
     "objective": 1275.791752,
     "nodes": 53
@@ -58,15 +58,15 @@
   {
     "instance": "milp-mixed-250i40c",
     "threads": 4,
-    "wall_secs": 0.022198,
+    "wall_secs": 0.014652,
     "status": "optimal",
     "objective": 1275.791752,
-    "nodes": 85
+    "nodes": 53
   },
   {
     "instance": "knapsack-200",
     "threads": 1,
-    "wall_secs": 0.005613,
+    "wall_secs": 0.002527,
     "status": "optimal",
     "objective": 3409.0,
     "nodes": 1
@@ -74,7 +74,7 @@
   {
     "instance": "knapsack-200",
     "threads": 4,
-    "wall_secs": 0.005373,
+    "wall_secs": 0.002379,
     "status": "optimal",
     "objective": 3409.0,
     "nodes": 1
@@ -82,71 +82,71 @@
   {
     "instance": "knapsack-500",
     "threads": 1,
-    "wall_secs": 0.038166,
+    "wall_secs": 0.023677,
     "status": "optimal",
     "objective": 8975.0,
-    "nodes": 360
+    "nodes": 481
   },
   {
     "instance": "knapsack-500",
     "threads": 4,
-    "wall_secs": 0.043854,
+    "wall_secs": 0.022153,
     "status": "optimal",
     "objective": 8975.0,
-    "nodes": 597
+    "nodes": 481
   },
   {
     "instance": "knapsack-2000",
     "threads": 1,
-    "wall_secs": 0.380707,
+    "wall_secs": 0.012548,
     "status": "optimal",
     "objective": 35328.0,
-    "nodes": 38
+    "nodes": 8
   },
   {
     "instance": "knapsack-2000",
     "threads": 4,
-    "wall_secs": 0.438671,
+    "wall_secs": 0.012997,
     "status": "optimal",
     "objective": 35328.0,
-    "nodes": 44
+    "nodes": 8
   },
   {
     "instance": "mknap-3x100",
     "threads": 1,
-    "wall_secs": 0.137496,
+    "wall_secs": 0.088731,
     "status": "optimal",
     "objective": 2331.0,
-    "nodes": 2120
+    "nodes": 1882
   },
   {
     "instance": "mknap-3x100",
     "threads": 4,
-    "wall_secs": 0.127374,
+    "wall_secs": 0.108022,
     "status": "optimal",
     "objective": 2331.0,
-    "nodes": 3682
+    "nodes": 4424
   },
   {
     "instance": "mknap-5x300",
     "threads": 1,
-    "wall_secs": 21.862086,
+    "wall_secs": 23.946511,
     "status": "optimal",
     "objective": 4762.0,
-    "nodes": 87800
+    "nodes": 72891
   },
   {
     "instance": "mknap-5x300",
     "threads": 4,
-    "wall_secs": 49.927559,
+    "wall_secs": 13.489389,
     "status": "optimal",
     "objective": 4762.0,
-    "nodes": 243163
+    "nodes": 108010
   },
   {
     "instance": "marketsplit-2x20",
     "threads": 1,
-    "wall_secs": 0.000645,
+    "wall_secs": 0.00056,
     "status": "optimal",
     "objective": 10.0,
     "nodes": 1
@@ -154,7 +154,7 @@
   {
     "instance": "marketsplit-2x20",
     "threads": 4,
-    "wall_secs": 0.000906,
+    "wall_secs": 0.000588,
     "status": "optimal",
     "objective": 10.0,
     "nodes": 1
@@ -162,7 +162,7 @@
   {
     "instance": "marketsplit-4x30",
     "threads": 1,
-    "wall_secs": 0.013708,
+    "wall_secs": 0.010503,
     "status": "optimal",
     "objective": 15.0,
     "nodes": 1
@@ -170,7 +170,7 @@
   {
     "instance": "marketsplit-4x30",
     "threads": 4,
-    "wall_secs": 0.011502,
+    "wall_secs": 0.01199,
     "status": "optimal",
     "objective": 15.0,
     "nodes": 1
@@ -178,7 +178,7 @@
   {
     "instance": "setcover-60x100",
     "threads": 1,
-    "wall_secs": 0.00509,
+    "wall_secs": 0.004857,
     "status": "optimal",
     "objective": 243.0,
     "nodes": 1
@@ -186,7 +186,7 @@
   {
     "instance": "setcover-60x100",
     "threads": 4,
-    "wall_secs": 0.004801,
+    "wall_secs": 0.004852,
     "status": "optimal",
     "objective": 243.0,
     "nodes": 1
@@ -194,23 +194,23 @@
   {
     "instance": "setcover-100x150",
     "threads": 1,
-    "wall_secs": 0.252792,
+    "wall_secs": 0.310391,
     "status": "optimal",
     "objective": 276.0,
-    "nodes": 13
+    "nodes": 15
   },
   {
     "instance": "setcover-100x150",
     "threads": 4,
-    "wall_secs": 0.307535,
+    "wall_secs": 0.313016,
     "status": "optimal",
     "objective": 276.0,
-    "nodes": 13
+    "nodes": 15
   },
   {
     "instance": "lp-sparse-4000x800",
     "threads": 1,
-    "wall_secs": 41.728943,
+    "wall_secs": 47.880916,
     "status": "optimal",
     "objective": 5893.705757,
     "nodes": 1
@@ -218,7 +218,7 @@
   {
     "instance": "lp-sparse-4000x800",
     "threads": 4,
-    "wall_secs": 51.422465,
+    "wall_secs": 56.276615,
     "status": "optimal",
     "objective": 5893.705757,
     "nodes": 1
@@ -226,55 +226,55 @@
   {
     "instance": "setcover-400x800",
     "threads": 1,
-    "wall_secs": 13.13917,
-    "status": "limit_reached",
-    "objective": null,
-    "nodes": 1
+    "wall_secs": 89.047257,
+    "status": "auto_degraded",
+    "objective": 129.0,
+    "nodes": 214
   },
   {
     "instance": "setcover-400x800",
     "threads": 4,
-    "wall_secs": 24.807032,
+    "wall_secs": 90.022637,
     "status": "limit_reached",
-    "objective": null,
+    "objective": 129.0,
     "nodes": 1
   },
   {
     "instance": "knapsack-5000",
     "threads": 1,
-    "wall_secs": 1.667764,
+    "wall_secs": 0.047148,
     "status": "optimal",
     "objective": 88526.0,
-    "nodes": 37
+    "nodes": 36
   },
   {
     "instance": "knapsack-5000",
     "threads": 4,
-    "wall_secs": 1.872443,
+    "wall_secs": 0.039127,
     "status": "optimal",
     "objective": 88526.0,
-    "nodes": 14
+    "nodes": 36
   },
   {
     "instance": "mknap-10x200",
     "threads": 1,
-    "wall_secs": 13.673924,
+    "wall_secs": 35.104792,
     "status": "optimal",
     "objective": 1791.0,
-    "nodes": 142242
+    "nodes": 148341
   },
   {
     "instance": "mknap-10x200",
     "threads": 4,
-    "wall_secs": 5.989887,
+    "wall_secs": 5.643577,
     "status": "optimal",
     "objective": 1791.0,
-    "nodes": 110188
+    "nodes": 74832
   },
   {
     "instance": "assign-40x40",
     "threads": 1,
-    "wall_secs": 0.150056,
+    "wall_secs": 0.143707,
     "status": "optimal",
     "objective": 176.0,
     "nodes": 1
@@ -282,7 +282,7 @@
   {
     "instance": "assign-40x40",
     "threads": 4,
-    "wall_secs": 0.132684,
+    "wall_secs": 0.139048,
     "status": "optimal",
     "objective": 176.0,
     "nodes": 1
