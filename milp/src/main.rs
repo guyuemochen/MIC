@@ -494,6 +494,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             mitm_windows: if config.mitm { 8 } else { 0 },
+            local_cuts: true, // W6 树内局部割（库默认；CLI 不设旗标）
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；
             // 显式 local/global ⇒ auto=false、字段逐字生效（覆盖优先）。
             global_work_stack: config.work_stack == WorkStackCli::Global,

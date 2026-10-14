@@ -1612,6 +1612,47 @@ pub fn implied_bound_cuts(
 /// Optimal 状态。割循环中 LP 变 Infeasible 是整数不可行问题的合法终局（割对
 /// 全部整数可行解有效，该集合为空时割可切空松弛区域）——如实作为 Infeasible
 /// 终态返回（调用方按根终局映射 SolveStatus::Infeasible）；Unbounded/
+/// W6：树内局部割的单轮分离（**只读**表格，不 add_row——行的作用域/
+/// 施加/重解由调用方 branch_bound 管理：子树出口经 Simplex 快照恢复）。
+/// 批序复用根割（c-MIR → GMI → 隐含界 → 覆盖），按配额截断；无
+/// CutRecord 去重（ledger 只存在于根循环的跨轮记账；局部割生命周期
+/// ≤ 子树，重复 Le 行至多冗余不切错）。分离失败/维度不符返回空。
+pub fn separate_local_cuts(
+    s: &Simplex,
+    bounds: &Bounds,
+    problem: &Problem,
+    int_vars: &[usize],
+    opts: CutOptions,
+    tol: &Tolerances,
+    max_cuts: usize,
+) -> Vec<Cut> {
+    let n = problem.vars.len();
+    let Some(x_bar) = rebuild_x_bar(s, bounds, n) else {
+        return Vec::new();
+    };
+    let mut batch = mir_row_cuts(problem, bounds, &x_bar, opts, tol);
+    batch.extend(gomory_cuts_inner(
+        s,
+        problem,
+        bounds,
+        int_vars,
+        opts,
+        tol,
+        &[],
+    ));
+    batch.extend(implied_bound_cuts(problem, bounds, &x_bar, opts, tol));
+    batch.extend(cover_cuts_with_lifting(
+        problem,
+        bounds,
+        &x_bar,
+        opts,
+        tol,
+        &mut LiftBudget::new(),
+    ));
+    batch.truncate(max_cuts);
+    batch
+}
+
 /// IterationLimit 则如实作为终态返回。
 pub fn cut_loop(
     s: &mut Simplex,

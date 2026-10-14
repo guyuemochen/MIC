@@ -176,6 +176,12 @@ pub struct BbOptions {
     /// 形态 A/B 可测量）。解析只发生在并行派发层：threads=1 顺序路径不读
     /// 该字段（t1 行为逐字节不变）。默认 true。
     pub work_stack_auto: bool,
+    /// 树内局部割（W6）：深度 ≤ 8 的节点上按配额跑轻量局部割轮（复用根
+    /// 割批序；每节点 ≤ LOCAL_CUT_PER_NODE 条、每 LOCAL_CUT_NODE_INTERVAL
+    /// 个节点一次、全局预算封顶），子树作用域经 Simplex 快照恢复（冷审
+    /// 调整 6 的机制 spike 结论）。仅顺序路径；并行 worker 不施加（窃取
+    /// 交错会使局部割泄漏到子树外——共享 Simplex 无行作用域）。默认 true。
+    pub local_cuts: bool,
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
@@ -208,6 +214,7 @@ impl Default for BbOptions {
             global_work_stack: false,
             work_stack_auto: true,
             branch_rule_auto: true,
+            local_cuts: true,
         }
     }
 }
@@ -796,6 +803,21 @@ fn sequential_bb(
     // 伪代价分支统计（仅 Pseudocost 规则读写；MostFractional 下为零开销
     // 空表）。
     let mut pc = Pseudocosts::new(problem.vars.len());
+    // —— W6 树内局部割状态 ——
+    // 作用域栈：(施加时 trail 长度, Simplex 快照, 快照时累计迭代)。DFS 弹出
+    // unwind_to < 施加点的 Pending ⇒ 已退出该子树 ⇒ 恢复快照（局部行只在
+    // 子树内有效——泄漏会切子树外整数可行解）。恢复前把迭代差额累计进
+    // base（快照回退 iterations_total，分离/重解迭代不丢账）。
+    let mut cut_scopes: Vec<(usize, Simplex, u64)> = Vec::new();
+    let mut local_cut_budget = LOCAL_CUT_GLOBAL_BUDGET;
+    let mut next_local_cut_node: u64 = LOCAL_CUT_NODE_INTERVAL;
+    // W6 类门控：仅多维背包类（detect_pseudocost_favorable——与 R3/W1 同一
+    // 检测器）施加局部割。实测依据：mknap 族收益真实（5x300 节点 −17%、
+    // 3x100 −11%）；marketsplit-4x40 零压缩纯开销（节点 −1%、墙钟中位
+    // 10.74→12.98s +21%，5 rep 区间不相交——28 条局部割无树压缩）；
+    // 其余类树形/根闭合本来不触发。单行背包类（knapsack/hard-knapsack）
+    // 不命中门 ⇒ 行为逐字节不变。
+    let local_cuts_on = opts.local_cuts && detect_pseudocost_favorable(problem);
 
     // 根节点按 (d)/(e)/(f) 判定（无界等已终局，此处的 Unbounded 恒为根语义）。
     branch_or_close(
@@ -815,6 +837,7 @@ fn sequential_bb(
         budget_progress_cap,
         &mut pc,
         adaptive.as_mut(),
+        0,
     );
 
     // 根阶段完成（根启发式刚运行过）：控制器节流锚点 = 根节点数（=1）。
@@ -894,6 +917,18 @@ fn sequential_bb(
         let Some(p) = stack.pop() else {
             break;
         };
+        // W6：退出局部割作用域——弹出的 Pending 属祖先层（unwind_to 更短）
+        // ⇒ 其施加点在作用域栈顶的割全部出域，恢复快照（栈序 = 深度序）。
+        while let Some(&(scope_trail, _, _)) = cut_scopes.last() {
+            if scope_trail > p.unwind_to {
+                let (_, snap, snap_iters) = cut_scopes.pop().expect("checked last");
+                base_lp_iterations =
+                    base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(snap_iters));
+                simplex = snap;
+            } else {
+                break;
+            }
+        }
         // est 弹出剪枝（仅整数目标启用，与 cutoff 同门控）：父节点 LP 目标
         // est 已不优于 incumbent 的有效剪枝界 ⇒ 该子树不可能再出严格更优解，
         // 直接丢弃——不 unwind/tighten、不 resolve、不计 stats.nodes、不耗
@@ -925,7 +960,7 @@ fn sequential_bb(
         if !tighten_child(&mut bounds, &mut trail, p.var, p.tighten_lb, p.bound) {
             continue;
         }
-        let sol = simplex.resolve(&bounds);
+        let mut sol = simplex.resolve(&bounds);
         stats.nodes += 1;
         // 伪代价观测：子节点 LP 目标相对父 est 的方向化增益 ÷ 方向分数
         // 距离（非 Optimal 子节点不记——不可行=无穷增益语义留空，保守）。
@@ -962,6 +997,75 @@ fn sequential_bb(
             NodeAction::Process => {}
         }
 
+        // —— W6：树内局部割轮（配额制；仅顺序路径）——
+        if local_cuts_on
+            && p.depth >= 1
+            && p.depth <= LOCAL_CUT_MAX_DEPTH
+            && stats.nodes >= next_local_cut_node
+            && local_cut_budget > 0
+        {
+            let quota = LOCAL_CUT_PER_NODE.min(local_cut_budget as usize);
+            let batch = cuts::separate_local_cuts(
+                &simplex,
+                &bounds,
+                problem,
+                &int_vars,
+                CutOptions::default(),
+                &tol,
+                quota,
+            );
+            if !batch.is_empty() {
+                // 快照（施加前状态；子树出口恢复）。
+                cut_scopes.push((trail.len(), simplex.clone(), simplex.iterations()));
+                let mut applied: u64 = 0;
+                let mut add_ok = true;
+                for cut in &batch {
+                    if simplex.add_row(&cut.terms, RelOp::Le, cut.rhs).is_err() {
+                        add_ok = false;
+                        break;
+                    }
+                    applied += 1;
+                }
+                let strengthened = if add_ok {
+                    simplex.resolve(&bounds)
+                } else {
+                    // add_row 失败（防御）：视同分离失败，走下方防御回退。
+                    LpSolution {
+                        status: LpStatus::IterationLimit,
+                        objective: f64::NAN,
+                        x: Vec::new(),
+                        duals: Vec::new(),
+                    }
+                };
+                match strengthened.status {
+                    LpStatus::Optimal => {
+                        sol = strengthened;
+                        stats.cuts += applied;
+                        local_cut_budget -= applied;
+                        next_local_cut_node = stats.nodes + LOCAL_CUT_NODE_INTERVAL;
+                    }
+                    LpStatus::Infeasible => {
+                        // 局部割切空本子树 LP ⇒ 子树无整数可行解（割在子树内
+                        // 有效）：节点关闭——恢复快照（弹出刚压的作用域）、
+                        // 不分支、不计割。
+                        let (_, snap, snap_iters) = cut_scopes.pop().expect("just pushed");
+                        base_lp_iterations = base_lp_iterations
+                            .saturating_add(simplex.iterations().saturating_sub(snap_iters));
+                        simplex = snap;
+                        continue;
+                    }
+                    _ => {
+                        // IterationLimit/TimeLimit/Unbounded：防御性回退——
+                        // 恢复快照，用原 sol 继续本节点判定（不冒充加强解）。
+                        let (_, snap, snap_iters) = cut_scopes.pop().expect("just pushed");
+                        base_lp_iterations = base_lp_iterations
+                            .saturating_add(simplex.iterations().saturating_sub(snap_iters));
+                        simplex = snap;
+                    }
+                }
+            }
+        }
+
         // (d)/(e)/(f) 与分支压栈。
         branch_or_close(
             problem,
@@ -980,6 +1084,7 @@ fn sequential_bb(
             budget_progress_cap,
             &mut pc,
             adaptive.as_mut(),
+            p.depth,
         );
     }
 
@@ -1235,6 +1340,8 @@ struct Pending {
     /// 该方向距被违反界的分数距离（下行 = x_j−⌊x_j⌋；上行 = ⌈x_j⌉−x_j），
     /// 伪代价观测用。非伪代价规则下不读。
     frac_dir: f64,
+    /// 节点深度（根 = 0；W6 局部割的深度门控）。
+    depth: u32,
 }
 
 /// 回退 trail 至长度 `to`（严格逆序恢复旧界）。
@@ -1475,6 +1582,7 @@ fn branch_or_close(
     budget_progress_cap: Option<f64>,
     pc: &mut Pseudocosts,
     mut adaptive: Option<&mut AdaptiveState>,
+    depth: u32,
 ) {
     // (d)：LP bound 不优于 incumbent ⇒ 剪枝（按原始 sense 方向比较）。
     if let Some((obj, _)) = incumbent.as_ref() {
@@ -1582,6 +1690,7 @@ fn branch_or_close(
     // est = 压栈时父节点 LP 目标；frac_dir = 该方向距界的分数距离
     // （伪代价观测用）。
     let up = Pending {
+        depth: depth + 1,
         var,
         tighten_lb: true,
         bound: floor + 1.0,
@@ -1590,6 +1699,7 @@ fn branch_or_close(
         frac_dir: 1.0 - frac,
     };
     let down = Pending {
+        depth: depth + 1,
         var,
         tighten_lb: false,
         bound: floor,
@@ -1648,6 +1758,17 @@ fn maybe_update(sense: Sense, incumbent: &mut Option<(f64, Vec<f64>)>, inc: Incu
     }
     better
 }
+
+/// W6 树内局部割参数（配额制——分离成本 ≫ 节点 resolve 成本，配额与
+/// 间隔小步标定；见 docs/parallel-profiling.md §15 的 A/B）。
+/// 深度门：≤ 8（深节点 LP 已贴局部整数包，分离效率低）。
+const LOCAL_CUT_MAX_DEPTH: u32 = 8;
+/// 间隔：每 64 个 resolve 最多一次分离。
+const LOCAL_CUT_NODE_INTERVAL: u64 = 64;
+/// 每节点配额：≤ 2 条。
+const LOCAL_CUT_PER_NODE: usize = 2;
+/// 全局局部割预算（条）。
+const LOCAL_CUT_GLOBAL_BUDGET: u64 = 2_000;
 
 /// 时间上限检查（调用方保证 `limit_ms > 0`）。
 fn time_exceeded(start: &Instant, limit_ms: u64) -> bool {
@@ -2279,6 +2400,70 @@ mod tests {
         assert_eq!(budget.stats.lp_iterations, wall.stats.lp_iterations);
         assert_eq!(budget.stats.cuts, wall.stats.cuts);
         assert_eq!(budget.bound, wall.bound);
+    }
+
+    /// （W6）树内局部割：mknap-3x100（多维背包类，类门控命中）默认开启 ⇒
+    /// 触发（cuts > 根割基线 57）、双跑全部行为字段逐字节确定、目标恒同
+    /// 已知最优 2331；`local_cuts = false` ⇒ 与关闭路径逐字节一致
+    /// （57 cuts / 2,120 节点 = W6 前基线，回归钉）。
+    #[test]
+    fn local_cuts_fire_deterministically_and_toggle_restores() {
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let on1 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        let on2 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        assert_eq!(on1.status, SolveStatus::Optimal);
+        assert_close(on1.best_objective.unwrap(), 2331.0);
+        // 确定性：行为字段双跑逐字节。
+        assert_eq!(on1.stats.nodes, on2.stats.nodes);
+        assert_eq!(on1.stats.lp_iterations, on2.stats.lp_iterations);
+        assert_eq!(on1.stats.cuts, on2.stats.cuts);
+        assert_eq!(on1.bound, on2.bound);
+        // 触发：局部割计入 cuts（根割基线 57 → 更高）。
+        assert!(
+            on1.stats.cuts > 57,
+            "局部割应触发（cuts = {}，根割基线 57）",
+            on1.stats.cuts
+        );
+        // 开关：关闭后无局部割（cuts = 根割基线 57）且目标恒同；对照
+        // adaptive-on 口径（探针/CLI 默认）与 pre-W6 基线 2,120 节点逐位
+        // 一致——证明 off 路径纯净。
+        let off = branch_and_bound(
+            &problem,
+            &BbOptions {
+                local_cuts: false,
+                ..BbOptions::default()
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(off.stats.cuts, 57, "关闭后只剩根割");
+        assert_close(off.best_objective.unwrap(), 2331.0);
+        let off_auto = branch_and_bound_controlled(
+            &problem,
+            &BbOptions {
+                local_cuts: false,
+                ..BbOptions::default()
+            },
+            &SearchControl {
+                adaptive_heuristics: true,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(off_auto.stats.cuts, 57);
+        // raw（无 presolve）+ adaptive-on 的 pre-W6 基线 = 2,106 节点 /
+        // 24,072 迭代（HEAD 实测钉；探针口径的 2,120 是 presolve 重建后
+        // 的问题——与本测试的 raw 路径无关）。
+        assert_eq!(off_auto.stats.nodes, 2106, "adaptive-on off-cut = pre-W6 raw 基线");
+        assert_eq!(off_auto.stats.lp_iterations, 24072);
+        assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为

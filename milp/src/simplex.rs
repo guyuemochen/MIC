@@ -291,6 +291,12 @@ pub struct LpSolution {
 /// 私有状态：dense 表格（`matrix` = B⁻¹A）、显式 B⁻¹（`binv`）、基列、
 /// 非基贴界状态、列布局、行缩放系数、人工列记账、迭代计数、Bland 模式
 /// 标记、`infeasible_flag` 等。
+///
+/// W6：derive(Clone)——树内局部割的子树作用域快照（branch_bound 在施加
+/// 局部割前克隆、DFS 退出该子树时恢复；全字段纯数据，深拷贝即精确状态
+/// 还原——remove_row 在表格基语义下不可行，快照是冷审调整 6 三个候选中
+/// 成本最低且正确性最直白的机制）。
+#[derive(Clone)]
 pub struct Simplex {
     /// 容差集中配置。
     tol: Tolerances,
