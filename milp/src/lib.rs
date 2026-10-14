@@ -37,3 +37,6 @@ pub mod solver;
 pub mod search_ctrl;
 pub mod parallel_bb;
 pub mod scaling;
+// S2：稀疏修正单纯形 standalone（CSC + GP 稀疏 LU + FTRAN/BTRAN + ETA +
+// 有界原单纯形；语义对齐 simplex.rs，见模块文档；未接 B&B——S3 集成）。
+pub mod simplex_sparse;
