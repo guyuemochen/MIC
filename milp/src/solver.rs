@@ -15,7 +15,8 @@
 //!
 //! # 实现说明（WP4）
 //! - presolve 关闭时直接在原始问题上求解（`values` 天然同维）；
-//!   开启时 `presolve_reductions` = 被固定删除的列数 + 被删除的行数。
+//!   开启时 `presolve_reductions` = 被固定删除的列数 + 被删除的行数 +
+//!   被聚合合并的重复列数（W5）。
 //! - 只有 B&B 带回取值（Optimal 或有 incumbent 的 LimitReached）才走
 //!   postsolve 与终检；Infeasible/Unbounded/无 incumbent 的 LimitReached
 //!   报告 `objective`/`values` 均为 `None`。
@@ -123,7 +124,14 @@ pub fn solve_controlled(
     };
     let (work, map, reductions) = if opts.use_presolve {
         let (reduced, map) = presolve::presolve(&pre_work, &opts.tol)?;
-        let reductions = map.fixed.len() + map.dropped_rows.len();
+        // W5：聚合掉的重复列（组成员数 − 1）一并计入消减量。
+        let reductions = map.fixed.len()
+            + map.dropped_rows.len()
+            + map
+                .aggregations
+                .iter()
+                .map(|(members, _)| members.len().saturating_sub(1))
+                .sum::<usize>();
         (reduced, Some(map), reductions)
     } else {
         (pre_work, None, 0)
