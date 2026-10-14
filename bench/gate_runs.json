@@ -2,7 +2,7 @@
   {
     "instance": "knapsack-200",
     "threads": 1,
-    "wall_secs": 0.006136,
+    "wall_secs": 0.003669,
     "status": "optimal",
     "objective": 3409.0,
     "nodes": 1
@@ -10,15 +10,15 @@
   {
     "instance": "setcover-100x150",
     "threads": 1,
-    "wall_secs": 0.511522,
+    "wall_secs": 0.309122,
     "status": "optimal",
     "objective": 276.0,
-    "nodes": 13
+    "nodes": 15
   },
   {
     "instance": "knapsack-2000",
     "threads": 1,
-    "wall_secs": 0.441567,
+    "wall_secs": 0.238234,
     "status": "optimal",
     "objective": 35328.0,
     "nodes": 38
@@ -26,7 +26,7 @@
   {
     "instance": "lp-sparse-4000x800",
     "threads": 1,
-    "wall_secs": 30.389511,
+    "wall_secs": 30.119958,
     "status": "limit_reached",
     "objective": null,
     "nodes": 1
@@ -34,7 +34,7 @@
   {
     "instance": "setcover-400x800",
     "threads": 1,
-    "wall_secs": 26.198816,
+    "wall_secs": 30.042644,
     "status": "limit_reached",
     "objective": null,
     "nodes": 1
@@ -42,7 +42,7 @@
   {
     "instance": "mknap-5x300",
     "threads": 1,
-    "wall_secs": 12.970133,
+    "wall_secs": 19.237406,
     "status": "optimal",
     "objective": 4762.0,
     "nodes": 87800

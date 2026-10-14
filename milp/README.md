@@ -598,13 +598,15 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | 算例 | 规模 | t1 实测（探针标定） |
 |------|------|---------------------|
 | `lp-sparse-4000x800` | 稀疏纯 LP：800 行 × 4000 列，密度 8%（256,000 非零元） | 35.8s optimal（1 节点 / 7774 单纯形迭代，obj 5893.705757）——稀疏核心主秀场；时限检查曾只在 B&B 节点边界（单节点纯 LP 跑满全程、30s 名义值实测越窗至 34-63s），W2 内部时限后 30s 时限下 30.1-30.3s 诚实 limit_reached（gate 基线随轮重钉） |
-| `setcover-400x800` | 集合覆盖：400 覆盖行 × 800 二元列，密度 0.08 | 17.3s **limit_reached**（1 节点）——lp_iterations = 24000 恰为单次求解迭代上限 max(10k, 20×(m+n))，setcover 类迭代上限传播失败模式的大规模样本（R8 已解开小规模 setcover-100x150，本例根 LP 需 ~200k 迭代、上限放宽收益/成本倒挂，维持如实入列） |
+| `setcover-400x800` | 集合覆盖：400 覆盖行 × 800 二元列，密度 0.08 | **W4 解锁根 LP**：曾 17.3s limit_reached（1 节点，24000 迭代上限锁死、零 incumbent）；W4 给总迭代 Bland 触发加停滞证据门后根 LP 首次可解——90s 预算下诚实终态携带 incumbent 129（auto_degraded/limit_reached 视降级时机），30s 预算仍为根内诚实截断 |
 | `knapsack-5000` | 强相关 0/1 背包 5000 变量 | 2.2s optimal，objective 88526 与独立 DP 真值（`knapsack-5000.opt`）一致 |
 | `mknap-10x200` | 多维背包：200 二元变量 × 10 约束行 | 26.4s optimal，obj 1791（254,119 节点 / 3,132,767 LP 迭代） |
 | `assign-40x40` | 指派 40×40（1600 二元变量 / 80 等式行） | 0.12s optimal，obj 176（1 节点——指派约束矩阵全单模，根 LP 即整数解） |
 
-矩阵外另有拉伸/消融算例：`lp-wide-1000x2000`、`setcover-300x600`（R1 行为
-对账用）、`marketsplit-4x40` / `marketsplit-5x50`（R5 MITM 目标算例）。计时
+矩阵外另有拉伸/消融算例：`lp-wide-1000x2000`、`setcover-300x600`（W4
+起根 LP 解锁：无时限 t1 optimal 144.0@1,867 节点 / 275,471 迭代，~60-97s；
+曾为 18000 迭代上限锁死零 incumbent）、`marketsplit-4x40` /
+`marketsplit-5x50`（R5 MITM 目标算例）。计时
 矩阵：`python bench/run_timings.py --set gate`（6 算例 × 30s，约 3 分钟快速
 回归）或 `--set full`（18 算例 × threads {1,4} × 90s）。逐轮改动与实测数据
 见 [docs/large-scale-report.md](../docs/large-scale-report.md)。

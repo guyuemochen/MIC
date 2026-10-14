@@ -2045,10 +2045,25 @@ impl Simplex {
             if self.rhs.iter().any(|v| !v.is_finite()) {
                 return PhaseOutcome::Failed("基变量值出现 NaN/Inf".to_string());
             }
-            if self.iter_call > bland_total {
-                // 总迭代触发：Bland 置位（逐迭代重申；释放见
-                // bland_release_step——单步 Dantzig 窗口，预算耗尽后
-                // 永久驻留，终止保底）。
+            if self.iter_call > bland_total && self.degenerate_streak > 0 {
+                // 总迭代触发 + 停滞证据门（W4）：iter_call > 3×(m+n) 且最近
+                // 一步退化才切 Bland（逐迭代重申；释放见 bland_release_step
+                // ——单步 Dantzig 窗口，重入预算耗尽后永久驻留，终止保底）。
+                // W4 之前该触发**无停滞证据门**：setcover-300x600/400x800 根
+                // LP Phase-2 全程非退化下降（W4 插桩 degen_tot = 0——无一次
+                // 迭代处于退化 streak）仍在 3×(m+n) 被切 Bland，64 次重入
+                // 耗尽后以 −1.5 obj/500 迭代爬行至 20×(m+n) 上限锁死（Dantzig
+                // 同期 −42~−62，28-40× 差距；R8 留档的 66k-200k 迭代需求即
+                // 该爬行率口径）。Bland 是反循环装置——循环需要退化，非退化
+                // 下降不该交给它；加门后停滞中的 Dantzig（streak>0 常在）
+                // 照旧触发、预算耗尽永久驻留（终止保底不变），纯下降的
+                // Dantzig（streak 恒 0）不再被切。全类 A/B：19/20 算例行为
+                // 逐字节不变（knapsack 全族/mknap 全族/marketsplit/mixed/
+                // assign/lp），唯 setcover-100x150 节点 13→15、lpi +108%
+                // （目标恒同 276 optimal）；setcover-300x600 解锁 optimal
+                // 144.0@1,867（原根上限锁死零 incumbent）、400x800 根 LP
+                // 首次可解（90s 预算诚实 incumbent 129）。详见
+                // docs/parallel-profiling.md §13。
                 self.bland = true;
                 self.bland_permanent = true;
             } else if self.degenerate_streak > DEGENERATE_STREAK_LIMIT {

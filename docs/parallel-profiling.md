@@ -717,3 +717,81 @@ milp/README.md 已有 `--work-stack` 条目（参数表）且默认 local 未变
 2. budget 模式下 `--log-secs` 进度行的时刻字段仍读钟（展示契约），
    不影响行为字段；`stats.time_ms`/`wall_secs` 同理。
 3. t1 budget + `--mipgap`/`--node-limit` 组合不受影响（本就确定性）。
+
+
+## 13. W4 实现轮（2026-10-14）：setcover 宽表根 LP 解锁（R8 诚实遗留）
+
+> R8 留档：setcover-300x600/400x800 根 LP「以 Bland 打满 18000/24000 上限，
+> LP 实际可解但需 66k-200k 迭代（LP_LIMIT_OVERRIDE 实验），根因是 Bland
+> 最小下标入基在宽表上单步进展极小」。ask 路径 ③（证据先行）执行后选型：
+> **不是定价/比值测试问题，是 Bland 总迭代触发过早**——一行门控修复。
+
+### 13.1 插桩取证（临时补丁，MILP_W4_PROBE=1，用后移除；数字为本轮实测）
+
+setcover-300x600 根 LP（Phase-2，run_phase 每 500 迭代采样）：
+
+| 迭代窗口 | 模式 | Δobj/500 迭代 |
+|---|---|---|
+| 1500→2000 / 2000→2500 | Dantzig | **−61.7 / −41.9** |
+| 2500→3000 | 总迭代触发（3×(m+n)=2,700）切 Bland + 重入混合 | −17.8 |
+| 3000→3500 | 重入窗口期（1 Dantzig : ~8 Bland） | −2.9 |
+| 3500→5000 | **重入预算（BLAND_REARM_MAX=64）耗尽后纯 Bland** | **−1.4~−1.5** |
+
+- **Phase-2 全程 degen_tot = 0**（无一次迭代处于退化 streak——插桩计数器
+  逐迭代累加）：**非循环、非退化**，是纯粹的非退化下降被 Bland 接管。
+- 纯 Bland 速率 −1.5 obj/500 迭代 vs Dantzig −42~−62：**28-40× 差距**。
+  R8 留档的 66k-200k 迭代需求正是该爬行率口径下的外推。
+- setcover-100x150 的割循环 Phase-1 则重度退化（degen 3276/3636）——
+  停滞证据（degenerate_streak）在该类 Phase-1 常在，反证触发器对真正
+  停滞场景的必要性。
+
+### 13.2 修复（simplex.rs 一处门控）
+
+总迭代触发 `iter_call > 3×(m+n)` **加停滞证据门 `degenerate_streak > 0`**
+（置位处一行条件变更；注释全量重写）。语义：Bland 是反循环装置——循环
+需要退化；非退化下降（streak 恒 0）不该交给它。终止保底不变：停滞中的
+Dantzig（streak>0 常在）照旧触发 + 重入预算耗尽后永久驻留；纯下降的
+Dantzig 不再被切，上限 max(10k, 20×(m+n)) 仍是诚实 LimitReached 兜底。
+未采用的方向（证据否决）：部分定价/Devex（问题不在每迭代成本或列选择
+质量，在 Bland 接管）；Harris 比值测试（degen_tot=0，无退化循环可消）。
+
+### 13.3 验收数字（全部本轮实跑）
+
+- **解锁（ask 验收线）**：setcover-300x600 无时限 t1 = **optimal 144.0 @
+  1,867 节点 / 275,471 lpi**（双跑逐字节相同，墙钟 74.2/96.8s）——原为
+  18000 迭代上限锁死、limit_reached@1 节点零 incumbent；t4 亦解锁
+  （optimal 144.0 @ 1,407 节点 / 42.0s）。setcover-400x800 根 LP 首次
+  可解：90s 预算诚实终态携带 incumbent 129（auto_degraded@75.8s 或
+  limit_reached@90.1s 视降级时机）、300s 预算 auto_degraded 129@849 节点；
+  30s 预算仍为根内诚实截断（根 LP 需 ~20k+ 迭代 × ~1-2.7ms）。
+  bench 预算口径：300x600 30s = limit_reached **obj=154.0**@696 节点、
+  90s = auto_degraded 148.0@1,139——编排方 gate/full 基线需重钉（原为
+  零 incumbent 的 limit_reached@1）。
+- **全类 A/B 无净回退（pre-W4 二进制 vs W4，t1 无时限）**：**19/20 算例
+  行为逐字节不变**（nodes+lpi 全等）——knapsack-200/500/2000/5000（历史
+  翻车点 knapsack-500：360 节点/4,889 lpi 逐位不变）、mknap-3x100/5x300
+  （87,800/1,747,982）/10x200（142,242/1,732,379）、marketsplit-4x40
+  （854,952）/5x50（2M/13,938,215）、milp-mixed×2、setcover-60x100、
+  assign-16x16/40x40、lp-wide-200x300。**唯一变化 setcover-100x150**：
+  节点 13→15、lpi 5,246→10,920（+108%）、墙钟中位 0.526→0.602s（+14%，
+  5 rep 交错 [0.455,0.546] vs [0.554,0.631] 不相交）——目标恒同 276.0
+  optimal。净判定：+0.08s 换 300x600/400x800 解锁，净收益明确。
+- **目标值恒为已知最优**：本窗全部求解 objective 与各算例锚一致
+ （knapsack .opt DP 真值、mknap 4762/2331/1791、setcover 276/144、
+  marketsplit 10/15/19/25、mixed、assign、lp-*）。
+- **测试**：lib 252/252、bin milp 22/22、acceptance 13/13、
+  warm_cold_parity 1/1（全部既有断言原样通过，无重钉）；cargo check
+  --all-targets 零警告。插桩代码已整体移除（grep 证实 0 残留），测量
+  原始 .err 落档后删除。
+- **确定性**：无墙钟参与（Bland 触发/释放本就全计数器驱动）；300x600
+  双跑逐字节 + 19 例身份 A/B 为证。
+
+### 13.4 遗留
+
+1. setcover-400x800 无时限完备证明未测（树大，90s/300s 均未证完）——
+   根 LP 已解、incumbent 稳定 129，证优留给后续（需更强割/树策略，
+   非本轮范围）。
+2. setcover-100x150 的 +14% 墙钟（Dantzig 尾段在 3×(m+n) 后继续小步
+   下降）——若后续需要，可探索「进度衰减感知」的尾段切换，本轮不做。
+3. R8 遗留 #9（bland_release_step 未含 !bland_permanent 的文档-代码
+   矛盾）与本轮无关，维持留档。
