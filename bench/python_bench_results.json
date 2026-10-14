@@ -1,0 +1,506 @@
+[
+ {
+  "instance": "knapsack-200",
+  "solver": "micpython",
+  "build_secs": 0.0065,
+  "solve_secs": 0.002,
+  "status": "optimal",
+  "objective": 3409.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-200",
+  "solver": "cbc",
+  "build_secs": 0.0018,
+  "solve_secs": 0.161,
+  "status": "optimal",
+  "objective": 3409.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-200",
+  "solver": "highs",
+  "build_secs": 0.0002,
+  "solve_secs": 0.034,
+  "status": "optimal",
+  "objective": 3409.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-200",
+  "solver": "scip",
+  "build_secs": 0.0037,
+  "solve_secs": 0.005,
+  "status": "optimal",
+  "objective": 3409.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "micpython",
+  "build_secs": 0.0322,
+  "solve_secs": 0.02,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "cbc",
+  "build_secs": 0.007,
+  "solve_secs": 0.1,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "highs",
+  "build_secs": 0.0004,
+  "solve_secs": 0.065,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "scip",
+  "build_secs": 0.0038,
+  "solve_secs": 0.012,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "micpython",
+  "build_secs": 0.3834,
+  "solve_secs": 0.015,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "cbc",
+  "build_secs": 0.0197,
+  "solve_secs": 0.117,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "highs",
+  "build_secs": 0.0012,
+  "solve_secs": 0.144,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "scip",
+  "build_secs": 0.0054,
+  "solve_secs": 0.137,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-5000",
+  "solver": "micpython",
+  "build_secs": 2.3484,
+  "solve_secs": 0.026,
+  "status": "optimal",
+  "objective": 88526.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-5000",
+  "solver": "cbc",
+  "build_secs": 0.0449,
+  "solve_secs": 0.176,
+  "status": "optimal",
+  "objective": 88526.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-5000",
+  "solver": "highs",
+  "build_secs": 0.0032,
+  "solve_secs": 0.421,
+  "status": "optimal",
+  "objective": 88526.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-5000",
+  "solver": "scip",
+  "build_secs": 0.0082,
+  "solve_secs": 0.043,
+  "status": "optimal",
+  "objective": 88525.0,
+  "limit": 60
+ },
+ {
+  "instance": "mknap-3x100",
+  "solver": "micpython",
+  "build_secs": 0.0055,
+  "solve_secs": 0.081,
+  "status": "optimal",
+  "objective": 2331.0,
+  "limit": 60
+ },
+ {
+  "instance": "mknap-3x100",
+  "solver": "cbc",
+  "build_secs": null,
+  "solve_secs": 180.0,
+  "status": "watchdog_kill",
+  "objective": null,
+  "limit": 60
+ },
+ {
+  "instance": "mknap-3x100",
+  "solver": "highs",
+  "build_secs": 0.0002,
+  "solve_secs": 0.791,
+  "status": "optimal",
+  "objective": 2331.0,
+  "limit": 60
+ },
+ {
+  "instance": "mknap-3x100",
+  "solver": "scip",
+  "build_secs": 0.0055,
+  "solve_secs": 0.216,
+  "status": "optimal",
+  "objective": 2331.0,
+  "limit": 60
+ },
+ {
+  "instance": "mknap-5x300",
+  "solver": "micpython",
+  "build_secs": 0.0308,
+  "solve_secs": 10.849,
+  "status": "optimal",
+  "objective": 4762.0,
+  "limit": 120
+ },
+ {
+  "instance": "mknap-5x300",
+  "solver": "cbc",
+  "build_secs": null,
+  "solve_secs": 240.0,
+  "status": "watchdog_kill",
+  "objective": null,
+  "limit": 120
+ },
+ {
+  "instance": "mknap-5x300",
+  "solver": "highs",
+  "build_secs": 0.0007,
+  "solve_secs": 2.947,
+  "status": "optimal",
+  "objective": 4762.000000000001,
+  "limit": 120
+ },
+ {
+  "instance": "mknap-5x300",
+  "solver": "scip",
+  "build_secs": 0.0038,
+  "solve_secs": 2.225,
+  "status": "optimal",
+  "objective": 4762.0,
+  "limit": 120
+ },
+ {
+  "instance": "setcover-100x150",
+  "solver": "micpython",
+  "build_secs": 0.0099,
+  "solve_secs": 0.365,
+  "status": "optimal",
+  "objective": 276.0,
+  "limit": 60
+ },
+ {
+  "instance": "setcover-100x150",
+  "solver": "cbc",
+  "build_secs": 0.0062,
+  "solve_secs": 0.232,
+  "status": "optimal",
+  "objective": 276.0,
+  "limit": 60
+ },
+ {
+  "instance": "setcover-100x150",
+  "solver": "highs",
+  "build_secs": 0.0005,
+  "solve_secs": 0.208,
+  "status": "optimal",
+  "objective": 276.0,
+  "limit": 60
+ },
+ {
+  "instance": "setcover-100x150",
+  "solver": "scip",
+  "build_secs": 0.0039,
+  "solve_secs": 0.314,
+  "status": "optimal",
+  "objective": 276.0,
+  "limit": 60
+ },
+ {
+  "instance": "setcover-300x600",
+  "solver": "micpython",
+  "build_secs": 0.0964,
+  "solve_secs": 59.102,
+  "status": "optimal",
+  "objective": 144.0,
+  "limit": 120
+ },
+ {
+  "instance": "setcover-300x600",
+  "solver": "cbc",
+  "build_secs": null,
+  "solve_secs": 240.0,
+  "status": "watchdog_kill",
+  "objective": null,
+  "limit": 120
+ },
+ {
+  "instance": "setcover-300x600",
+  "solver": "highs",
+  "build_secs": 0.0039,
+  "solve_secs": 1.838,
+  "status": "optimal",
+  "objective": 144.0,
+  "limit": 120
+ },
+ {
+  "instance": "setcover-300x600",
+  "solver": "scip",
+  "build_secs": 0.0071,
+  "solve_secs": 1.957,
+  "status": "optimal",
+  "objective": 144.0,
+  "limit": 120
+ },
+ {
+  "instance": "milp-mixed-250i40c",
+  "solver": "micpython",
+  "build_secs": 0.0865,
+  "solve_secs": 0.013,
+  "status": "optimal",
+  "objective": 1275.791751746084,
+  "limit": 60
+ },
+ {
+  "instance": "milp-mixed-250i40c",
+  "solver": "cbc",
+  "build_secs": 0.016,
+  "solve_secs": 0.161,
+  "status": "Unbounded",
+  "objective": 445078867824000.0,
+  "limit": 60
+ },
+ {
+  "instance": "milp-mixed-250i40c",
+  "solver": "highs",
+  "build_secs": 0.0012,
+  "solve_secs": 0.523,
+  "status": "optimal",
+  "objective": 1275.7917517463113,
+  "limit": 60
+ },
+ {
+  "instance": "milp-mixed-250i40c",
+  "solver": "scip",
+  "build_secs": 0.0044,
+  "solve_secs": 0.287,
+  "status": "optimal",
+  "objective": 1275.791751746084,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x30",
+  "solver": "micpython",
+  "build_secs": 0.0021,
+  "solve_secs": 0.014,
+  "status": "optimal",
+  "objective": 15.0,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x30",
+  "solver": "cbc",
+  "build_secs": null,
+  "solve_secs": 180.0,
+  "status": "watchdog_kill",
+  "objective": null,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x30",
+  "solver": "highs",
+  "build_secs": 0.0004,
+  "solve_secs": 6.544,
+  "status": "optimal",
+  "objective": 15.0,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x30",
+  "solver": "scip",
+  "build_secs": 0.005,
+  "solve_secs": 19.995,
+  "status": "optimal",
+  "objective": 15.0,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x40",
+  "solver": "micpython",
+  "build_secs": 0.0034,
+  "solve_secs": 8.555,
+  "status": "optimal",
+  "objective": 19.0,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x40",
+  "solver": "cbc",
+  "build_secs": null,
+  "solve_secs": 180.0,
+  "status": "watchdog_kill",
+  "objective": null,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x40",
+  "solver": "highs",
+  "build_secs": 0.0001,
+  "solve_secs": 60.008,
+  "status": "limit",
+  "objective": null,
+  "limit": 60
+ },
+ {
+  "instance": "marketsplit-4x40",
+  "solver": "scip",
+  "build_secs": 0.0031,
+  "solve_secs": 59.476,
+  "status": "status6",
+  "objective": null,
+  "limit": 60
+ },
+ {
+  "instance": "assign-40x40",
+  "solver": "micpython",
+  "build_secs": 0.1856,
+  "solve_secs": 0.102,
+  "status": "optimal",
+  "objective": 176.0,
+  "limit": 60
+ },
+ {
+  "instance": "assign-40x40",
+  "solver": "cbc",
+  "build_secs": 0.0253,
+  "solve_secs": 0.212,
+  "status": "optimal",
+  "objective": 176.0,
+  "limit": 60
+ },
+ {
+  "instance": "assign-40x40",
+  "solver": "highs",
+  "build_secs": 0.0026,
+  "solve_secs": 0.035,
+  "status": "optimal",
+  "objective": 176.0,
+  "limit": 60
+ },
+ {
+  "instance": "assign-40x40",
+  "solver": "scip",
+  "build_secs": 0.0072,
+  "solve_secs": 0.033,
+  "status": "optimal",
+  "objective": 176.0,
+  "limit": 60
+ },
+ {
+  "instance": "lp-wide-200x300",
+  "solver": "micpython",
+  "build_secs": 0.9942,
+  "solve_secs": 0.011,
+  "status": "optimal",
+  "objective": 112.66861478047609,
+  "limit": 60
+ },
+ {
+  "instance": "lp-wide-200x300",
+  "solver": "cbc",
+  "build_secs": 0.2395,
+  "solve_secs": 0.187,
+  "status": "Unbounded",
+  "objective": 23475.870994099987,
+  "limit": 60
+ },
+ {
+  "instance": "lp-wide-200x300",
+  "solver": "highs",
+  "build_secs": 0.0166,
+  "solve_secs": 0.035,
+  "status": "optimal",
+  "objective": 112.66861478047613,
+  "limit": 60
+ },
+ {
+  "instance": "lp-wide-200x300",
+  "solver": "scip",
+  "build_secs": 0.0227,
+  "solve_secs": 0.145,
+  "status": "optimal",
+  "objective": 112.66861478047622,
+  "limit": 60
+ },
+ {
+  "instance": "lp-sparse-4000x800",
+  "solver": "micpython",
+  "build_secs": 7.584,
+  "solve_secs": 34.757,
+  "status": "optimal",
+  "objective": 5893.705756617977,
+  "limit": 60
+ },
+ {
+  "instance": "lp-sparse-4000x800",
+  "solver": "cbc",
+  "build_secs": 0.9469,
+  "solve_secs": 1.002,
+  "status": "Unbounded",
+  "objective": 360949672.7894396,
+  "limit": 60
+ },
+ {
+  "instance": "lp-sparse-4000x800",
+  "solver": "highs",
+  "build_secs": 0.083,
+  "solve_secs": 1.036,
+  "status": "optimal",
+  "objective": 5893.705755757289,
+  "limit": 60
+ },
+ {
+  "instance": "lp-sparse-4000x800",
+  "solver": "scip",
+  "build_secs": 0.0881,
+  "solve_secs": 2.872,
+  "status": "optimal",
+  "objective": 5893.705756618257,
+  "limit": 60
+ }
+]
