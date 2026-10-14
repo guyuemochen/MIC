@@ -1,7 +1,7 @@
 # micpython — milp 求解器的 gurobipy 风格 Python 绑定
 
 零第三方依赖（ctypes + 标准库），Python 3.8+。目标求解器为本地 FFI 库
-**milp-ffi**（`milp-ffi/src/api.rs` 的 22 个 C ABI 符号），底层是 `milp`
+**milp-ffi**（`milp-ffi/src/api.rs` 的 23 个 C ABI 符号），底层是 `milp`
 crate 的 `solve_controlled` 精确分支定界引擎。`import micpython` 无副作用
 （惰性装载 DLL）。
 
@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 指向仓库根
    并附提示『先在工作区根执行 `cargo build --manifest-path milp-ffi/Cargo.toml
    --release`，或设 `MIC_FFI_LIB` 指向已构建库』；
 4. 装载成功后校验 `milp_ffi_abi_version() == 1`，再逐一校验并绑定全部
-   22 个符号（缺失或版本不符同样抛 `FfiLoadError`）。
+   23 个符号（S1 起含批量 `milp_ffi_add_vars_batch`，纯增符号向后兼容；
+   缺失或版本不符同样抛 `FfiLoadError`）。
 
 `micpython._ffi._reset_cache()` 仅供测试强制重载。
 
@@ -110,7 +111,7 @@ m.dispose()
 | --- | --- |
 | `Model(name='Model', sense=MINIMIZE)` | 创建模型（触发 DLL 装载） |
 | `addVar(lb=0.0, ub=None, obj=0.0, vtype=CONTINUOUS, name='')` | 加变量；`ub=None` 按类型默认（C/I→+INF，B→1.0）；`name=''` 自动生成唯一名（避开保留字） |
-| `addVars(count, ..., name='x')` | 批量加变量，第 i 个名为 `f"{name}{i}"`，返回 `list[Var]` |
+| `addVars(count, ..., name='x')` | 批量加变量（S1 起单次 FFI 跨界），第 i 个名为 `f"{name}{i}"`，返回 `list[Var]`；任一元素非法整批拒绝、零突变 |
 | `addConstr(temp, name='')` | 落模一条 `<=/>=/==` 比较产生的 TempConstr |
 | `setObjective(expr, sense=None)` | 设目标；`expr` 为 Var/LinExpr/数值，常数入目标偏移；`sense=None` 保持现方向 |
 | `setParam(name, value)` / `getParam(name)` | 参数读写（见下节） |
@@ -133,7 +134,8 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 - `LinExpr.getConstant()` / `getValue()`（按最近一次解求值）/ `len()`
   （变量项数）；同下标系数归并、归并为零的项丢弃（对齐 milp `LinearExpr`
   不变量）；
-- `quicksum(terms)` 顺序累加 iterable；空序列 → `LinExpr(0)`；
+- `quicksum(terms)` 顺序累加 iterable；空序列 → `LinExpr(0)`；实现为共享
+  项字典的就地累加（O(n)；S1 修复，旧 O(n²) 算子链在 5000 项时约 1.3s）；
 - 混用不同 Model 的变量 → `ArgumentError`（表达式/约束/目标构造时即拒绝）。
 
 ### 异常层次
@@ -242,7 +244,7 @@ python micpython/examples/knapsack.py
 ```
 micpython/
 ├── __init__.py        # 公共 API 导出（惰性装载，import 无副作用）
-├── _ffi.py            # ctypes FFI 绑定层（22 符号签名、错误映射、DLL 装载）
+├── _ffi.py            # ctypes FFI 绑定层（23 符号签名、错误映射、DLL 装载）
 ├── core.py            # gurobipy 风格建模 API（Model/Var/LinExpr/quicksum）
 ├── pyproject.toml     # 文档级打包元数据（不作门禁、零依赖零构建钩子）
 ├── README.md          # 本文档
@@ -250,7 +252,7 @@ micpython/
 │   └── knapsack.py    # gurobipy 风格示例（门禁：末行 objective = 17.000000）
 └── tests/
     ├── __init__.py    # unittest 包发现所需
-    ├── test_loader.py      # DLL 装载规则 / 22 符号 / 错误映射完整性
+    ├── test_loader.py      # DLL 装载规则 / 23 符号 / 错误映射完整性
     ├── test_expression.py  # LinExpr / quicksum / TempConstr 语义
     ├── test_model.py       # 建模计数 / 命名 / 界校验 / 目标方向
     ├── test_solve.py       # 求解终态 / 解读取 / dispose 守卫

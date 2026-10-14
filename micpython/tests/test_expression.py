@@ -64,6 +64,46 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(len(vanished), 0, '归并为零系数的项被丢弃')
         self.assertEqual(vanished.getConstant(), 0.0)
 
+    def test_quicksum_inplace_matches_operator_chain(self):
+        """S1 回归：就地累加与逐项 ``total + term`` 算子链逐位等价。
+
+        旧实现（O(n²)）经 LinExpr.__add__ 逐步新建整拷；新实现共享 dict
+        就地累加。同序浮点加法 + 零系数终态一致 ⇒ terms/constant/model
+        三者必须完全相同。
+        """
+        xs = self.m.addVars(4, name='q')
+        terms = [xs[0], 3, xs[1] * 2, xs[0] * -1.5, xs[2], xs[3] * 0.5, -7,
+                 xs[2] * -1, xs[3] * 0.5]
+        inplace = quicksum(terms)
+        chained = LinExpr()
+        for term in terms:
+            chained = chained + term
+        self.assertEqual(inplace._terms, chained._terms)
+        self.assertEqual(inplace.getConstant(), chained.getConstant())
+        self.assertIs(inplace._model, chained._model)
+        # 中途归零再复活：x - x + x 的终态系数与逐步删零的旧实现一致。
+        x = xs[0]
+        revived = quicksum([x, -x, x])
+        self.assertEqual(revived._terms, {x._index: 1.0})
+
+    def test_quicksum_non_numeric_term_raises_type_error(self):
+        # 与 total + term 返回 NotImplemented 后解释器报 TypeError 同款。
+        x = self.m.addVar(name='x')
+        with self.assertRaises(TypeError):
+            quicksum([x, 'not-a-term'])
+
+    def test_quicksum_large_n_linear(self):
+        """S1 验收挂钩：5000 项 quicksum 的项数与终值正确（O(n) 化后
+
+        python_bench knapsack-5000 的 build_secs 大头即两条 5000 项
+        quicksum；这里只钉语义，计时归微基准/基准脚本。
+        """
+        xs = self.m.addVars(5000, name='z')
+        e = quicksum(1.0 * v for v in xs)
+        self.assertEqual(len(e), 5000)
+        self.assertEqual(e._terms[0], 1.0)
+        self.assertEqual(e._terms[4999], 1.0)
+
     def test_scalar_multiplication_commutative(self):
         x = self.m.addVar(name='x')
         left = 2 * x

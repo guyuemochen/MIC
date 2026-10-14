@@ -383,11 +383,33 @@ class TempConstr(object):
 def quicksum(terms):
     """顺序累加 iterable 中的 Var/LinExpr/数值；空 iterable → ``LinExpr(0)``。
 
-    混用不同 Model 的变量 → ``ArgumentError``。
+    混用不同 Model 的变量 → ``ArgumentError``；不可累加元素 → ``TypeError``
+    （与 ``LinExpr + x`` 返回 NotImplemented 后解释器报错同款语义）。
+
+    实现注（S1）：**就地累加**共享同一 ``_terms`` dict，每项 O(1) 摊还、
+    整体 O(n)。旧实现 ``total = total + term`` 经 ``LinExpr.__add__`` 每步
+    新建 LinExpr 并整拷增长中的 dict（O(n²)：5000 项 ≈1.27s，是
+    python_bench knapsack-5000 build 2.35s 的绝对大头——逐变量 ctypes
+    调用仅 ≈0.03s）。数学语义与旧实现逐项等价：浮点加法同序（系数终值
+    bit 级一致），仅零系数清理从『逐步删』改为『末尾一次删』（对运行和，
+    中途归零项被删后再遇同下标时 ``get(idx, 0.0)`` 重取同一累加值，终态
+    dict 内容不变）。
     """
     total = LinExpr()
+    accumulate = total._terms
+    model = None
     for term in terms:
-        total = total + term
+        coerced = LinExpr._coerce(term)
+        if coerced is None:
+            raise TypeError("unsupported operand type(s) for +: "
+                            "'LinExpr' and '%s'" % type(term).__name__)
+        t_terms, t_const, t_model = coerced
+        model = _merged_model(model, t_model)
+        for idx, coeff in t_terms.items():
+            accumulate[idx] = accumulate.get(idx, 0.0) + coeff
+        total.constant += t_const
+    _drop_zeros(accumulate)
+    total._model = model
     return total
 
 
@@ -650,35 +672,79 @@ class Model(object):
                 return candidate
 
     def addVars(self, count, lb=0.0, ub=None, obj=0.0, vtype=CONTINUOUS, name='x'):
-        """批量添加变量，返回 ``list[Var]``。
+        """批量添加变量，返回 ``list[Var]``（S1 起经 FFI 批量符号
+        ``milp_ffi_add_vars_batch`` 单次跨界建 count 个变量）。
 
         - 第 i 个变量名为 ``f"{name}{i}"``——**唯一性仅保证单次调用内**；
-        - **两次同名 addVars 第二次抛 ModelError**：FFI/milp 拒绝重名变量
-          （消息『变量名 `x0` 重复』），micpython 不自作聪明去重——批量命名
-          冲突请更换 name 前缀；
+        - **两次同名 addVars 第二次抛 ModelError**：批内重名/撞现有名由
+          FFI 预检阶段整批拒绝（validate-then-mutate：任一元素非法零
+          突变），micpython 不自作聪明去重——批量命名冲突请更换 name
+          前缀；
         - ``obj`` 可为标量或长度等于 count 的序列（lb/ub/vtype 仅标量）；
-        - ``name`` 前缀含内嵌 NUL → ``ArgumentError``（B3，同 addVar）。
+          标量 obj 为非数值（含 None）时与旧逐个 addVar 路径同款抛
+          ``ArgumentError``；
+        - ``name`` 前缀含内嵌 NUL → ``ArgumentError``（B3，同 addVar）；
+        - 语义收紧（原逐个路径的空缺）：count=0 时 vtype/lb/ub 的值域
+          现在也会被校验（旧实现循环零次、静默放过非法标量）；
+        - 界默认、BINARY 的 ub=1 规则、obj 镜像（``setObjective`` 并入
+          规则）与逐个 addVar 完全一致（批量契约测试见 test_model.py）。
         """
         if isinstance(count, bool) or not isinstance(count, int):
             raise ArgumentError('count 需为非负 int，收到 %r' % (count,))
         if count < 0:
             raise ArgumentError('count 需为非负 int，收到 %d' % count)
+        if vtype not in _VTYPE_CODES:
+            raise ArgumentError("vtype 必须为 'C'/'I'/'B'，收到 %r" % (vtype,))
+        lb_f = _as_float(lb, 'lb')
+        if ub is None:
+            ub_f = 1.0 if vtype == BINARY else INF
+        else:
+            ub_f = _as_float(ub, 'ub')
         if isinstance(name, str):
             _check_no_nul(name, 'addVars 的 name 前缀')
         if obj is None or isinstance(obj, (int, float)):
+            # 标量路径与旧逐个 addVar 同款：None 亦经 _as_float 抛
+            # ArgumentError（obj 需要数值）。
             obj_values = None
+            obj_scalar = _as_float(obj, 'obj')
         elif isinstance(obj, (list, tuple)):
             if len(obj) != count:
                 raise ArgumentError('obj 序列长度 %d 与 count %d 不符'
                                     % (len(obj), count))
-            obj_values = obj
+            # 预检整个序列（旧路径在首个非法元素处的 addVar 抛，本侧在
+            # 任何 FFI 调用前全量拒绝——零突变时点更早，消息同款）。
+            obj_values = [_as_float(v, 'obj') for v in obj]
         else:
             raise ArgumentError('obj 需为标量或序列，收到 %r' % (obj,))
+        if count == 0:
+            return []
+        names = ['%s%d' % (name, i) for i in range(count)]
+        for nm in names:
+            # 防御：非 str 的 name 经 %s 格式化仍可能引入 NUL（旧路径由
+            # 逐个 addVar 的 _check_no_nul 兜住，批量路径在此等价拦截）。
+            _check_no_nul(nm, '变量名 name')
+        vtype_code = _VTYPE_CODES[vtype]
+        # ctypes 数组类型严格声明（禁裸指针）：字节串由 c_char_p 数组持有
+        # 引用，存活至调用返回。
+        names_arr = (ctypes.c_char_p * count)(
+            *[nm.encode('utf-8') for nm in names])
+        vtypes_arr = (ctypes.c_int32 * count)(*([vtype_code] * count))
+        lbs_arr = (ctypes.c_double * count)(*([lb_f] * count))
+        ubs_arr = (ctypes.c_double * count)(*([ub_f] * count))
+        lib = _ffi._lib()
+        first_box = ctypes.c_uint32()
+        self._call(lib.milp_ffi_add_vars_batch, count, names_arr, vtypes_arr,
+                   lbs_arr, ubs_arr, ctypes.byref(first_box))
+        first = first_box.value
         result = []
-        for i in range(count):
-            obj_i = obj if obj_values is None else obj_values[i]
-            result.append(self.addVar(lb=lb, ub=ub, obj=obj_i, vtype=vtype,
-                                      name='%s%d' % (name, i)))
+        for i, nm in enumerate(names):
+            obj_i = obj_scalar if obj_values is None else obj_values[i]
+            var = Var(self, first + i, nm, lb_f, ub_f, vtype, obj_i)
+            result.append(var)
+            self._vars.append(var)
+            self._vars_by_name[nm] = var
+            if obj_i != 0.0:
+                self._obj_coeff[first + i] = obj_i
         return result
 
     def addConstr(self, constr, name=''):

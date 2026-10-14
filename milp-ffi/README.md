@@ -1,10 +1,10 @@
 # milp-ffi —— milp 求解器的 C ABI 绑定层
 
 在 **`milp/` 零改动** 前提下，向外部（Python `micpython` 包 / 任意 C 兼容语言）暴露
-22 个 `milp_ffi_*` C 符号。`milp-ffi` 是工作区根下的独立 crate（根无 Cargo.toml，
+23 个 `milp_ffi_*` C 符号。`milp-ffi` 是工作区根下的独立 crate（根无 Cargo.toml，
 path 依赖 `../milp`），仅依赖标准库与 `milp`，允许 `unsafe`（FFI 固有）。
 
-- 源码：`src/lib.rs`（模块声明）、`src/api.rs`（22 个入口 + panic 兜底）、
+- 源码：`src/lib.rs`（模块声明）、`src/api.rs`（23 个入口 + panic 兜底）、
   `src/error.rs`（错误码 + 粘滞错误消息）、`src/handle.rs`（`ModelBox` 句柄本体）；
 - 测试：`src/api.rs` 内嵌单元测试（guard 兜底）+ `tests/abi.rs` 集成测试
   （仅经导出符号，不触碰 `pub(crate)`）。
@@ -30,10 +30,14 @@ Python 侧装载规则（`micpython` 包实现，此处为契约）：
 3. 全失败 → `FfiLoadError`（列全部候选路径 + 提示先执行上述 cargo build 或设 `MIC_FFI_LIB`）；
 4. 装载后校验 `milp_ffi_abi_version() == 1`。
 
-## 函数总表（22 个符号）
+## 函数总表（23 个符号）
 
 返回值除注明外均为 `int32_t` 错误码（见错误码表）；`0` = 成功。
 ctypes 对应列见文末类型对齐表。
+
+（符号 1-22 为 WP1 原始集；#9 `add_vars_batch` 为 S1 增量——纯增符号，
+既有签名与语义零改动，ABI 版本恒 1 不提升；装载方按符号表逐名校验，
+旧 DLL 配新绑定在装载期即显式失败，无静默半新半旧路径。）
 
 | # | C 签名 | 语义要点 |
 |---|--------|----------|
@@ -45,20 +49,21 @@ ctypes 对应列见文末类型对齐表。
 | 6 | `int32_t milp_ffi_model_num_vars(void *model, uint32_t *out)` | 变量数 |
 | 7 | `int32_t milp_ffi_model_num_constraints(void *model, uint32_t *out)` | 约束数 |
 | 8 | `int32_t milp_ffi_add_var(void *model, const char *name, int32_t vtype, double lb, double ub, uint32_t *index_out)` | `vtype`：1=CONTINUOUS, 2=INTEGER, 3=BINARY；`Problem::add_var`（默认界）+ `set_var_bounds(lb,ub)`（lb/ub 恒传入，Python 层已填类型默认）；`ub=+∞` 合法、`lb` 非有限→9；重名/保留字/lb>ub→2；name 为必填（NULL→1），非 UTF-8→8；设置界失败时回滚（变量不入模） |
-| 9 | `int32_t milp_ffi_set_var_bounds(void *model, uint32_t index, double lb, double ub)` | 界校验同 add_var；`index ≥ 当前变量数`→9；lb>ub / Binary 越出 [0,1]→2 |
-| 10 | `int32_t milp_ffi_add_constraint(void *model, const char *name_or_null, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t relop, double rhs, uint32_t *index_out)` | `relop`：1=LE, 2=GE, 3=EQ；`rhs` 须有限（→9）；`name_or_null` 可 NULL（未命名，非 UTF-8→8）；`count=0` 允许两数组指针 NULL（空行照常入模）；系数非有限→9；下标越界→2 |
-| 11 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（**仅在目标写入成功后**写 `problem.sense`——下标越界→2 失败时模型零突变，对齐 add_var 回滚纪律）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9 |
-| 12 | `int32_t milp_ffi_set_param_real(void *model, const char *name, double value)` | real 型参数（见参数表）；非有限/负→9；类型不符→9；名字不存在→10 |
-| 13 | `int32_t milp_ffi_set_param_int(void *model, const char *name, int64_t value)` | int 型参数（`Threads` 1..=1024，越界→9） |
-| 14 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`：`auto\|on\|off`，大小写敏感，未知值→9） |
-| 15 | `int32_t milp_ffi_solve(void *model)` | 选项组装见下文；`Err` 按 `MilpError` 变体映射 2-6 且**不覆盖旧结果**；`Ok`（含 Infeasible/Unbounded/LimitReached）存档并返回 0，状态经 getter 读取 |
-| 16 | `int32_t milp_ffi_get_status(void *model, int32_t *out)` | 0=NOT_SOLVED, 1=OPTIMAL, 2=INFEASIBLE, 3=UNBOUNDED, 4=LIMIT_REACHED |
-| 17 | `int32_t milp_ffi_get_objective(void *model, double *out)` | 无解（未求解/无可行解）→11 |
-| 18 | `int32_t milp_ffi_get_bound(void *model, double *out)` | 无证据→11 |
-| 19 | `int32_t milp_ffi_get_gap_percent(void *model, double *out)` | gap 未触发→11 |
-| 20 | `int32_t milp_ffi_get_solution(void *model, double *out, uint32_t cap, uint32_t *written_or_null)` | 维数锚定 `n_solved`（见下文）：无解→11；`cap<n_solved`→9 且 `*written_or_null`（可 NULL）写 `n_solved`；否则恰拷贝 `n_solved` 个 f64 并写 written；`n_solved>0` 时 out NULL→1 |
-| 21 | `int32_t milp_ffi_get_var_value(void *model, uint32_t index, double *out)` | `index ≥ 当前 problem.vars.len()`→9；否则 `index ≥ n_solved`→11；否则返回取值 |
-| 22 | `int32_t milp_ffi_get_stat(void *model, int32_t stat_id, int64_t *out)` | `stat_id`：1=nodes, 2=lp_iterations, 3=cuts, 4=time_ms, 5=presolve_reductions, 6=gap_terminated(0/1), 7=auto_degraded(0/1)；未知 id→9；未求解→11 |
+| 9 | `int32_t milp_ffi_add_vars_batch(void *model, uint32_t count, const char **names, const int32_t *vtypes, const double *lbs, const double *ubs, uint32_t *first_index_out)` | 单次跨界建 `count` 个变量；成功写起始下标（连续分配，第 i 个 = first+i）。**任一元素非法 ⇒ 整批拒绝、零突变**：预检 vtype（→9）/lb 非有限（→9）/ub 非有限/+∞（→9）/names 元素 NULL（→1）或非 UTF-8（→8）/批内重名（→2）/撞现有名（→2），消息带元素下标；保留字/lb>ub/Binary 界由入模阶段 `Problem` 拒绝（→2）并 `vars.truncate` 回滚到原长度。`names` 数组指针可 NULL ⇒ FFI 自动命名 `x{k}`（跳过重名；仅为 C 消费方便利——micpython `addVars` 恒显式传名以保留 `f"{prefix}{i}"` 与重名拒绝语义）；`count=0` 四个数组均可 NULL（no-op，first_index 写当前变量数）；`count>0` 而数组 NULL→1 |
+| 10 | `int32_t milp_ffi_set_var_bounds(void *model, uint32_t index, double lb, double ub)` | 界校验同 add_var；`index ≥ 当前变量数`→9；lb>ub / Binary 越出 [0,1]→2 |
+| 11 | `int32_t milp_ffi_add_constraint(void *model, const char *name_or_null, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t relop, double rhs, uint32_t *index_out)` | `relop`：1=LE, 2=GE, 3=EQ；`rhs` 须有限（→9）；`name_or_null` 可 NULL（未命名，非 UTF-8→8）；`count=0` 允许两数组指针 NULL（空行照常入模）；系数非有限→9；下标越界→2 |
+| 12 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（**仅在目标写入成功后**写 `problem.sense`——下标越界→2 失败时模型零突变，对齐 add_var 回滚纪律）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9 |
+| 13 | `int32_t milp_ffi_set_param_real(void *model, const char *name, double value)` | real 型参数（见参数表）；非有限/负→9；类型不符→9；名字不存在→10 |
+| 14 | `int32_t milp_ffi_set_param_int(void *model, const char *name, int64_t value)` | int 型参数（`Threads` 1..=1024，越界→9） |
+| 15 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`：`auto\|on\|off`，大小写敏感，未知值→9） |
+| 16 | `int32_t milp_ffi_solve(void *model)` | 选项组装见下文；`Err` 按 `MilpError` 变体映射 2-6 且**不覆盖旧结果**；`Ok`（含 Infeasible/Unbounded/LimitReached）存档并返回 0，状态经 getter 读取 |
+| 17 | `int32_t milp_ffi_get_status(void *model, int32_t *out)` | 0=NOT_SOLVED, 1=OPTIMAL, 2=INFEASIBLE, 3=UNBOUNDED, 4=LIMIT_REACHED |
+| 18 | `int32_t milp_ffi_get_objective(void *model, double *out)` | 无解（未求解/无可行解）→11 |
+| 19 | `int32_t milp_ffi_get_bound(void *model, double *out)` | 无证据→11 |
+| 20 | `int32_t milp_ffi_get_gap_percent(void *model, double *out)` | gap 未触发→11 |
+| 21 | `int32_t milp_ffi_get_solution(void *model, double *out, uint32_t cap, uint32_t *written_or_null)` | 维数锚定 `n_solved`（见下文）：无解→11；`cap<n_solved`→9 且 `*written_or_null`（可 NULL）写 `n_solved`；否则恰拷贝 `n_solved` 个 f64 并写 written；`n_solved>0` 时 out NULL→1 |
+| 22 | `int32_t milp_ffi_get_var_value(void *model, uint32_t index, double *out)` | `index ≥ 当前 problem.vars.len()`→9；否则 `index ≥ n_solved`→11；否则返回取值 |
+| 23 | `int32_t milp_ffi_get_stat(void *model, int32_t stat_id, int64_t *out)` | `stat_id`：1=nodes, 2=lp_iterations, 3=cuts, 4=time_ms, 5=presolve_reductions, 6=gap_terminated(0/1), 7=auto_degraded(0/1)；未知 id→9；未求解→11 |
 
 入参 `const char*` 一律 `CStr`→UTF-8 校验（失败→8）；C 契约要求 NUL 结尾。
 枚举 i32 未知值→9（消息列合法值）。
@@ -153,11 +158,13 @@ ctypes 对应列见文末类型对齐表。
 | `double` | `f64` | `c_double` |
 | `const char*` 入参 | `*const c_char` | `c_char_p`（`str.encode('utf-8')`） |
 | `char*` 出参缓冲 | `*mut c_char` | `ctypes.create_string_buffer(n)` |
+| `const char**` 入参（#9 names 数组） | `*const *const c_char` | `(c_char_p * n)`（元素为 `bytes`，数组持有引用） |
+| `const int32_t*` 入参数组 | `*const i32` | `(c_int32 * n)` |
 | `const uint32_t*` | `*const u32` | `(c_uint32 * n)` |
 | `const double*` | `*const f64` | `(c_double * n)` |
 | `double*` 出参 | `*mut f64` | `POINTER(c_double)` 或 `(c_double * n)` |
 
-全部 22 个符号在 Python 侧显式声明 `argtypes`/`restype`（禁默认转换）；
+全部 23 个符号在 Python 侧显式声明 `argtypes`/`restype`（禁默认转换）；
 f64 特殊值 ±inf 按位透传（`ub=+∞` 合法；`lb=-inf` 由 FFI 拒绝→9）。
 
 ## 验证命令（工作区根执行）

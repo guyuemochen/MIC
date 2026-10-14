@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """micpython 的 ctypes FFI 绑定层（零第三方依赖，仅标准库，Py3.8+）。
 
-按 milp-ffi（WP1，``milp-ffi/src/api.rs`` 的 22 个 ``#[no_mangle] pub
+按 milp-ffi（WP1，``milp-ffi/src/api.rs`` 的 23 个 ``#[no_mangle] pub
 extern "C"`` 符号）的 C ABI 契约工作：
 
-- **符号绑定**：``EXPECTED_SYMBOLS`` 列出全部 22 个符号名；装载后逐一
+- **符号绑定**：``EXPECTED_SYMBOLS`` 列出全部 23 个符号名；装载后逐一
   ``hasattr`` 校验并按 ``_SIGNATURES`` 显式声明 argtypes/restype（禁默认
   转换；``milp_ffi_model_destroy`` 返回 void，restype=None）；
 - **错误处理**：``check(rc)`` 对 rc!=0 经 ``milp_ffi_last_error`` 取 UTF-8
@@ -121,8 +121,12 @@ _EXC_BY_CODE = {
 
 
 # ===========================================================================
-# 22 个符号与 C 签名（milp-ffi/src/api.rs 与其 README 函数总表为准）
+# 23 个符号与 C 签名（milp-ffi/src/api.rs 与其 README 函数总表为准）
 # ===========================================================================
+# 符号表钉值 22 → 23（S1 重钉）：新增 milp_ffi_add_vars_batch（批量建变量，
+# validate-then-mutate 整批拒绝/零突变）。ABI 版本恒 1 不提升——纯增符号、
+# 既有签名与语义零改动；旧 DLL 配新绑定时在装载期符号校验即报
+# FfiLoadError（『缺少必需符号』），无静默半新半旧路径。
 
 EXPECTED_SYMBOLS = (
     'milp_ffi_abi_version',
@@ -133,6 +137,7 @@ EXPECTED_SYMBOLS = (
     'milp_ffi_model_num_vars',
     'milp_ffi_model_num_constraints',
     'milp_ffi_add_var',
+    'milp_ffi_add_vars_batch',
     'milp_ffi_set_var_bounds',
     'milp_ffi_add_constraint',
     'milp_ffi_set_objective',
@@ -157,10 +162,12 @@ _c_int64 = ctypes.c_int64
 _c_uint64 = ctypes.c_uint64
 _c_double = ctypes.c_double
 _p_char = ctypes.POINTER(ctypes.c_char)      # char* 出参缓冲（create_string_buffer）
-_p_int32 = ctypes.POINTER(ctypes.c_int32)    # int32_t* 出参
+_p_int32 = ctypes.POINTER(ctypes.c_int32)    # int32_t* 出参/入参数组
 _p_uint32 = ctypes.POINTER(ctypes.c_uint32)  # uint32_t* 出参/入参数组
 _p_int64 = ctypes.POINTER(ctypes.c_int64)    # int64_t* 出参（get_stat）
 _p_double = ctypes.POINTER(ctypes.c_double)  # double* 出参/入参数组
+# const char** 入参（add_vars_batch 的 names 数组；传 (c_char_p * n) 数组）
+_p_p_char = ctypes.POINTER(ctypes.c_char_p)
 
 # name -> (argtypes, restype)，与 milp-ffi README「函数总表」逐行对应：
 #   uint32_t milp_ffi_abi_version(void)
@@ -172,6 +179,10 @@ _p_double = ctypes.POINTER(ctypes.c_double)  # double* 出参/入参数组
 #   int32_t  milp_ffi_model_num_constraints(void*, uint32_t *out)
 #   int32_t  milp_ffi_add_var(void*, const char *name, int32_t vtype,
 #                             double lb, double ub, uint32_t *index_out)
+#   int32_t  milp_ffi_add_vars_batch(void*, uint32_t count,
+#                             const char **names /*可 NULL=自动命名*/,
+#                             const int32_t *vtypes, const double *lbs,
+#                             const double *ubs, uint32_t *first_index_out)
 #   int32_t  milp_ffi_set_var_bounds(void*, uint32_t index, double lb, double ub)
 #   int32_t  milp_ffi_add_constraint(void*, const char *name_or_null,
 #                             const uint32_t *var_idx, const double *coeffs,
@@ -202,6 +213,8 @@ _SIGNATURES = {
     'milp_ffi_model_num_constraints': ([_c_void_p, _p_uint32], _c_int32),
     'milp_ffi_add_var': ([_c_void_p, _c_char_p, _c_int32, _c_double, _c_double,
                           _p_uint32], _c_int32),
+    'milp_ffi_add_vars_batch': ([_c_void_p, _c_uint32, _p_p_char, _p_int32,
+                                 _p_double, _p_double, _p_uint32], _c_int32),
     'milp_ffi_set_var_bounds': ([_c_void_p, _c_uint32, _c_double, _c_double],
                                 _c_int32),
     'milp_ffi_add_constraint': ([_c_void_p, _c_char_p, _p_uint32, _p_double,
@@ -243,7 +256,7 @@ def _default_candidate_paths():
 
 
 def _bind_symbols(lib):
-    """逐一校验 22 个符号存在并声明 argtypes/restype。"""
+    """逐一校验 23 个符号存在并声明 argtypes/restype。"""
     missing = [name for name in EXPECTED_SYMBOLS if not hasattr(lib, name)]
     if missing:
         raise FfiLoadError('动态库缺少必需符号（%d 个）：%s'
@@ -262,7 +275,7 @@ def load_library():
     ② 否则探测默认候选（dll → so → dylib，依次 exists()）；
     ③ 全失败抛 ``FfiLoadError``（列全部候选路径与失败原因 + 构建提示）；
     ④ 校验 ``milp_ffi_abi_version() == 1``；
-    ⑤ 校验并绑定全部 22 个符号。
+    ⑤ 校验并绑定全部 23 个符号。
     """
     env_path = os.environ.get('MIC_FFI_LIB', '')
     if env_path:

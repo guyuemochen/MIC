@@ -3,7 +3,7 @@
 
 覆盖（对应 WP3 契约）：
 - 默认路径装载成功且 ``milp_ffi_abi_version() == 1``；
-- ``EXPECTED_SYMBOLS`` 共 22 个且在 CDLL 上全部存在；
+- ``EXPECTED_SYMBOLS`` 共 23 个且在 CDLL 上全部存在；
 - ``_EXC_BY_CODE`` 覆盖 1..=11 每码且值均为 MicError 子类；
 - ``MIC_FFI_LIB`` 指向不存在路径 → ``FfiLoadError`` 且消息含构建提示
   ``cargo build --manifest-path milp-ffi/Cargo.toml --release``；
@@ -41,9 +41,14 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(lib.milp_ffi_abi_version(), 1)
 
     def test_expected_symbols_count_and_presence(self):
-        self.assertEqual(len(_ffi.EXPECTED_SYMBOLS), 22)
-        self.assertEqual(len(set(_ffi.EXPECTED_SYMBOLS)), 22,
+        # 钉值 22 → 23（S1 重钉）：milp-ffi 新增批量符号
+        # milp_ffi_add_vars_batch（纯增符号向后兼容，abi_version 恒 1），
+        # Model.addVars 自 S1 起经它单次跨界建变量；装载期逐名 hasattr
+        # 校验保证旧 DLL + 新绑定立即显式失败（FfiLoadError）。
+        self.assertEqual(len(_ffi.EXPECTED_SYMBOLS), 23)
+        self.assertEqual(len(set(_ffi.EXPECTED_SYMBOLS)), 23,
                          '符号名不得重复')
+        self.assertIn('milp_ffi_add_vars_batch', _ffi.EXPECTED_SYMBOLS)
         lib = _ffi._lib()
         for name in _ffi.EXPECTED_SYMBOLS:
             self.assertTrue(hasattr(lib, name), 'CDLL 缺少符号 %s' % name)

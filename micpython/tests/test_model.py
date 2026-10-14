@@ -115,6 +115,85 @@ class ModelBuildingTests(unittest.TestCase):
         self.assertEqual(self.m.NumVars, 3, '第二次 addVars 整体失败不留列')
 
 
+class AddVarsBatchContractTests(unittest.TestCase):
+    """S1 批量契约：addVars 经 milp_ffi_add_vars_batch 单次跨界，语义与
+    逐个 addVar 等价；任一元素非法 → ArgumentError/ModelError 且零突变
+    （FFI 侧 validate-then-mutate，Python 侧入口预检）。"""
+
+    def setUp(self):
+        self.m = Model('addvars-batch')
+
+    def tearDown(self):
+        self.m.dispose()
+
+    def test_batch_matches_per_var_addvar_semantics(self):
+        # 批量路径与逐个 addVar 双模型对照：名字/界/类型/obj 镜像一致。
+        ref = Model('addvars-ref')
+        self.addCleanup(ref.dispose)
+        got = self.m.addVars(3, lb=0.0, ub=None, vtype=BINARY,
+                             obj=[7.0, 5.0, 0.0], name='b')
+        want = [ref.addVar(vtype=BINARY, obj=o, name='b%d' % i)
+                for i, o in enumerate([7.0, 5.0, 0.0])]
+        self.assertEqual([v.VarName for v in got], [v.VarName for v in want])
+        self.assertEqual([v.lb for v in got], [0.0, 0.0, 0.0])
+        self.assertEqual([v.ub for v in got], [1.0, 1.0, 1.0],
+                         'BINARY 的 ub=None → 1 规则不变')
+        self.assertEqual([v.VType for v in got], ['B'] * 3)
+        self.assertEqual([v.Obj for v in got], [7.0, 5.0, 0.0])
+        self.assertEqual(self.m.NumVars, 3)
+        self.assertIs(self.m.getVarByName('b2'), got[2])
+        # 批量建出的列可解：obj 镜像并入规则不变（表达式为纯常数 ⇒ 目标
+        # 恰为镜像 7*b0+5*b1；b0+b1<=1 ⇒ 最优 7）。
+        self.m.setObjective(0, MAXIMIZE)
+        self.m.addConstr(got[0] + got[1] <= 1)
+        self.assertEqual(self.m.optimize(), Status.OPTIMAL)
+        self.assertAlmostEqual(self.m.ObjVal, 7.0, delta=1e-6)
+        # 连续变量 ub=None → +INF 默认；obj 标量路径。
+        cs = self.m.addVars(2, obj=2.5, name='c')
+        self.assertEqual([v.ub for v in cs], [INF, INF])
+        self.assertEqual([v.Obj for v in cs], [2.5, 2.5])
+        # 下标连续：3 个 b + 2 个 c ⇒ c0._index == 3。
+        self.assertEqual([v._index for v in cs], [3, 4])
+
+    def test_batch_invalid_element_zero_mutation(self):
+        # vtype 非法（FFI 码 9）。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(2, vtype='X', name='x')
+        # lb 非有限（FFI 码 9）。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(2, lb=-INF, name='x')
+        # obj 标量非数值：与逐个 addVar 同款 ArgumentError。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(2, obj=None, name='x')
+        # obj 序列含非数值元素：入口预检全量拒绝（零突变时点更早）。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(2, obj=[1.0, 'bad'], name='x')
+        # obj 序列长度不符。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(2, obj=[1.0], name='x')
+        # 模型语义（lb>ub → ModelError，FFI 入模阶段回滚）。
+        with self.assertRaises(ModelError):
+            self.m.addVars(2, lb=5.0, ub=1.0, name='x')
+        self.assertEqual(self.m.NumVars, 0, '全部非法路径零突变')
+
+    def test_batch_count_zero_returns_empty(self):
+        self.assertEqual(self.m.addVars(0), [])
+        self.assertEqual(self.m.NumVars, 0)
+        # 收紧语义（docstring 已注明）：count=0 也校验标量值域。
+        with self.assertRaises(ArgumentError):
+            self.m.addVars(0, vtype='X')
+
+    def test_batch_large_count_single_crossing(self):
+        # 微基准验收的同款规模：5000 变量一次跨界建列 + 名字/镜像完整。
+        vs = self.m.addVars(5000, vtype=BINARY, name='k')
+        self.assertEqual(len(vs), 5000)
+        self.assertEqual(self.m.NumVars, 5000)
+        self.assertEqual(vs[0].VarName, 'k0')
+        self.assertEqual(vs[4999].VarName, 'k4999')
+        self.assertEqual(vs[4999]._index, 4999)
+        self.assertIs(self.m.getVarByName('k2500'), vs[2500])
+
+
 class SetObjectiveAtomicityTests(unittest.TestCase):
     """B2 回归：setObjective 被 FFI 拒绝时目标方向零突变（FFI 与镜像同步）。"""
 

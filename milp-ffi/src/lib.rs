@@ -1,7 +1,8 @@
 //! milp-ffi —— [`milp`] 求解器的 panic 安全 C ABI 绑定层。
 //!
-//! 目标：`milp/` 零改动前提下，向 Python ctypes（micpython 包）暴露 22 个
-//! `milp_ffi_*` C 符号（符号总表见 `README.md`）。
+//! 目标：`milp/` 零改动前提下，向 Python ctypes（micpython 包）暴露 23 个
+//! `milp_ffi_*` C 符号（符号总表见 `README.md`；S1 增批量 add_vars_batch，
+//! 纯增符号向后兼容，ABI 版本恒 1）。
 //!
 //! 模块划分：
 //! - [`api`]    ：全部 `#[no_mangle] pub extern "C"` 入口 + 统一 [`api::guard`]

@@ -1,4 +1,7 @@
-//! C ABI 入口：22 个 `#[no_mangle] pub extern "C"` 符号（总表见 README.md）。
+//! C ABI 入口：23 个 `#[no_mangle] pub extern "C"` 符号（总表见 README.md）。
+//! （S1 增 `milp_ffi_add_vars_batch`：纯增符号，既有 22 个签名与语义零改动，
+//! ABI 版本恒 1 不提升——装载方按符号表逐名校验，旧 DLL 配新绑定在装载期
+//! 即报『缺少必需符号』，不存在静默半新半旧。）
 //!
 //! 统一纪律：
 //! - 全部入口经 [`guard`]（`catch_unwind(AssertUnwindSafe(..))`）兜底，panic
@@ -198,7 +201,7 @@ pub extern "C" fn milp_ffi_format_number(v: f64, buf: *mut c_char, cap: u64) -> 
 }
 
 // ===========================================================================
-// 句柄生命周期与建模（4-11）
+// 句柄生命周期与建模（4-12）
 // ===========================================================================
 
 /// 创建模型句柄。sense：1=MINIMIZE，2=MAXIMIZE（非法→NULL+last_error）；
@@ -336,6 +339,169 @@ pub extern "C" fn milp_ffi_add_var(
             },
             Err(err) => map_milp_error(err),
         }
+    })
+}
+
+/// 批量添加变量（S1）：单次跨界调用建 `count` 个变量；起始下标经
+/// `first_index_out` 返回，连续分配（第 i 个新变量下标 = first + i）。
+///
+/// ABI：
+/// - `names`：`count` 个 `const char*` 的数组。数组指针 NULL ⇒ FFI 自动
+///   命名 `x{k}`（k 从 0 自增，跳过与现有变量/批内已用名的重名；`x\d+`
+///   形如不可能撞 .milp 保留字表——12 个保留字均为纯字母词）——仅为
+///   C 消费方便利。micpython `addVars` 语义要求 `f"{prefix}{i}"` 命名与
+///   重名拒绝（两次同名调用必须保持报错而非静默改名），恒显式传 names；
+/// - `vtypes`/`lbs`/`ubs`：各 `count` 个元素，编码同 `milp_ffi_add_var`；
+/// - `count=0`：四个数组指针均可 NULL，合法 no-op，`first_index_out` 写
+///   当前变量数（下一个变量将取的下标）。
+///
+/// 纪律（B2 validate-then-mutate 的批量版）：**任一元素非法 → 整批拒绝、
+/// 零突变**。两阶段实现：
+/// 1. 预检（不触碰模型）：vtype 枚举（→9）、lb 非有限（→9）、ub 非有限/
+///    +∞（→9）、name 元素 NULL（→1）或非 UTF-8（→8）、批内重名（→2）、
+///    撞现有变量名（→2）——错误消息带元素下标；
+/// 2. 入模：逐个 `Problem::add_var` + `set_var_bounds`（保留字 / lb>ub /
+///    Binary 界越出 [0,1] 等模型语义的单一事实源仍在此层，→2）。预检后
+///    理论全部成功；防御性兜底：任一步失败则 `vars.truncate(原长度)` 回滚
+///    （本函数不触碰 obj/cons/sense，截断即精确还原）后映射错误码。
+#[no_mangle]
+pub extern "C" fn milp_ffi_add_vars_batch(
+    model: *mut c_void,
+    count: u32,
+    names: *const *const c_char,
+    vtypes: *const i32,
+    lbs: *const f64,
+    ubs: *const f64,
+    first_index_out: *mut u32,
+) -> i32 {
+    let m = match check_handle(model) {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if first_index_out.is_null() {
+        return set_error(ERR_NULL, "输出指针 first_index_out 为 NULL");
+    }
+    let n = count as usize; // u32 计数前置 usize 转换
+    let vt = match read_array(vtypes, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let lb_arr = match read_array(lbs, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let ub_arr = match read_array(ubs, n) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    // 预检一（纯 FFI 层值域）：枚举与数值界，逐元素、零模型接触。
+    let mut var_types = Vec::with_capacity(n);
+    for (i, &code) in vt.iter().enumerate() {
+        match code {
+            1 => var_types.push(VarType::Continuous),
+            2 => var_types.push(VarType::Integer),
+            3 => var_types.push(VarType::Binary),
+            _ => {
+                return set_error(
+                    ERR_ARG,
+                    &format!("第 {i} 个 vtype 非法（合法值：1=CONTINUOUS, 2=INTEGER, 3=BINARY）"),
+                )
+            }
+        }
+    }
+    for (i, &lb) in lb_arr.iter().enumerate() {
+        if !lb.is_finite() {
+            return set_error(
+                ERR_ARG,
+                &format!("第 {i} 个变量下界 lb 必须为有限数（本库不支持 -∞ 下界）"),
+            );
+        }
+    }
+    for (i, &ub) in ub_arr.iter().enumerate() {
+        if !(ub.is_finite() || ub == f64::INFINITY) {
+            return set_error(ERR_ARG, &format!("第 {i} 个变量上界 ub 必须为有限数或 +∞"));
+        }
+    }
+    // 预检二（名字）：names 非 NULL 时逐元素 NULL（→1）/UTF-8（→8）校验。
+    let mut name_strs: Vec<String> = Vec::with_capacity(n);
+    if !names.is_null() {
+        let ptrs = match read_array(names, n) {
+            Ok(s) => s,
+            Err(rc) => return rc,
+        };
+        for (i, &p) in ptrs.iter().enumerate() {
+            if p.is_null() {
+                return set_error(ERR_NULL, &format!("names[{i}] 元素为 NULL（count>0 时每个名字都是必填）"));
+            }
+            let bytes = unsafe { std::ffi::CStr::from_ptr(p).to_bytes() };
+            match std::str::from_utf8(bytes) {
+                Ok(s) => name_strs.push(s.to_string()),
+                Err(_) => {
+                    return set_error(ERR_UTF8, &format!("names[{i}] 不是合法 UTF-8"));
+                }
+            }
+        }
+    }
+    guard(Some(m), || {
+        let mb = unsafe { &mut *m };
+        if n == 0 {
+            // 空批 no-op：写『下一个下标』，模型零接触。
+            unsafe { *first_index_out = mb.problem.vars.len() as u32 };
+            return MILP_FFI_OK;
+        }
+        // 预检三（重名）：现有名集合 + 批内增量插入，批内重复/撞现有均 →2。
+        let mut used: std::collections::HashSet<String> = mb
+            .problem
+            .vars
+            .iter()
+            .map(|v| v.name.clone())
+            .collect();
+        if names.is_null() {
+            // 自动命名 x{k}：跳过与现有/批内已用名重名（x\d+ 不撞保留字表）。
+            let mut k = 0usize;
+            for _ in 0..n {
+                loop {
+                    let candidate = format!("x{k}");
+                    k += 1;
+                    if !used.contains(&candidate) {
+                        used.insert(candidate.clone());
+                        name_strs.push(candidate);
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (i, name) in name_strs.iter().enumerate() {
+                if !used.insert(name.clone()) {
+                    return set_error(
+                        ERR_INVALID_MODEL,
+                        &format!("变量名 `{name}` 重复（批量第 {i} 个，与批内更早元素或现有变量重名）"),
+                    );
+                }
+            }
+        }
+        // 入模 + 防御性回滚：预检后理论全部成功，仍兜底 Problem 层语义拒绝
+        // （保留字/lb>ub/Binary 界）——失败即 vars.truncate(原长度) 精确还原。
+        let orig_len = mb.problem.vars.len();
+        for i in 0..n {
+            match mb.problem.add_var(&name_strs[i], var_types[i]) {
+                Ok(index) => {
+                    if let Err(err) = mb
+                        .problem
+                        .set_var_bounds(index, lb_arr[i], ub_arr[i])
+                    {
+                        mb.problem.vars.truncate(orig_len);
+                        return map_milp_error(err);
+                    }
+                }
+                Err(err) => {
+                    mb.problem.vars.truncate(orig_len);
+                    return map_milp_error(err);
+                }
+            }
+        }
+        unsafe { *first_index_out = orig_len as u32 };
+        MILP_FFI_OK
     })
 }
 
@@ -521,7 +687,7 @@ pub extern "C" fn milp_ffi_set_objective(
 }
 
 // ===========================================================================
-// 参数（12-14）
+// 参数（13-15）
 // ===========================================================================
 
 /// real 型参数：TimeLimit（秒，≥0，0=不限→None；solve 时经
@@ -666,7 +832,7 @@ pub extern "C" fn milp_ffi_set_param_str(
 }
 
 // ===========================================================================
-// 求解与结果读取（15-22）
+// 求解与结果读取（16-23）
 // ===========================================================================
 
 /// 求解。选项组装纪律（镜像 main.rs:294-327）：

@@ -701,3 +701,249 @@ fn set_objective_failure_leaves_sense_untouched() {
     );
     milp_ffi_model_destroy(m);
 }
+
+// ===========================================================================
+// ⑩ milp_ffi_add_vars_batch（S1）：validate-then-mutate、零突变、命名契约
+// ===========================================================================
+
+/// 批量加变量辅助：names=None ⇒ names 数组传 NULL（FFI 自动命名）。
+/// CString / 指针数组绑定本地变量，存活至调用返回（同 add_constraint 先例）。
+fn add_vars_batch(
+    m: *mut c_void,
+    names: Option<&[&str]>,
+    vtypes: &[i32],
+    lbs: &[f64],
+    ubs: &[f64],
+) -> i32 {
+    assert_eq!(vtypes.len(), lbs.len());
+    assert_eq!(vtypes.len(), ubs.len());
+    let count = vtypes.len() as u32;
+    let owned = names.map(|ns| ns.iter().map(|s| cs(s)).collect::<Vec<_>>());
+    let name_ptrs = owned
+        .as_ref()
+        .map(|cs_vec| cs_vec.iter().map(|c| c.as_ptr()).collect::<Vec<_>>());
+    let names_arg = match &name_ptrs {
+        None => ptr::null(),
+        Some(p) => p.as_ptr(),
+    };
+    let mut first = 0u32;
+    milp_ffi_add_vars_batch(
+        m,
+        count,
+        names_arg,
+        vtypes.as_ptr(),
+        lbs.as_ptr(),
+        ubs.as_ptr(),
+        &mut first,
+    )
+}
+
+/// 成功路径：first_index 连续分配；批量变量可正常求解（等价逐个 add_var）。
+#[test]
+fn batch_success_contiguous_indices_and_solvable() {
+    let m = create(2);
+    let i0 = add_var(m, "seed", 1, 0.0, 1.0);
+    assert_eq!(i0, 0);
+    // 批量 5 个 BINARY：first_index 必须接在现有 1 个变量之后。
+    let mut first = 99u32;
+    let names = ["x1", "x2", "x3", "x4", "x5"];
+    let owned: Vec<CString> = names.iter().map(|s| cs(s)).collect();
+    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
+    let vtypes = [3i32; 5];
+    let lbs = [0.0f64; 5];
+    let ubs = [1.0f64; 5];
+    expect(
+        milp_ffi_add_vars_batch(
+            m,
+            5,
+            ptrs.as_ptr(),
+            vtypes.as_ptr(),
+            lbs.as_ptr(),
+            ubs.as_ptr(),
+            &mut first,
+        ),
+        OK,
+    );
+    assert_eq!(first, 1, "起始下标 = 原变量数（连续分配）");
+    assert_eq!(num_vars(m), 6);
+    // knapsack-10 数值：批量建的列与逐个 add_var 行为等价（OPTIMAL 17）。
+    set_objective(m, &[1, 2, 3, 4, 5], &[7.0, 5.0, 9.0, 6.0, 3.0], 2, 0.0);
+    add_constraint(
+        m,
+        Some("cap"),
+        &[1, 2, 3, 4, 5],
+        &[4.0, 3.0, 5.0, 6.0, 2.0],
+        1,
+        10.0,
+    );
+    solve(m);
+    assert_eq!(status(m), 1);
+    assert!((objective(m) - 17.0).abs() < 1e-9, "objective = {}", objective(m));
+    milp_ffi_model_destroy(m);
+}
+
+/// 预检阶段（FFI 值域）：任一元素非法 → 整批拒绝、零突变。
+#[test]
+fn batch_invalid_element_rejected_zero_mutation() {
+    let m = create(1);
+    // vtype 非法在第 2 个元素 → 9，num_vars 保持 0。
+    expect(
+        add_vars_batch(m, Some(&["a", "b", "c"]), &[1, 7, 1], &[0.0; 3], &[1.0; 3]),
+        ERR_ARG,
+    );
+    // lb=NaN（非有限）→ 9。
+    expect(
+        add_vars_batch(m, Some(&["a", "b"]), &[1, 1], &[0.0, f64::NAN], &[1.0; 2]),
+        ERR_ARG,
+    );
+    // ub=-∞ → 9。
+    expect(
+        add_vars_batch(
+            m,
+            Some(&["a", "b"]),
+            &[1, 1],
+            &[0.0; 2],
+            &[1.0, f64::NEG_INFINITY],
+        ),
+        ERR_ARG,
+    );
+    // names 元素 NULL → 1。
+    let mut first = 0u32;
+    let vtypes = [1i32];
+    let lbs = [0.0f64];
+    let ubs = [1.0f64];
+    let bad_names = [ptr::null() as *const c_char];
+    expect(
+        milp_ffi_add_vars_batch(
+            m,
+            1,
+            bad_names.as_ptr(),
+            vtypes.as_ptr(),
+            lbs.as_ptr(),
+            ubs.as_ptr(),
+            &mut first,
+        ),
+        ERR_NULL,
+    );
+    // 非 UTF-8 名字 → 8。
+    let bad_utf8 = [b"\xff\xfe\xfd\0".as_ptr() as *const c_char];
+    expect(
+        milp_ffi_add_vars_batch(
+            m,
+            1,
+            bad_utf8.as_ptr(),
+            vtypes.as_ptr(),
+            lbs.as_ptr(),
+            ubs.as_ptr(),
+            &mut first,
+        ),
+        8,
+    );
+    // count>0 而数组指针 NULL → 1（以 vtypes=NULL 为例，直调避开辅助的
+    // 长度推导）。
+    let one_name = [cs("a").as_ptr()];
+    let lbs1 = [0.0f64];
+    let ubs1 = [1.0f64];
+    expect(
+        milp_ffi_add_vars_batch(
+            m,
+            1,
+            one_name.as_ptr(),
+            ptr::null(),
+            lbs1.as_ptr(),
+            ubs1.as_ptr(),
+            &mut first,
+        ),
+        ERR_NULL,
+    );
+    assert_eq!(num_vars(m), 0, "全部预检失败路径零突变");
+    milp_ffi_model_destroy(m);
+}
+
+/// 命名契约：批内重名 / 撞现有名 → 2（预检阶段，零突变）；两次同名批同款。
+#[test]
+fn batch_duplicate_names_rejected_zero_mutation() {
+    let m = create(1);
+    // 批内重名（第 2 个 "a" 与第 0 个撞）。
+    expect(
+        add_vars_batch(m, Some(&["a", "b", "a"]), &[1, 1, 1], &[0.0; 3], &[1.0; 3]),
+        ERR_INVALID_MODEL,
+    );
+    assert_eq!(num_vars(m), 0, "批内重名整批拒绝");
+    // 撞现有名。
+    add_var(m, "x", 1, 0.0, 1.0);
+    expect(
+        add_vars_batch(m, Some(&["y", "x", "z"]), &[1, 1, 1], &[0.0; 3], &[1.0; 3]),
+        ERR_INVALID_MODEL,
+    );
+    assert_eq!(num_vars(m), 1, "撞现有名整批拒绝，原变量保留");
+    milp_ffi_model_destroy(m);
+}
+
+/// 入模阶段（Problem 语义，预检后的防御性回滚）：保留字 / lb>ub /
+/// Binary 界越界 → 2 且整批回滚到原长度。
+#[test]
+fn batch_model_semantics_rejected_with_rollback() {
+    let m = create(1);
+    add_var(m, "seed", 1, 0.0, 1.0);
+    // 保留字 "max" 在第 1 个位置：回滚后不得残留 "ok"。
+    expect(
+        add_vars_batch(m, Some(&["ok", "max", "ok2"]), &[1, 1, 1], &[0.0; 3], &[1.0; 3]),
+        ERR_INVALID_MODEL,
+    );
+    assert_eq!(num_vars(m), 1, "保留字整批回滚");
+    // lb>ub（Problem::set_var_bounds 语义）。
+    expect(
+        add_vars_batch(m, Some(&["p", "q"]), &[1, 1], &[0.0, 5.0], &[1.0, 4.0]),
+        ERR_INVALID_MODEL,
+    );
+    assert_eq!(num_vars(m), 1, "lb>ub 整批回滚");
+    // Binary ub=2.0 越出 [0,1]。
+    expect(
+        add_vars_batch(m, Some(&["b1", "b2"]), &[3, 3], &[0.0; 2], &[1.0, 2.0]),
+        ERR_INVALID_MODEL,
+    );
+    assert_eq!(num_vars(m), 1, "Binary 界整批回滚");
+    // 回滚精确性：后续同名批量不再误报重名（残留即 "ok" 仍在）。
+    expect(
+        add_vars_batch(m, Some(&["ok", "max", "ok2"]), &[1, 1, 1], &[0.0; 3], &[1.0; 3]),
+        ERR_INVALID_MODEL,
+    );
+    expect(
+        add_vars_batch(m, Some(&["ok", "ok2"]), &[1, 1], &[0.0; 2], &[1.0; 2]),
+        OK,
+    );
+    assert_eq!(num_vars(m), 3);
+    milp_ffi_model_destroy(m);
+}
+
+/// names=NULL 自动命名：x{k} 跳过现有名；count=0 合法 no-op。
+#[test]
+fn batch_auto_names_and_empty_batch() {
+    let m = create(1);
+    // 预占 x0 与 x2：自动命名应给出 x1、x3（跳过重名，不自作聪明去重）。
+    add_var(m, "x0", 1, 0.0, 1.0);
+    add_var(m, "x2", 1, 0.0, 1.0);
+    expect(add_vars_batch(m, None, &[1, 1], &[0.0; 2], &[1.0; 2]), OK);
+    assert_eq!(num_vars(m), 4);
+    // 行为验证：自动名 x1/x3 已占用（重名 add_var → 2），x4 未占用。
+    let mut idx = 0u32;
+    expect(
+        milp_ffi_add_var(m, cs("x1").as_ptr(), 1, 0.0, 1.0, &mut idx),
+        ERR_INVALID_MODEL,
+    );
+    expect(
+        milp_ffi_add_var(m, cs("x3").as_ptr(), 1, 0.0, 1.0, &mut idx),
+        ERR_INVALID_MODEL,
+    );
+    expect(milp_ffi_add_var(m, cs("x4").as_ptr(), 1, 0.0, 1.0, &mut idx), OK);
+    // count=0：数组全 NULL 合法 no-op，first_index 写当前变量数。
+    let mut first = 0u32;
+    expect(
+        milp_ffi_add_vars_batch(m, 0, ptr::null(), ptr::null(), ptr::null(), ptr::null(), &mut first),
+        OK,
+    );
+    assert_eq!(first, 5, "空批 first_index = 当前变量数");
+    assert_eq!(num_vars(m), 5);
+    milp_ffi_model_destroy(m);
+}
