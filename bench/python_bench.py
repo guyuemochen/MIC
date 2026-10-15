@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""bench/python_bench.py —— micpython 与开源求解器（CBC / HiGHS / SCIP）同机对比。
+"""bench/python_bench.py —— micpython 与开源求解器（HiGHS / SCIP）同机对比。
 
 环境：conda env `mic-bench`（python 3.11 + numpy scipy pulp ortools）。
 创建（一次性）：conda create -n mic-bench python=3.11 -y &&
@@ -8,9 +8,12 @@
 复现：conda run --no-capture-output -n mic-bench python -u bench/python_bench.py
 
 架构：驱动进程把每个（算例 × 求解器）对作为子进程执行（--pair 模式），
-硬看门狗 = 时限 + 120s 宽限——单个求解器挂死（实测 CBC 在 marketsplit 类
-等式模型上会在不受 -sec 约束的阶段卡死）只损失自己的宽限窗，记
+硬看门狗 = 时限 + 120s 宽限——单个求解器挂死只损失自己的宽限窗，记
 watchdog_kill，不拖垮全表。
+
+历史：CBC 列已按决策移除（2026-10-15）——实测它在 mknap/marketsplit 类
+进入不受时限约束的阶段被看门狗强杀（×5），且在 milp-mixed/lp-wide/lp-sparse
+三例给出与其余三方一致的值矛盾的『Unbounded』错误判定。
 
 口径：
 - 算例来自 bench/instances/*.milp（统一解析后接入各 API）；
@@ -118,28 +121,6 @@ def run_micpython(p, limit):
     return build, solve, status, obj
 
 
-# ------------------------------------------------------------------ PuLP-CBC --
-def run_pulp(p, limit):
-    import pulp
-
-    t0 = time.perf_counter()
-    cat = {"B": "Binary", "I": "Integer", "C": "Continuous"}
-    vs = {nm: pulp.LpVariable(nm, cat=cat[vt]) for nm, vt in p.vars}
-    prob = pulp.LpProblem(p.name, pulp.LpMaximize if p.sense == "max" else pulp.LpMinimize)
-    prob += pulp.lpSum(c * vs[n] for c, n in p.obj)
-    for cn, terms, rel, rhs in p.cons:
-        e = pulp.lpSum(c * vs[n] for c, n in terms)
-        prob += (e <= rhs if rel == "<=" else e >= rhs if rel == ">=" else e == rhs), cn
-    build = time.perf_counter() - t0
-
-    t0 = time.perf_counter()
-    prob.solve(pulp.PULP_CBC_CMD(msg=False, threads=1, timeLimit=limit))
-    solve = time.perf_counter() - t0
-    status = "optimal" if pulp.LpStatus[prob.status] == "Optimal" else pulp.LpStatus[prob.status]
-    obj = pulp.value(prob.objective) if prob.objective is not None else None
-    return build, solve, status, obj
-
-
 # ---------------------------------------------------------------- SciPy-HiGHS --
 def run_scipy(p, limit):
     import numpy as np
@@ -220,7 +201,7 @@ def run_ortools(p, limit):
     return build, solve, status, val
 
 
-SOLVERS = [("micpython", run_micpython), ("cbc", run_pulp),
+SOLVERS = [("micpython", run_micpython),
            ("highs", run_scipy), ("scip", run_ortools)]
 
 
@@ -255,13 +236,13 @@ def write_results(rows):
     (ROOT / "bench" / "python_bench_results.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    lines = ["# micpython × 开源求解器（CBC / HiGHS / SCIP）同机对比", "",
-             "环境：conda `mic-bench`（py3.11，pip 的 pulp/scipy/ortools 官方轮子），threads=1，"
+    lines = ["# micpython × 开源求解器（HiGHS / SCIP）同机对比", "",
+             "环境：conda `mic-bench`（py3.11，pip 的 scipy/ortools 官方轮子），threads=1，"
              "时限见正文；机器 15W 笔记本（墙钟噪声 ±20-60%，见 docs/parallel-profiling.md §1.3）。"
-             "solve 单位秒；`watchdog_kill` = 求解器时限+120s 宽限内未返回被强杀"
-             "（实测 CBC 在 mknap/marketsplit 类会进入不受时限约束的阶段）。", "",
-             "| 算例 | micpython | CBC | HiGHS | SCIP | 目标一致 |",
-             "|---|---|---|---|---|---|"]
+             "solve 单位秒；`watchdog_kill` = 求解器时限+120s 宽限内未返回被强杀。"
+             "CBC 列已按决策移除（2026-10-15，理由见脚本头注释：挂死不受时限约束 + 三例错误 Unbounded 判定）。", "",
+             "| 算例 | " + " | ".join(s[0] for s in SOLVERS) + " | 目标一致 |",
+             "|---|" + "---|" * len(SOLVERS) + "---|"]
     for name, _limit in INSTANCES:
         cells, objs = [], []
         for sname, _fn in SOLVERS:
@@ -272,7 +253,7 @@ def write_results(rows):
                 objs.append(r["objective"])
         uniq = len(set(objs))
         if len(objs) < 2 or uniq == 1:
-            agree = "✓" if uniq == 1 or len(objs) == 4 else "—"
+            agree = "✓" if uniq == 1 or len(objs) == len(SOLVERS) else "—"
         else:
             lo, hi = min(objs), max(objs)
             agree = "✓" if hi - lo <= 1e-6 * (1 + abs(hi)) else "△"

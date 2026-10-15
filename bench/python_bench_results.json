@@ -2,17 +2,8 @@
  {
   "instance": "knapsack-200",
   "solver": "micpython",
-  "build_secs": 0.0033,
-  "solve_secs": 0.003,
-  "status": "optimal",
-  "objective": 3409.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-200",
-  "solver": "cbc",
-  "build_secs": 0.0018,
-  "solve_secs": 0.167,
+  "build_secs": 0.0023,
+  "solve_secs": 0.002,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -20,8 +11,8 @@
  {
   "instance": "knapsack-200",
   "solver": "highs",
-  "build_secs": 0.0004,
-  "solve_secs": 0.034,
+  "build_secs": 0.0002,
+  "solve_secs": 0.03,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -29,8 +20,8 @@
  {
   "instance": "knapsack-200",
   "solver": "scip",
-  "build_secs": 0.0282,
-  "solve_secs": 0.013,
+  "build_secs": 0.0033,
+  "solve_secs": 0.003,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -39,16 +30,7 @@
   "instance": "knapsack-500",
   "solver": "micpython",
   "build_secs": 0.0042,
-  "solve_secs": 0.019,
-  "status": "optimal",
-  "objective": 8975.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-500",
-  "solver": "cbc",
-  "build_secs": 0.0055,
-  "solve_secs": 0.095,
+  "solve_secs": 0.02,
   "status": "optimal",
   "objective": 8975.0,
   "limit": 60
@@ -57,7 +39,7 @@
   "instance": "knapsack-500",
   "solver": "highs",
   "build_secs": 0.0003,
-  "solve_secs": 0.058,
+  "solve_secs": 0.054,
   "status": "optimal",
   "objective": 8975.0,
   "limit": 60
@@ -65,7 +47,7 @@
  {
   "instance": "knapsack-500",
   "solver": "scip",
-  "build_secs": 0.0043,
+  "build_secs": 0.004,
   "solve_secs": 0.009,
   "status": "optimal",
   "objective": 8975.0,
@@ -74,17 +56,8 @@
  {
   "instance": "knapsack-2000",
   "solver": "micpython",
-  "build_secs": 0.016,
-  "solve_secs": 0.012,
-  "status": "optimal",
-  "objective": 35328.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-2000",
-  "solver": "cbc",
-  "build_secs": 0.022,
-  "solve_secs": 0.114,
+  "build_secs": 0.0154,
+  "solve_secs": 0.011,
   "status": "optimal",
   "objective": 35328.0,
   "limit": 60
@@ -92,8 +65,8 @@
  {
   "instance": "knapsack-2000",
   "solver": "highs",
-  "build_secs": 0.0011,
-  "solve_secs": 0.127,
+  "build_secs": 0.0016,
+  "solve_secs": 0.121,
   "status": "optimal",
   "objective": 35328.0,
   "limit": 60
@@ -101,8 +74,8 @@
  {
   "instance": "knapsack-2000",
   "solver": "scip",
-  "build_secs": 0.0051,
-  "solve_secs": 0.137,
+  "build_secs": 0.0052,
+  "solve_secs": 0.158,
   "status": "optimal",
   "objective": 35328.0,
   "limit": 60
@@ -110,17 +83,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "micpython",
-  "build_secs": 0.0472,
-  "solve_secs": 0.023,
-  "status": "optimal",
-  "objective": 88526.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-5000",
-  "solver": "cbc",
-  "build_secs": 0.0466,
-  "solve_secs": 0.172,
+  "build_secs": 0.0477,
+  "solve_secs": 0.026,
   "status": "optimal",
   "objective": 88526.0,
   "limit": 60
@@ -128,8 +92,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "highs",
-  "build_secs": 0.0028,
-  "solve_secs": 0.398,
+  "build_secs": 0.0042,
+  "solve_secs": 0.395,
   "status": "optimal",
   "objective": 88526.0,
   "limit": 60
@@ -138,7 +102,7 @@
   "instance": "knapsack-5000",
   "solver": "scip",
   "build_secs": 0.008,
-  "solve_secs": 0.062,
+  "solve_secs": 0.042,
   "status": "optimal",
   "objective": 88525.0,
   "limit": 60
@@ -146,26 +110,17 @@
  {
   "instance": "mknap-3x100",
   "solver": "micpython",
-  "build_secs": 0.0022,
-  "solve_secs": 0.086,
+  "build_secs": 0.002,
+  "solve_secs": 0.082,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
  },
  {
   "instance": "mknap-3x100",
-  "solver": "cbc",
-  "build_secs": null,
-  "solve_secs": 180.0,
-  "status": "watchdog_kill",
-  "objective": null,
-  "limit": 60
- },
- {
-  "instance": "mknap-3x100",
   "solver": "highs",
   "build_secs": 0.0002,
-  "solve_secs": 0.662,
+  "solve_secs": 0.655,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
@@ -173,8 +128,8 @@
  {
   "instance": "mknap-3x100",
   "solver": "scip",
-  "build_secs": 0.0031,
-  "solve_secs": 0.233,
+  "build_secs": 0.0042,
+  "solve_secs": 0.219,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
@@ -182,26 +137,17 @@
  {
   "instance": "mknap-5x300",
   "solver": "micpython",
-  "build_secs": 0.0073,
-  "solve_secs": 10.357,
+  "build_secs": 0.0065,
+  "solve_secs": 13.655,
   "status": "optimal",
   "objective": 4762.0,
   "limit": 120
  },
  {
   "instance": "mknap-5x300",
-  "solver": "cbc",
-  "build_secs": null,
-  "solve_secs": 240.0,
-  "status": "watchdog_kill",
-  "objective": null,
-  "limit": 120
- },
- {
-  "instance": "mknap-5x300",
   "solver": "highs",
-  "build_secs": 0.0004,
-  "solve_secs": 3.123,
+  "build_secs": 0.0005,
+  "solve_secs": 2.853,
   "status": "optimal",
   "objective": 4762.000000000001,
   "limit": 120
@@ -209,8 +155,8 @@
  {
   "instance": "mknap-5x300",
   "solver": "scip",
-  "build_secs": 0.0044,
-  "solve_secs": 2.457,
+  "build_secs": 0.0036,
+  "solve_secs": 2.091,
   "status": "optimal",
   "objective": 4762.0,
   "limit": 120
@@ -218,17 +164,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "micpython",
-  "build_secs": 0.0091,
-  "solve_secs": 0.313,
-  "status": "optimal",
-  "objective": 276.0,
-  "limit": 60
- },
- {
-  "instance": "setcover-100x150",
-  "solver": "cbc",
-  "build_secs": 0.0059,
-  "solve_secs": 0.239,
+  "build_secs": 0.0053,
+  "solve_secs": 0.282,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -237,7 +174,7 @@
   "instance": "setcover-100x150",
   "solver": "highs",
   "build_secs": 0.0005,
-  "solve_secs": 0.229,
+  "solve_secs": 0.206,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -245,8 +182,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "scip",
-  "build_secs": 0.0036,
-  "solve_secs": 0.286,
+  "build_secs": 0.0034,
+  "solve_secs": 0.248,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -254,26 +191,17 @@
  {
   "instance": "setcover-300x600",
   "solver": "micpython",
-  "build_secs": 0.034,
-  "solve_secs": 57.71,
+  "build_secs": 0.0306,
+  "solve_secs": 70.348,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
  },
  {
   "instance": "setcover-300x600",
-  "solver": "cbc",
-  "build_secs": null,
-  "solve_secs": 240.0,
-  "status": "watchdog_kill",
-  "objective": null,
-  "limit": 120
- },
- {
-  "instance": "setcover-300x600",
   "solver": "highs",
-  "build_secs": 0.0033,
-  "solve_secs": 1.796,
+  "build_secs": 0.0036,
+  "solve_secs": 1.714,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
@@ -281,8 +209,8 @@
  {
   "instance": "setcover-300x600",
   "solver": "scip",
-  "build_secs": 0.0073,
-  "solve_secs": 1.782,
+  "build_secs": 0.0068,
+  "solve_secs": 1.698,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
@@ -290,26 +218,17 @@
  {
   "instance": "milp-mixed-250i40c",
   "solver": "micpython",
-  "build_secs": 0.0119,
-  "solve_secs": 0.013,
+  "build_secs": 0.0111,
+  "solve_secs": 0.012,
   "status": "optimal",
   "objective": 1275.791751746084,
   "limit": 60
  },
  {
   "instance": "milp-mixed-250i40c",
-  "solver": "cbc",
-  "build_secs": 0.0168,
-  "solve_secs": 0.157,
-  "status": "Unbounded",
-  "objective": 445078867824000.0,
-  "limit": 60
- },
- {
-  "instance": "milp-mixed-250i40c",
   "solver": "highs",
-  "build_secs": 0.0013,
-  "solve_secs": 0.5,
+  "build_secs": 0.0011,
+  "solve_secs": 0.46,
   "status": "optimal",
   "objective": 1275.7917517463113,
   "limit": 60
@@ -317,8 +236,8 @@
  {
   "instance": "milp-mixed-250i40c",
   "solver": "scip",
-  "build_secs": 0.0045,
-  "solve_secs": 0.311,
+  "build_secs": 0.0043,
+  "solve_secs": 0.295,
   "status": "optimal",
   "objective": 1275.791751746084,
   "limit": 60
@@ -334,18 +253,9 @@
  },
  {
   "instance": "marketsplit-4x30",
-  "solver": "cbc",
-  "build_secs": null,
-  "solve_secs": 180.0,
-  "status": "watchdog_kill",
-  "objective": null,
-  "limit": 60
- },
- {
-  "instance": "marketsplit-4x30",
   "solver": "highs",
-  "build_secs": 0.0003,
-  "solve_secs": 7.195,
+  "build_secs": 0.0001,
+  "solve_secs": 7.01,
   "status": "optimal",
   "objective": 15.0,
   "limit": 60
@@ -353,8 +263,8 @@
  {
   "instance": "marketsplit-4x30",
   "solver": "scip",
-  "build_secs": 0.0032,
-  "solve_secs": 6.232,
+  "build_secs": 0.003,
+  "solve_secs": 5.915,
   "status": "optimal",
   "objective": 15.0,
   "limit": 60
@@ -362,26 +272,17 @@
  {
   "instance": "marketsplit-4x40",
   "solver": "micpython",
-  "build_secs": 0.0028,
-  "solve_secs": 9.082,
+  "build_secs": 0.0014,
+  "solve_secs": 9.078,
   "status": "optimal",
   "objective": 19.0,
   "limit": 60
  },
  {
   "instance": "marketsplit-4x40",
-  "solver": "cbc",
-  "build_secs": null,
-  "solve_secs": 180.0,
-  "status": "watchdog_kill",
-  "objective": null,
-  "limit": 60
- },
- {
-  "instance": "marketsplit-4x40",
   "solver": "highs",
   "build_secs": 0.0001,
-  "solve_secs": 60.011,
+  "solve_secs": 60.007,
   "status": "limit",
   "objective": null,
   "limit": 60
@@ -389,8 +290,8 @@
  {
   "instance": "marketsplit-4x40",
   "solver": "scip",
-  "build_secs": 0.003,
-  "solve_secs": 59.405,
+  "build_secs": 0.0029,
+  "solve_secs": 59.817,
   "status": "status6",
   "objective": null,
   "limit": 60
@@ -398,17 +299,8 @@
  {
   "instance": "assign-40x40",
   "solver": "micpython",
-  "build_secs": 0.0164,
-  "solve_secs": 0.111,
-  "status": "optimal",
-  "objective": 176.0,
-  "limit": 60
- },
- {
-  "instance": "assign-40x40",
-  "solver": "cbc",
-  "build_secs": 0.0174,
-  "solve_secs": 0.179,
+  "build_secs": 0.0142,
+  "solve_secs": 0.077,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -416,8 +308,8 @@
  {
   "instance": "assign-40x40",
   "solver": "highs",
-  "build_secs": 0.0018,
-  "solve_secs": 0.027,
+  "build_secs": 0.0014,
+  "solve_secs": 0.023,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -425,8 +317,8 @@
  {
   "instance": "assign-40x40",
   "solver": "scip",
-  "build_secs": 0.0054,
-  "solve_secs": 0.024,
+  "build_secs": 0.0048,
+  "solve_secs": 0.022,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -434,26 +326,17 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "micpython",
-  "build_secs": 0.1079,
-  "solve_secs": 0.01,
+  "build_secs": 0.1052,
+  "solve_secs": 0.009,
   "status": "optimal",
   "objective": 112.66861478047609,
   "limit": 60
  },
  {
   "instance": "lp-wide-200x300",
-  "solver": "cbc",
-  "build_secs": 0.1682,
-  "solve_secs": 0.152,
-  "status": "Unbounded",
-  "objective": 23475.870994099987,
-  "limit": 60
- },
- {
-  "instance": "lp-wide-200x300",
   "solver": "highs",
-  "build_secs": 0.0108,
-  "solve_secs": 0.031,
+  "build_secs": 0.0104,
+  "solve_secs": 0.026,
   "status": "optimal",
   "objective": 112.66861478047613,
   "limit": 60
@@ -461,8 +344,8 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "scip",
-  "build_secs": 0.0166,
-  "solve_secs": 0.126,
+  "build_secs": 0.0155,
+  "solve_secs": 0.106,
   "status": "optimal",
   "objective": 112.66861478047622,
   "limit": 60
@@ -470,26 +353,17 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "micpython",
-  "build_secs": 0.5992,
-  "solve_secs": 9.156,
+  "build_secs": 0.5162,
+  "solve_secs": 9.323,
   "status": "optimal",
   "objective": 5893.705756618241,
   "limit": 60
  },
  {
   "instance": "lp-sparse-4000x800",
-  "solver": "cbc",
-  "build_secs": 0.8176,
-  "solve_secs": 0.832,
-  "status": "Unbounded",
-  "objective": 360949672.7894396,
-  "limit": 60
- },
- {
-  "instance": "lp-sparse-4000x800",
   "solver": "highs",
-  "build_secs": 0.0665,
-  "solve_secs": 0.895,
+  "build_secs": 0.0651,
+  "solve_secs": 0.784,
   "status": "optimal",
   "objective": 5893.705755757289,
   "limit": 60
@@ -497,8 +371,8 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "scip",
-  "build_secs": 0.0732,
-  "solve_secs": 2.095,
+  "build_secs": 0.0612,
+  "solve_secs": 1.872,
   "status": "optimal",
   "objective": 5893.705756618257,
   "limit": 60
