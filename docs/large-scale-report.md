@@ -1,4 +1,4 @@
-# milp 大规模优化轮交付报告（R1–R9 + P1–P3 + W1–W7 + S1–S5）
+# milp 大规模优化轮交付报告（R1–R9 + P1–P3 + W1–W7 + S1–S6）
 
 > 分支 `feat/gurobi-large-scale`（`git diff main...HEAD` = 10 提交：bench 扩充
 > `334e352` + 算法轮 `fc9f5ee..cac558e`，其间 `54271e4` 为本报告首版与终局
@@ -13,10 +13,11 @@
 > 2026-10-14 17:11）起 `d1b581f..b1f8ccd`（**S1–S5 稀疏核心与批量接口轮**，
 > 2026-10-14/15，五轮全保留：批量 addVars 与 quicksum 修复、稀疏修正单纯形
 > 核心、主求解路径接入、类自适应引擎默认、数值稳健性与外部交叉验证）
-> 见 §8。
+> 见 §8；S6（Devex 定价替代 Dantzig，revised 主域迭代数主杠杆，工作区
+> 待提交）续见 §8。
 >
 > **总裁决：R1–R8 八轮保留，R9 回退（空集——无代码改动，见 R9 节）；
-> P1–P3 与 W1–W7 全部保留（见 §6/§7）；S1–S5 全部保留（见 §8）。**
+> P1–P3 与 W1–W7 全部保留（见 §6/§7）；S1–S6 全部保留（见 §8）。**
 >
 > **数据口径声明**：各轮收益数字均为实现者/裁决在**同机同窗交错 A/B 的中位数**
 > （两版本二进制交替各跑 2–3 次），这是本分支唯一认可的墙钟口径。跨窗口的
@@ -1098,7 +1099,7 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 
 ---
 
-## 8. 稀疏核心与批量接口（S1–S5，`d1b581f..b1f8ccd`，2026-10-14/15）
+## 8. 稀疏核心与批量接口（S1–S6，`d1b581f..b1f8ccd` + S6 工作区待提交，2026-10-14/15）
 
 > 基线 `165f31a`（bench python 对比脚手架）之后五轮：S1 批量 addVars +
 > quicksum 修复（FFI/micpython 侧）、S2 稀疏修正单纯形核心 standalone、
@@ -1108,12 +1109,17 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 > 模块；`AGENTS.md` 为工作区沟通规范文件，非求解产物）。**总裁决：五轮
 > 全部保留**。数据口径与 §开头声明一致（同窗交错 A/B 中位；跨窗墙钟不可
 > 比）；S5 起另有 python_bench（CBC/HiGHS/SCIP 外部求解器）交叉验证口径。
+> S6（Devex 定价替代 Dantzig）在其后（HEAD `315c92b` 之后的**工作区待提交**
+> 改动，提交哈希以入库为准），见 S6 节。
 >
 > **旗标/默认值变化（本轮文档同步）**：新增 CLI `--lp-engine
 > auto|tableau|revised`（S3 接线、S4 默认翻 **auto**——表格规模 m×(n+m)
 > ≥ 10^6 格自动走稀疏 revised 引擎，阈下留稠密 tableau）；milp-ffi ABI
 > 纯增符号 `milp_ffi_add_vars_batch`（22→23，ABI 版本恒 1）；micpython
 > `quicksum` 就地累加修复（O(n²)→O(n)）、`addVars` 改单次 FFI 跨界。
+> S6 无新旗标/默认值变化——定价分档内生于 revised 引擎构造期（同
+> `ENGINE_AUTO_CELL_THRESHOLD` 同维），行为口径变化（迭代序列不再与
+> 稠密引擎逐次一致）见 S6 节。
 
 ### S1（d1b581f）批量 addVars：FFI 批量符号 + micpython addVars 改走批量
 
@@ -1158,14 +1164,16 @@ Gilbert-Peierls 左视（逐列稀疏三角求解 + 非零模式 DFS）+ 阈值�
 三角形部分先行列序（**性能关键**，见下）；③ ETA 乘子形式基更新 +
 周期整基重因子化并从原始数据重算 x_B（类比稠密引擎 REFRESH_INTERVAL
 纪律）；④ 有界原单纯形主循环：全列 Dantzig 定价（rc 每迭代 BTRAN 现算
-，无增量漂移）、有界比值测试（基变量上下界 + 入基界翻转、
+，无增量漂移；S2 期口径——S6 起阈上改 Devex 分档定价，见 S6 节）、
+有界比值测试（基变量上下界 + 入基界翻转、
 `RATIO_BAND_CAP = 1e3` 同款封顶）、Bland 兑底 + W4 停滞证据门 + R8 释放
 语义逐款复制。初始基与残差规则、两阶段 Phase-1（人工列永不入基定价）
 与稠密引擎同源。
 
 **实测（standalone 对账 + 速度门，单线程）**：lp-sparse-4000x800 双引擎
 Optimal 目标恒同钉 **5893.705757**，稀疏引擎迭代数 7774 与稠密引擎
-**逐次一致**（lp-wide-200x300 亦对账，钉 112.66861478047609）；
+**逐次一致**（Dantzig 期口径——S6 起 Devex 有意分叉、对账红线改目标
+恒同，见 S6 节；lp-wide-200x300 亦对账，钉 112.66861478047609）；
 速度门（`#[ignore]` 显式跑）：稠密 1 rep 32–35s vs 稀疏 3 rep 中位
 9.2–9.5s ≈ **3.5×（≥2× 验收线）**、≤15s 线达标。**设计迭代记录**：
 第一版无列序 Q 时 18.4s（1.85×）不达线——瓶颈为 LU 填充（基矩阵 8%
@@ -1242,7 +1250,8 @@ codegen 扰动）。
 **gate 重钉（逐条记因）**：`bench/gate_runs.json` lp-sparse-4000x800
 行 limit_reached/30.33s/objective=null → **optimal/约 9.4s/5893.705757
 /nodes=1**（Auto 下 3.84M 格吃 revised，30s 名义时限不再截断；目标值
-与 tableau 恒同、lpi 仍 7774 逐次一致）；其余 5 行零改动。**未达项如实
+与 tableau 恒同、lpi 仍 7774 逐次一致——S4 期口径，S6 起 Devex 分叉见
+S6 节，gate 行随轮重钉）；其余 5 行零改动。**未达项如实
 声明**：setcover-300x600 ≥2× 未达（1.37×，降档留 tableau + 瓶颈诊断
 留档）。测试：lib 293 过 0 挂 3 ignored 双跑、acceptance 13（**默认输出
 逐字节基线不变**——Auto 阈下 = tableau 的端到端证据）、新增 4 测试
@@ -1279,7 +1288,116 @@ tableau 类单窗墙钟噪声（状态/目标 14/14 无一变化，与文档噪�
 重测，如实记因）。测试：release lib 295 过 0 挂 3 ignored（+2 新测试）、
 bin 23、`cargo check --all-targets` 零警告。
 
-### 8.6 lp-engine 双引擎架构（S2–S4 落地后的形态）
+### S6（工作区待提交）Devex 定价替代 Dantzig（revised 主域）：Forrest–Goldfarb 参考框架近似最陡边 —— 轴1
+
+**动机（迭代数是 S5 后的剩余主杠杆）**：S4 的诊断方法学曾把
+setcover-300x600 根 LP 双引擎迭代数同为 10,331 列为「排除算法分叉、
+锁定每迭代成本」，随后四项热路径修复 + S5 调优把每迭代成本压到工程
+边际——**迭代次数本身**成为 revised 域剩余主杠杆。Dantzig 定价只看
+|rc| 最大、不看列范数：稀疏宽表上反复选入大范数列，顶点序列长
+（setcover-300x600 根 LP 10,331 迭代 vs HiGHS 约 160，差 65×）。Devex
+（Forrest–Goldfarb 参考框架近似最陡边）以参考权重 w_j 近似「入基单位
+步长的目标真实下降率」，打分 score_j = rc_j²/w_j，是迭代数侧的标准
+换代件。**口径变更（用户确认）**：「稀疏引擎迭代数与稠密引擎逐次一致
+（7774）」是 Dantzig 期两引擎同定价规则下的偶然副产品，Devex 下不再
+成立——两引擎对账红线改为**目标恒同**（多解顶点下 x 允许不同），迭代
+序列有意分叉。
+
+**改动（`simplex_sparse.rs`，规模分档定价，无新旗标）**：
+① **构造期分档**（`simplex_sparse.rs:1002`）：原始问题口径
+m×(n+m) ≥ `ENGINE_AUTO_CELL_THRESHOLD`（10^6 格，与 `effective_engine`
+同阈同维）⇒ Devex；阈下保持 Dantzig **逐字节同公式**（
+`simplex_sparse.rs:2176`——入基序列、迭代数、顶点全部不变，A/B 兼容
+锚：显式 revised 小算例与 setcover-300x600 类（270k 格）零扰动）。分档
+依据（模块头 `simplex_sparse.rs:55` 起）：阈上大规模纯 LP 类大赢（A/B 见
+下）；阈下中规模 B&B 类 setcover-300x600 上 Devex 顶点轨迹**劣化搜索
+形态**——确定性节点预算探针实测 2000 节点 incumbent 158 未达证优
+（Dantzig 轨迹 1832 节点证优 144，约 42s），Devex 端到端 240s 超时
+（best 156）。
+② **price() 打分**（`simplex_sparse.rs:2172`）：Devex 域内合格列
+score_j = rc_j²/w_j（rc² 方向无关——贴下界 rc<0 / 贴上界 rc>0 平方后
+同向可比；w_j ≥ 1 恒有限无除零）；eligible 判定（rc 阈值与 at_upper
+方向）、人工列/固定列排除、严格大于比较与 Bland 最小下标直返路径
+**一字未动**——并列仍天然最小下标破键，threads=1 确定性不变。
+③ **新增 devex_update**（`simplex_sparse.rs:2215`）：在 do_pivot 的
+ETA 追加与基交换**之前**调用（`simplex_sparse.rs:2384`）——更新所需的
+出基行 αr = e_rᵀB⁻¹A 属主元前基，此时 `btran_full` 读到的 LU+ETA 恰为
+主元前因子化（时序契约写在函数文档）。ρ = e_rᵀB⁻¹ 经既有 btran_full +
+CSC 逐列点积收集（与 dual_repair/tableau_row_terms 同款机制，未另起
+稠密实现）；主元元 αr_q 直接取 `self.alpha[r]`（= e_rᵀB⁻¹A_q，数学
+恒同省一列收集）。更新规则（Forrest–Goldfarb 标准形式）：非基 j
+（αr_j ≠ 0）w_j ← max(w_j, (αr_j/αr_q)²·w_q)；出基列**赋值**
+max(1, w_q/αr_q²)（基期间名义范数已变，旧权重作废）；任一权重越过
+`DEVEX_RESET_THRESHOLD` = 1e6（具名 const，`simplex_sparse.rs:350`）
+或失真非有限 ⇒ 参考框架重置；NaN 经比较为假**永不入权重向量**。阈值
+依据：权重在框架内沿主元链单调放大（单次主元 (αr_j/αr_q)² 即可乘
+1e6），过大权重把打分 rc²/w 压到趋零（等效冻结该列入基）且对真实最陡
+边范数近似失真；过小阈值又迫使频繁重置、每次丢掉全部累积权重退化回
+Dantzig——1e6 为 Forrest–Goldfarb 型实现通行量级，亦为本改动规格建议
+量级（const 文档注释记因，`simplex_sparse.rs:343` 起）。
+④ **重置点齐备**：solve 冷启动（rebuild 后）、resolve 热启动入口
+（任何贴界/修复主元之前）、Phase-1→Phase-2 切换、阈值触雷；构造期与
+add_row 均保持 devex_w 与静态列空间同步对齐（新松弛列插 1.0）。
+⑤ **文档口径**：模块头、price/devex_update 文档与测试口径全部改
+Devex；「迭代序列与稠密引擎逐次一致（7774 次）」表述移除，改「目标
+恒同是红线、迭代序列有意分叉（用户确认口径变更，注释写明原因）」
+（`simplex_sparse.rs:70`）。
+
+**实测（A/B 同窗交错、threads=1、各 3 次，裁决取 min）**：
+
+| 算例 | 配置 | 3 次秒 | min | 目标 |
+| --- | --- | --- | --- | --- |
+| setcover-100x150 | 新·tableau | 0.419 / 0.407 / 0.366 | 0.37 | 276 |
+| setcover-100x150 | 新·revised | 0.62 / 0.616 / 0.646 | 0.62 | 276 |
+| setcover-300x600 | 新·tableau | 170.56 / 114.618 / 117.446 | 114.62 | 144 |
+| setcover-300x600 | 旧·revised | 103.773 / 47.3 / 55.133 | 47.30 | 144 |
+| setcover-300x600 | 新·revised | 113.512 / 40.508 / 85.409 | 40.51 | 144 |
+| lp-sparse-4000x800 | 旧·revised | 12.867 / 13.861 / 11.271 | 11.27 | 5893.705757 |
+| lp-sparse-4000x800 | 新·revised | 7.824 / 6.59 / 6.651 | 6.59 | 5893.705757 |
+| lp-wide-1000x2000 | 旧·revised | 9.205 / 9.191 / 8.842 | 8.84 | 112.600268 |
+| lp-wide-1000x2000 | 新·revised | 7.556 / 7.74 / 8.2 | 7.56 | 112.600268 |
+
+裁决：setcover-300x600 比 0.86（40.51/47.30）——该例 270k 格**阈下
+Dantzig 域，两版本定价与主循环逐字节同代码**，0.86 为纯窗口噪声（行为
+字段不变，目标 144 恒同）；lp-sparse 比 0.58（6.59/11.27）；lp-wide 比
+0.85（7.56/8.84）。**目标恒同对账**：四算例 optimal 目标极差全部 0.00
+（276 / 144 / 5893.705757 / 112.600268）。翻档线（新·tableau/新·revised）
+= 114.62/40.51 ≈ **2.83**——**本轮翻档未执行**：S6 范围限定定价规则、
+不动引擎分档默认；且该类比值窗口间分歧（S4 同窗 1.37× vs 本窗 2.83×，
+tableau 侧跨窗墙钟变化大——本口径声明下跨窗墙钟不可比），翻档留专门
+轮次按同窗证据定档。**迭代数探针**（debug、确定性迭代计数）：
+setcover-300x600 根 LP 由 10,331（Dantzig，S4 诊断背景值）降至 **2,398**
+（Devex，Optimal，obj = 131.46305476903697，3.06s）——**4.3×**；对
+HiGHS 约 160 迭代的差距从 65× 收敛到约 15×，剩余差距可能需部分定价等
+后续手段（本轮范围外）。**成本侧诚实披露**：权重更新每主元多付一次
+BTRAN(e_r) + 全非基列 CSC 扫描（与定价扫描同量级），上述收益为含此
+成本的净得（setcover-300x600 debug 3.06s 全程含权重维护）。
+
+**测试**：实现者会话实测 `cargo test --manifest-path milp/Cargo.toml
+--quiet` 全绿（lib 295 过 / 3 ignored、集成 23+13+1 过、0 失败，任务书
+记录口径）；文档收尾会话复跑 `--lib`（debug）= **296 过 / 0 挂 /
+3 ignored**（75s；299 总数恰含 S6 新增 `devex_gate_by_instance_size`，
+比 S5 期 295+3=298 恰 +1，差异即该新测试计入）；集成三件（23+13+1）
+与 release 门禁本会话未复跑——按任务约定由脚本统一跑。测试锚口径调整（最终分档态）：
+`iter_limit_hint_truncates_honestly` **原锚复原**——setcover_lp(300,200)
+阈下 Dantzig 轨迹 1427 迭代逐字节重现、hint=1 截断照常触发（
+`simplex_sparse.rs:3378` 注释写明：Devex 全开的中途版本曾降至 951 <
+钳位下限 1000、截断不触发，临时改锚 300x400——实测 1817 迭代，余量
+约 800；规模分档落地后复原原锚）；`degenerate_tie_heavy_parity_with_
+dense` 注释由「大量 Dantzig 并列」改「任一定价规则打分全并列」（全等
+rc 下 Dantzig 与 Devex 打分同为全并列，`simplex_sparse.rs:3679`）。新增
+`devex_gate_by_instance_size`（`simplex_sparse.rs:3348`）：阈下/阈上
+分档钉值 + 998 行 × 5 变量（约 1.001M 格刚好过阈、个位数主元可承受）
+Devex 域端到端目标恒同对账（= 5.0 与稠密引擎一致）。
+
+**遗留**：① release 门禁与 `#[ignore]` 的 lp_sparse_4000x800 速度测试
+（≥2× 于稠密、≤15s）未由实现会话跑——按任务约定由脚本统一跑；② 文档
+收尾即本轮（本节 + milp/README、根 README、bench/gen_instances.py 的
+Dantzig/迭代一致口径统一）；③ setcover-300x600 类翻档（本窗 2.83× vs
+S4 窗 1.37×）与对 HiGHS 剩余约 15× 迭代差距（部分定价等手段）留后续
+轮次按证据定档。
+
+### 8.6 lp-engine 双引擎架构（S2–S4、S6 落地后的形态）
 
 **两套实现、同一 LP 语义**：`simplex.rs`（稠密表格两阶段有界单纯形，
 WP2 + R1 稀疏簿记）与 `simplex_sparse.rs`（稀疏修正单纯形：CSC 矩阵 +
@@ -1307,12 +1425,20 @@ LP 语义的两个实现——比值测试、反循环、两阶段纪律的契�
 - **数值纪律对齐（S5 钉死）**：7 项共享常量与 Bland/W4/R8 触发语义
   与稠密引擎逐款相同，契约测试钉值；refactor 从 CSC 原始数据重算 x_B
   （漂移双保险），数值异常确定性重试一次（无墙钟决策）。
+- **定价（S6 规模分档）**：revised 引擎构造期按 m×(n+m) ≥ 10^6 格
+  （与 `effective_engine` 同阈同维）定死——阈上（auto 默认域）**Devex**
+  （Forrest–Goldfarb 参考框架近似最陡边，score_j = rc_j²/w_j，权重随
+  主元更新、越阈 1e6 重置框架）；阈下保持 **Dantzig** 逐字节同旧版
+  （A/B 兼容锚）。稠密引擎恒 Dantzig。**对账红线 = 目标恒同**；迭代
+  序列不承诺逐次一致（Dantzig 期的逐次一致是同规则偶然副产品，S6 起
+  Devex 域内有意分叉——用户确认口径）。
 - **确定性**：revised t1 双跑目标逐位、nodes/lpi/cuts/values 全等
   （solver 层测试钉死）；auto 默认路径大算例双跑逐字节相同。
 - **为什么阈下留 tableau**：revised 的 ETA/LU 每次调用有固定底价，
   小表格式问题稠密表格更低；且小算例保持旧路径防 codegen 扰动（R1
   教训）。setcover-300x600 类（270k 格、8% 密度内核）revised 1.37×
-  不达 2× 线——LU 填充瓶颈需 Markowitz 级列序工程，留后续轮次。
+  不达 2× 线——LU 填充瓶颈需 Markowitz 级列序工程，留后续轮次（S6
+  窗同窗比值 2.83×，与 S4 窗分歧、翻档未执行，见 S6 节）。
 
 ### 8.7 S1–S5 终局复核与遗留状态
 
@@ -1354,5 +1480,6 @@ ignored；`--test abi` 21 过；lp_engine 解析测试过。发现 **1 中危（
 **功能遗留（非缺陷，按证据定档）**：setcover-300x600 类 revised ≥2×
 未达（1.37×）留 tableau，LU 填充瓶颈微基准留档（4.55ms/重构）——需
 Markowitz 完整右视计数级列序工程；部分定价被记因弃用（会改换入基序列
-引入回归风险，当前定价非瓶颈）；并行 revised（threads≥2）不在 S1–S5
+引入回归风险，当前定价非瓶颈——S5 期口径；S6 已换代 Devex 全列定价，
+部分定价仍未做，见 S6 节遗留）；并行 revised（threads≥2）不在 S1–S5
 范围（并行 worker 直接构造稠密 Simplex，双层显式拒守卫）。

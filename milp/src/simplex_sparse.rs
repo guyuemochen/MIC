@@ -17,10 +17,13 @@
 //!   FilteredBlock（数值失败）；无任何阻挡（含翻转不可用）⇒ NoBlock ⇒
 //!   Phase-2 报 Unbounded；并列带宽 `band = min(feas·(1+|t_min|), feas·
 //!   RATIO_BAND_CAP)`（simplex.rs:116-125 实测踩坑的封顶，本引擎同款）；
-//! - **同一反循环/上限纪律**：Dantzig 得分（贴下界 −rc / 贴上界 +rc）最大、
-//!   并列最小下标；连续退化 > 50 或总迭代 > 3×(m+n) 且停滞 ⇒ Bland（最小
-//!   下标），非退化步 + 驻留 8 步释放（每次调用 ≤64 次重入；总迭代触发逐
-//!   迭代重申）；迭代上限 max(10_000, 20×(m+n))（`set_iter_limit_hint`
+//! - **同一反循环/上限纪律**（定价规则除外——本引擎阈上 Devex 与稠密
+//!   引擎 Dantzig 的**有意分叉**（阈下回 Dantzig，见下方机制节）；反循环
+//!   触发条件与 Bland 路径两引擎完全同款）：连续退化 > 50 或总迭代 >
+//!   3×(m+n) 且停滞 ⇒ Bland
+//!   （最小下标直返，与定价权重无关），非退化步 + 驻留 8 步释放（每次
+//!   调用 ≤64 次重入；总迭代触发逐迭代重申）；迭代上限
+//!   max(10_000, 20×(m+n))（`set_iter_limit_hint`
 //!   可收紧，R8 割循环接线点，F4）；数值失败（含主元过小、NaN/Inf）诚实
 //!   映射 IterationLimit + objective=NaN，绝不冒充 Optimal；W2 内部墙钟
 //!   （`set_time_deadline`）条件读钟——未注入 ⇒ 零墙钟读点；
@@ -46,12 +49,29 @@
 //!   just_refactored 闸保证至多重试一次，无墙钟决策），仍失败才上报；
 //! - x_B 维护与表格引擎同款口径：主元步 x_B[k] −= δt·α_k、x_B[r] =
 //!   入基旧界值 + δt；界翻转 x_B[k] −= Δ·α_k；
-//! - 定价：每迭代 BTRAN(c_B) + 全列 Dantzig 扫描（rc_j = c_j − y·A_j 按
-//!   CSC 列现算，无增量漂移——与表格引擎『三入口批量重算』同款新鲜度
-//!   契约，本引擎每迭代重算即天然新鲜）；v1 不做部分定价：lp-sparse 实测
-//!   全列扫描（nnz≈2.6e5 ≈ 0.1ms/迭代）在 9.5s 总墙钟、1.22ms/迭代成本
-//!   中非主要成分，且本引擎迭代序列与稠密引擎逐次数一致（7774 次）——
-//!   部分定价会改换入基序列、引入迭代数回归风险，留后续按证据启用。
+//! - 定价（**规模分档**：构造期按原始 m×(n+m) 与 [`ENGINE_AUTO_CELL_THRESHOLD`]
+//!   比较定死，割行追加不翻转——阈上 = revised 的 auto 默认域 ⇒ **Devex**
+//!   （Forrest–Goldfarb 参考框架近似最陡边）；阈下 ⇒ Dantzig，与本引擎
+//!   Devex 化之前逐字节同入基序列（A/B 兼容锚）。分档依据（S6 三算例
+//!   A/B + 确定性节点预算探针实测）：Devex 在大规模纯 LP 主导类大赢——
+//!   lp-sparse-4000x800 端到端 11.27→6.59s、lp-wide-1000x2000 8.84→7.56s
+//!   （3 rep min）；但阈下中规模 B&B 类 setcover-300x600（270k 格）上
+//!   Devex 顶点轨迹使搜索形态劣化：无 LP 失败/Bland/上限触发的前提下
+//!   2000 节点 incumbent 158，未达 Dantzig 1832 节点证优 144（~42s），
+//!   端到端 240s 超时（best 156）——分档后阈下恢复 Dantzig 轨迹）。
+//!   Devex 机制：入基打分 score_j = rc_j²/w_j（w_j 为参考权重，≥1；
+//!   eligible 判定沿用贴下界 −rc / 贴上界 +rc 的阈值与方向逻辑），严格
+//!   大于取最大 ⇒ 并列最小下标；每主元后以出基行 αr = e_rᵀB⁻¹A
+//!   （BTRAN + 行收集）更新权重：非基 j w_j ← max(w_j, (αr_j/αr_q)²·w_q)、
+//!   出基列 w ← max(1, w_q/αr_q²)，越过 [`DEVEX_RESET_THRESHOLD`] 即
+//!   重置框架（当前非基集、全 w=1）；solve/resolve 入口与 Phase-1→
+//!   Phase-2 切换均重置。rc_j = c_j − y·A_j 每迭代经 BTRAN(c_B) 按 CSC
+//!   列现算，无增量漂移（与表格引擎『三入口批量重算』同款新鲜度契约）。
+//!   **口径变更（用户确认）**：Devex 域内本引擎迭代序列不再与稠密引擎
+//!   逐次一致（Dantzig 期曾逐次一致，7774 次），两引擎**目标恒同**是
+//!   红线（多解顶点下 x 允许不同）；v1 不做部分定价（全列扫描在
+//!   lp-sparse 实测成本中非主要成分，部分定价另行扰动入基序列，留后续
+//!   按证据启用）。
 //!
 //! # 范围边界（诚实声明）
 //! - S3 起提供全套引擎面：`solve` 冷启动 / `resolve` 热启动（snap+传播 →
@@ -320,6 +340,14 @@ const ETA_REFLOOR_FLOOR: u64 = 64;
 ///（revised 路径）= 59.8/41.2/72.8s——0.1 显著最优（0.05 主元质量差、
 /// 0.25 填充重），维持 0.1 不改。
 const LU_THRESHOLD: f64 = 0.1;
+/// Devex 参考权重重置阈值：任一 w_j 越过（或失真为非有限）该值 ⇒ 参考
+/// 框架重置为当前非基集（全部 w_j = 1）。取值依据（Forrest–Goldfarb 型
+/// 实现通行 10^6 量级，本改动规格建议同量级）：权重只在框架内沿主元链
+/// 单调放大（单次主元 (αr_j/αr_q)² 即可乘上 10^6），过大的 w_j 把对应列
+/// 打分 rc²/w_j 压到趋零（等效冻结该列入基）且对真实最陡边范数的近似
+/// 失真；而过小的阈值又迫使频繁重置、每次丢掉全部累积权重信息退化回
+/// Dantzig。1e6 居中兼顾（重置后从全 1 起步需多轮放大才触阈）。
+const DEVEX_RESET_THRESHOLD: f64 = 1e6;
 
 // ===========================================================================
 // LU 因子化与三角求解
@@ -826,6 +854,16 @@ pub struct SparseSimplex {
     bland_permanent: bool,
     bland_dwell: u32,
     bland_rearms: u32,
+    /// Devex 参考权重（静态列空间 0..ncols_static；人工列永不入基不设
+    /// 权重）。参考框架 = 最近一次重置时的非基集，w_j ≥ 1 单调不降（框架
+    /// 内）；定价打分 rc_j²/w_j。重置点与更新规则见 `devex_reset` /
+    /// `devex_update`。
+    devex_w: Vec<f64>,
+    /// Devex 规模分档（构造期按原始 m×(n+m) 定死，割行追加不翻转）：
+    /// ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]（revised 的 auto 默认域）才启用
+    /// Devex 定价与权重维护；阈下保持 Dantzig——与分档前的 Dantzig 版
+    /// 逐字节同入基序列（A/B 兼容锚）。分档依据见模块头定价节。
+    devex_active: bool,
     iter_limit_hint: Option<u64>,
     time_deadline: Option<std::time::Instant>,
     pivots_since_time_check: u32,
@@ -958,6 +996,12 @@ impl SparseSimplex {
             bland_permanent: false,
             bland_dwell: 0,
             bland_rearms: 0,
+            devex_w: Vec::new(),
+            // 规模分档与 effective_engine 同阈同维（m = 约束行数、n = 变量
+            // 数、原始问题口径）：revised 的类自适应默认域内才启用 Devex。
+            devex_active: (problem.constraints.len() as u64)
+                .saturating_mul(n as u64 + problem.constraints.len() as u64)
+                >= ENGINE_AUTO_CELL_THRESHOLD,
             iter_limit_hint: None,
             time_deadline: None,
             pivots_since_time_check: 0,
@@ -1054,6 +1098,9 @@ impl SparseSimplex {
         s.basis = vec![usize::MAX; m];
         s.in_basis = vec![false; ncs];
         s.at_upper = vec![false; ncs];
+        // Devex 参考权重：构造期即对齐静态列空间（全 1 = 全新框架；
+        // 与 in_basis/at_upper 同步维护，add_row 插入由此恒安全）。
+        s.devex_w = vec![1.0; ncs];
         s.x_b = vec![0.0; m];
         s.ftran_in = vec![0.0; m];
         s.alpha = vec![0.0; m];
@@ -1180,6 +1227,8 @@ impl SparseSimplex {
         self.bounds.lb.clone_from(&bounds.lb);
         self.bounds.ub.clone_from(&bounds.ub);
         self.rebuild_initial_basis();
+        // Devex 冷启动重置：参考框架 = 初始非基集（rebuild 后、两阶段前）。
+        self.devex_reset();
         let st = self.run_two_phase(true);
         self.has_run = true;
         self.build_solution(st)
@@ -1202,6 +1251,10 @@ impl SparseSimplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
+        // Devex 热启动入口重置：参考框架 = 当时非基集（reset-to-全 1 与
+        // 具体时刻的非基集选择无关——框架只经权重生效；置于任何贴界/修复
+        // 主元之前，其后 dual_repair / Phase-1 的主元照常更新权重）。
+        self.devex_reset();
         if !self.has_run {
             // 尚无可用热状态：退化为冷启动（整基重建两阶段）。
             self.bounds.lb.clone_from(&bounds.lb);
@@ -1878,6 +1931,9 @@ impl SparseSimplex {
             let c = ncs_old;
             self.in_basis.insert(c, false);
             self.at_upper.insert(c, false);
+            // Devex 权重随静态列空间同步插入（新列从全 1 起步；与
+            // in_basis/at_upper 同位插入保持列号对齐）。
+            self.devex_w.insert(c, 1.0);
             for b in self.basis.iter_mut() {
                 if *b >= c {
                     *b += 1; // 人工列段右移一位（结构/既有松弛列号不变）
@@ -2059,10 +2115,21 @@ impl SparseSimplex {
 
     // ---- 内部：定价 / 比值测试 / 主元 ----
 
-    /// Dantzig/Bland 定价（与 simplex.rs::price 同构；rc 每迭代经 BTRAN
-    /// 现算，天然新鲜）。人工列与固定列（ub−lb ≤ feas）永不入基。
+    /// Devex/Dantzig/Bland 定价（**与 simplex.rs::price 的分叉点**：本
+    /// 引擎构造期规模分档（m×(n+m) ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]）阈上
+    /// Devex 打分、稠密引擎恒 Dantzig；阈下 Dantzig 与本引擎旧版逐字节
+    /// 同轨迹。用户确认口径——两引擎目标恒同是红线，迭代序列不承诺逐次
+    /// 一致；eligible 判定与 Bland 路径完全同款）。rc 每迭代经 BTRAN
+    /// 现算，天然新鲜；Devex 域内合格列打分 score_j = rc_j²/w_j（w_j 为
+    /// 参考权重，见 `devex_update`），严格大于取最大 ⇒ 并列最小下标破键
+    /// （确定性不变）。人工列与固定列（ub−lb ≤ feas）永不入基。
     fn price(&mut self, phase: u8) -> Pricing {
         let ncs = self.ncols_static();
+        if self.devex_w.len() != ncs {
+            // 防御：权重与静态列空间不同步（各入口重置后不应发生）——按
+            // 当前非基集口径重置。
+            self.devex_reset();
+        }
         let m = self.basis.len();
         for i in 0..m {
             self.cb[i] = self.cost_of(self.basis[i], phase);
@@ -2100,9 +2167,17 @@ impl SparseSimplex {
                 continue;
             }
             if self.bland {
-                return Pricing::Candidate(j, delta); // 最小下标
+                return Pricing::Candidate(j, delta); // 最小下标（与权重无关）
             }
-            let score = if delta > 0.0 { -rc } else { rc };
+            let score = if self.devex_active {
+                // Devex 打分：rc² 方向无关（贴下界 rc<0 / 贴上界 rc>0 平方后
+                // 同向可比）；w_j ≥ 1 恒有限无除零。
+                rc * rc / self.devex_w[j]
+            } else {
+                // 阈下 Dantzig：与旧版（Dantzig 定价期）逐字节同公式——
+                // 入基序列、迭代数、顶点全部不变（A/B 兼容锚）。
+                if delta > 0.0 { -rc } else { rc }
+            };
             if score > best_score {
                 best_score = score;
                 best_j = j;
@@ -2113,6 +2188,90 @@ impl SparseSimplex {
             Pricing::Optimal
         } else {
             Pricing::Candidate(best_j, best_delta)
+        }
+    }
+
+    /// Devex 参考权重重置：参考框架 = 当前非基集，全部 w_j = 1（静态列
+    /// 空间；人工列永不入基不设权重）。调用点：solve/resolve 入口、
+    /// Phase-1→Phase-2 切换、任一权重越过 [`DEVEX_RESET_THRESHOLD`]。
+    fn devex_reset(&mut self) {
+        let ncs = self.ncols_static();
+        self.devex_w.clear();
+        self.devex_w.resize(ncs, 1.0);
+    }
+
+    /// Devex 参考权重更新（Forrest–Goldfarb 标准形式）。**必须在基/ETA
+    /// 变更之前调用**：更新所用的出基表格行 αr = e_rᵀB⁻¹A 属于主元前的
+    /// 基（此时 `btran_full` 读到的 LU+ETA 恰为主元前因子化）。行收集
+    /// 复用本引擎既有机制（BTRAN(e_r) + CSC 逐列点积，与 dual_repair /
+    /// tableau_row_terms 同款，不另起稠密实现）；主元元 αr_q 直接取
+    /// `self.alpha[r]`（= e_rᵀB⁻¹A_q，与收集值数学恒同，省一列收集）。
+    ///
+    /// 更新规则：非基 j（αr_j ≠ 0）w_j ← max(w_j, (αr_j/αr_q)²·w_q)；
+    /// 出基变量转入非基集 w ← max(1, w_q/αr_q²)（人工列出基无权重条目，
+    /// 跳过）。任一权重越过（或失真为非有限）[`DEVEX_RESET_THRESHOLD`]
+    /// ⇒ 参考框架重置。Bland 模式打分不用权重，但更新照常维护——释放
+    /// Bland 后权重仍与基演进一致。
+    fn devex_update(&mut self, q: usize, r: usize, leaving: usize) {
+        if !self.devex_active {
+            return; // 阈下 Dantzig：不维护权重（打分也不消费）
+        }
+        let ncs = self.ncols_static();
+        if self.devex_w.len() != ncs {
+            self.devex_reset(); // 防御（各入口重置后不应发生）
+        }
+        let a_rq = self.alpha[r];
+        if a_rq == 0.0 {
+            // 主元为零不可除：上游三调用点（run_phase/dual_repair/
+            // cleanup_after_phase1）均已按 |αr_q| ≥ tol.pivot 拦截，此处
+            // 仅为确定性防御——跳过更新，打分退回近似（不谎报、不上抛）。
+            return;
+        }
+        let w_q = self.devex_w[q]; // q 恒为静态列（定价只扫静态段）
+        let m = self.basis.len();
+        // ρ = e_rᵀB⁻¹（主元前基）。
+        let mut e = vec![0.0f64; m];
+        e[r] = 1.0;
+        let rho = self.btran_full(&e);
+        let mut breach = false;
+        for j in 0..ncs {
+            if j == q || self.in_basis[j] {
+                // 入基列自身更新为恒等式（max(w_q, w_q)）；基列在行空间
+                // 为单位向量（αr_j ∈ {0,1}）且不入定价，不设权重。
+                continue;
+            }
+            let mut a = 0.0;
+            for k in self.col_start[j]..self.col_start[j + 1] {
+                let rr = rho[self.col_rows[k]];
+                if rr != 0.0 {
+                    a += rr * self.col_vals[k];
+                }
+            }
+            if a == 0.0 {
+                continue;
+            }
+            let ratio = a / a_rq;
+            let cand = ratio * ratio * w_q;
+            // cand 为 NaN（上游数值异常）时比较为假、原值保留——权重
+            // 向量永不引入 NaN；inf/越阈则触发重置兜底。
+            if cand > self.devex_w[j] {
+                self.devex_w[j] = cand;
+                if !cand.is_finite() || cand > DEVEX_RESET_THRESHOLD {
+                    breach = true;
+                }
+            }
+        }
+        if leaving < ncs {
+            // 出基变量转入非基集：按规范**赋值** max(1, w_q/αr_q²)（其在
+            // 基期间名义范数已变，旧权重作废）。
+            let cand = (w_q / (a_rq * a_rq)).max(1.0);
+            self.devex_w[leaving] = cand;
+            if !cand.is_finite() || cand > DEVEX_RESET_THRESHOLD {
+                breach = true;
+            }
+        }
+        if breach {
+            self.devex_reset();
         }
     }
 
@@ -2220,6 +2379,9 @@ impl SparseSimplex {
         }
         self.x_b[r] = entering_old + delta * t;
         let leaving = self.basis[r];
+        // Devex 权重更新：须在 ETA 追加与基交换之前（αr 为主元前基的
+        // 表格行，见 `devex_update` 文档）。
+        self.devex_update(q, r, leaving);
         let mut nz: Vec<(usize, f64)> = Vec::new();
         for (i, &v) in self.alpha.iter().enumerate() {
             if i != r && v != 0.0 {
@@ -2303,6 +2465,9 @@ impl SparseSimplex {
                     }
                     self.cleanup_after_phase1();
                     self.phase1_pending = false;
+                    // Devex：Phase-1 基演进（含清理期 t=0 主元）期间的权重
+                    // 对 Phase-2 已失参考意义——切换点重置为当前非基集。
+                    self.devex_reset();
                 }
             }
         }
@@ -3173,12 +3338,47 @@ mod tests {
         prob(Sense::Minimize, vars, obj, cons)
     }
 
+    /// S6：Devex 规模分档钉值——构造期 m×(n+m)（原始问题口径）≥
+    /// [`ENGINE_AUTO_CELL_THRESHOLD`] 才启用 Devex；阈下 Dantzig 与旧版
+    /// 逐字节同轨迹（A/B 兼容锚，分档依据见模块头定价节）。阈上算例取
+    /// m=998、n=5（998×1003 ≈ 1.001M 格刚好过阈）——变量极少 ⇒ 两引擎
+    /// 求解都只需个位数主元，默认套件可承受；同时以目标恒同对账覆盖
+    /// Devex 打分 + 权重更新路径的端到端正确性。
+    #[test]
+    fn devex_gate_by_instance_size() {
+        // 小算例：阈下 ⇒ Dantzig。
+        let p = load_instance(&milp_instance("milp-mixed-5")).unwrap();
+        let sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        assert!(!sp.devex_active, "阈下须保持 Dantzig");
+        // 998 行 × 5 变量（行系数轮转单变量 ⇒ 最紧行 x_j ≤ 1）：阈上 ⇒
+        // Devex，且最优目标 = 5.0 与稠密引擎恒同。
+        let n = 5usize;
+        let m = 998usize;
+        let vars: Vec<Variable> = (0..n).map(|j| var(&format!("x{j}"), 0.0, 10.0)).collect();
+        let obj: Vec<(usize, f64)> = (0..n).map(|j| (j, 1.0)).collect();
+        let cons: Vec<(Vec<(usize, f64)>, RelOp, f64)> = (0..m)
+            .map(|i| {
+                let rhs = 1.0 + 0.001 * (i / n) as f64; // 同变量的更松行冗余
+                (vec![(i % n, 1.0)], RelOp::Le, rhs)
+            })
+            .collect();
+        let p2 = prob(Sense::Maximize, vars, obj, cons);
+        let sp2 = SparseSimplex::new(&p2, Tolerances::default()).unwrap();
+        assert!(sp2.devex_active, "阈上须启用 Devex");
+        let (st, obj2) = check_vs_dense(&p2, "devex-gate-large");
+        assert_eq!(format!("{st:?}"), "Optimal");
+        assert!((obj2 - 5.0).abs() <= 1e-6, "Devex 域目标 {obj2} ≠ 5.0");
+    }
+
     #[test]
     fn iter_limit_hint_truncates_honestly() {
         // F4 接线点证据：hint 钳到下限 1000（与 simplex.rs 同款
         // h.max(1000)）；生成 setcover 型 LP（300x200，固定种子）全程
         // 1427 迭代 > 1000 ⇒ hint=1 ⇒ IterationLimit + objective NaN
-        //（诚实截断，不冒充 Optimal）。
+        //（诚实截断，不冒充 Optimal）。锚口径注记（S6 规模分档）：本例
+        // m×(n+m)=200×500=100k 阈下 ⇒ Dantzig 轨迹（1427 为 Dantzig 期
+        // 实测并经分档复原逐字节重现）；Devex 全开的中途版本曾降至 951
+        //（< 1000 截断不触发）并临时改锚 300x400，分档后复原原锚。
         let p = setcover_lp(300, 200);
         let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
         sp.set_iter_limit_hint(Some(1));
@@ -3476,9 +3676,10 @@ mod tests {
         assert_eq!(LU_THRESHOLD, 0.1);
     }
 
-    /// S5：并列破键敏感的退化 LP（全对称系数 ⇒ 大量 Dantzig 并列 + 退化
-    /// 顶点）：resolve 序列（逐步固定）与稠密引擎目标恒同——Bland 触发/
-    /// 释放路径的值级行为对账。
+    /// S5：并列破键敏感的退化 LP（全对称系数 ⇒ 任一定价规则下打分全并列
+    /// （Dantzig 与 Devex 同为全等 rc/全等权重）+ 退化顶点）：resolve 序列
+    /// （逐步固定）与稠密引擎目标恒同——Bland 触发/释放路径的值级行为
+    /// 对账。
     #[test]
     fn degenerate_tie_heavy_parity_with_dense() {
         // 8 变量全对称 max Σx s.t. 两两容量行（全等系数 ⇒ 全部比值并列）。

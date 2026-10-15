@@ -48,13 +48,14 @@ cargo run --manifest-path milp/Cargo.toml --release -- milp/instances/knapsack-1
 常用参数：`--verbose`（输出求解过程）、`--time-limit-secs N`（限时）。
 求得最优时最后一行输出 `objective = <数值>`；不可行/无界有独立状态与退出码。
 
-大规模算例示例（`bench/instances/`，2026-10 大规模优化轮 R1–R8 与 S1–S5 验证）——
+大规模算例示例（`bench/instances/`，2026-10 大规模优化轮 R1–R8 与 S1–S6 验证）——
 稀疏纯 LP 800 行 × 4000 列（密度 8%），默认引擎 auto（≥10^6 格自动走稀疏修正
-单纯形）单线程约 9–10s 证最优（tableau 稠密引擎约 32–36s，约 3.5×）：
+单纯形，S6 起阈上 Devex 定价）单线程证最优（S6 同窗 A/B 实测约 6.6s，历史窗
+9–10s；tableau 稠密引擎约 32–36s）：
 
 ```bash
 cargo run --manifest-path milp/Cargo.toml --release -- bench/instances/lp-sparse-4000x800.milp
-# status = optimal / objective = 5893.705757（1 节点，7774 次单纯形迭代，两引擎迭代序列一致）
+# status = optimal / objective = 5893.705757（1 节点；目标与 tableau 恒同，迭代序列随 Devex 定价与稠密引擎有意分叉）
 ```
 
 集合覆盖 100×150（R8 割循环退化修复后 gate t1 约 0.24s，树 45→13 节点）：

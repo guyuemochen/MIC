@@ -206,9 +206,11 @@ mknap(300, 5, 20261020)
 #    标定（profile_stats --threads 1 --time-limit-secs 90，实测见各行），
 #    optimal/gap/limit 皆可、如实记录）——
 lp_sparse(4000, 800, 0.08, 20261101)   # 稀疏纯 LP：800 行 × 4000 列，密度 8%；
-                                       # t1 实测 35.8s optimal（1 节点/7774 迭代，
-                                       # 稀疏核心主秀场；时限只在节点边界检查
-                                       # （branch_bound.rs:711），30s gate 下根
+                                       # t1 实测 35.8s optimal（1 节点/7774 迭代——
+                                       # 生成期（2026-10-09，R1 稠密路径）口径；
+                                       # S6 起 revised 阈上 Devex 定价迭代数不同、
+                                       # 目标恒同，稀疏核心主秀场；时限只在节点边界
+                                       # 检查（branch_bound.rs:711），30s gate 下根
                                        # LP 仍跑完，实测 ~34s optimal）
 set_cover(400, 800, 0.08, 20261102)    # setcover-400x800；t1 实测 17.3s
                                        # limit_reached（lp_iterations=24000 恰为
