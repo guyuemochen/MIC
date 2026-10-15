@@ -506,7 +506,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 wall（W3：现状零变化）；budget 仅 threads=1（解析层交叉校验
         // 已拒绝与 ≥2 的组合）。
         determinism,
-        // 默认 tableau（S3：本轮不改默认）；revised 仅 threads=1。
+        // 默认 auto（S4 类自适应：表格 ≥10^6 格走 revised，阈下 tableau）；
+        // revised 仅 threads=1。
         lp_engine,
     })
 }

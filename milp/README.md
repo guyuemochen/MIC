@@ -698,6 +698,7 @@ milp/
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）
 │   ├── simplex.rs       # 两阶段有界单纯形 + 稀疏混合表格簿记（WP2，大规模轮 R1）
+│   ├── simplex_sparse.rs # 稀疏修正单纯形引擎（CSC + 稀疏 LU + ETA，大规模轮 S2-S5；--lp-engine revised/auto）
 │   ├── simplex_sparse.rs # 稀疏修正单纯形引擎 + LpEngine 双引擎接口与类自适应默认（大规模轮 S2–S4）
 │   ├── presolve.rs      # 保守预处理与还原（WP3）
 │   ├── cuts.rs          # 根节点 GMI/聚合 MIR 割（WP3，大规模轮 R2 扩展）

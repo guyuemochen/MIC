@@ -38,9 +38,10 @@
 //! - FTRAN（Bα = a）/ BTRAN（Bᵀy = c）稀疏三角求解 + **乘子形式 ETA 文件**：
 //!   每主元追加 eta（r, α），FTRAN 顺序施加 E⁻¹（旧→新）、BTRAN 逆序施加
 //!   (Eᵀ)⁻¹（新→旧）后走基础 LU；
-//! - **refactorization 纪律**（类比稠密引擎每 200 主元重算 B⁻¹b）：每
-//!   [`REFACTOR_INTERVAL`] 主元整基重因子化 + 从原始数据重算 x_B =
-//!   B⁻¹(b̂ − N·x_N)（漂移双保险）；数值异常（主元过小 / NaN / 检验数非
+//! - **refactorization 纪律**（类比稠密引擎每 200 主元重算 B⁻¹b）：ETA
+//!   条数达到 [`ETA_REFLOOR_FLOOR`]（S4 实测定档）即整基重因子化 + 从原始
+//!   数据重算 x_B = B⁻¹(b̂ − N·x_N)（漂移双保险；[`REFACTOR_INTERVAL`] 为
+//!   历史上限与纪律同源标记）；数值异常（主元过小 / NaN / 检验数非
 //!   有限）时若非刚重因子化则先重因子化重算再重试本迭代（确定性的
 //!   just_refactored 闸保证至多重试一次，无墙钟决策），仍失败才上报；
 //! - x_B 维护与表格引擎同款口径：主元步 x_B[k] −= δt·α_k、x_B[r] =
@@ -306,7 +307,13 @@ const TIME_CHECK_INTERVAL: u32 = 64;
 /// refactorization 周期：每该数量主元整基重因子化 + 重算 x_B（类比
 /// simplex.rs REFRESH_INTERVAL=200 的 B⁻¹b 重算纪律；本引擎重因子化同时
 /// 清空 ETA 文件，恢复三角求解成本与数值精度）。
+/// 历史上限与纪律同源标记（与稠密引擎 REFRESH_INTERVAL 同源）：eta_over_limit
+/// 曾以其为 clamp 上界，S5 复核后固化常数下限 [`ETA_REFLOOR_FLOOR`]，本常量
+/// 仅由常量对账测试消费钉值。
+#[allow(dead_code)]
 const REFACTOR_INTERVAL: u64 = 200;
+/// ETA 条数下限（S4 实测定档，见 `eta_over_limit` 文档）。
+const ETA_REFLOOR_FLOOR: u64 = 64;
 /// LU 阈值主元比：候选 |v| ≥ 该值 × max|v| 才可入选（稳定性下界）。
 /// S5 定档证据（代表集防过拟合，目标值全部恒同）：lp-sparse
 /// 0.05/0.1/0.25 = 9.74/9.56/10.16s（噪声带内持平）；setcover-300x600
@@ -822,7 +829,6 @@ pub struct SparseSimplex {
     iter_limit_hint: Option<u64>,
     time_deadline: Option<std::time::Instant>,
     pivots_since_time_check: u32,
-    pivots_since_refactor: u64,
     /// 数值异常重试闸：刚重因子化 ⇒ 不再重试（防循环；确定性）。
     just_refactored: bool,
     // —— 热路径暂存（容量跨迭代复用）——
@@ -955,7 +961,6 @@ impl SparseSimplex {
             iter_limit_hint: None,
             time_deadline: None,
             pivots_since_time_check: 0,
-            pivots_since_refactor: 0,
             just_refactored: false,
             ftran_in: Vec::new(),
             alpha: Vec::new(),
@@ -1110,6 +1115,12 @@ impl SparseSimplex {
     /// 列升序]， 该行基变量当前值)。修正单纯形实现：ρ = e_rowᵀB⁻¹ 经
     /// BTRAN，行项 = ρ·A_j 按列现算（与稠密引擎 B⁻¹A 行读取语义一致；
     /// 对账在 ≥1e-6 相对容差口径，不承诺逐位同）。越界行返回 (空, NaN)。
+    ///
+    /// 时序契约（与稠密引擎的差异点，独立复核指认）：`add_row` 追加割行后
+    /// 置 factorization_dirty 推迟重构，该间隙内 lu 仍为旧维度而
+    /// basis.len() 已 +1——此时调用本方法，行收集处 col_rows 可能含新行号
+    /// 而越界 panic。现有全部消费方（cuts 的割分离、branch_bound 的局部割）
+    /// 均在 resolve 之后调用，不触发；新调用方必须先 solve/resolve 再取表行。
     pub fn tableau_row_terms(&self, row: usize) -> (Vec<(usize, f64)>, f64) {
         let m = self.basis.len();
         if row >= m {
@@ -1597,18 +1608,17 @@ impl SparseSimplex {
 
     // ---- 内部：因子化 / 三角求解 / ETA ----
 
-    /// ETA 越限判定（S4）：**flops 平衡 + 绝对上限**——ETA 施加成本
-    /// ≈ Σ|eta.nnz|/次三角求解，重因子化成本 ≈ O(LU fill) 一次性，比例
-    /// 失衡即重构。下限 64 为实测定档（setcover-300x600 全程 A/B：
-    /// floor 16/8 ⇒ 重构过频反亏 [124.9s]，64 最优 [47.1s]，128/200 ⇒
-    /// ETA 施加占优 [99.7-124.9s]）；上限 200 沿用稠密引擎
-    /// REFRESH_INTERVAL 语义。确定性：只依赖 m 与 LU 规模。
+    /// ETA 越限判定（S4 实测定档）：ETA 条数达到 [`ETA_REFLOOR_FLOOR`] 即
+    /// 整基重因子化。曾设想按 LU fill 做 flops 平衡（ETA 施加成本 ∝
+    /// Σ|eta.nnz|/次三角求解 vs 重构成本 O(LU fill)），但左视 LU 的
+    /// l_rows/u_cols/u_diag 外层长度恒为 m、并非真实非零计数，稠密场景恒落
+    /// clamp 下限——独立复核指认后按实测语义固化为常数（setcover-300x600
+    /// 全程 A/B：floor 8/16 重构过频反亏 124.9s、64 最优 47.1s、128/200
+    /// ETA 施加占优 99.7-124.9s）。[`REFACTOR_INTERVAL`] 保留为文档化的
+    /// 历史上限与漂移控制纪律同源标记（常量对账测试钉值）。确定性：只依赖
+    /// ETA 计数。
     fn eta_over_limit(&self) -> bool {
-        let m = self.basis.len().max(1);
-        let lu_nnz = self.lu.l_rows.len() + self.lu.u_cols.len() + self.lu.u_diag.len();
-        let balance = (4 * lu_nnz) / m;
-        let limit = (balance as u64).clamp(64, REFACTOR_INTERVAL);
-        self.etas.len() as u64 >= limit
+        self.etas.len() as u64 >= ETA_REFLOOR_FLOOR
     }
 
     /// 整基重因子化 + 从原始数据重算 x_B（漂移双保险；同时清空 ETA）。
@@ -1669,7 +1679,6 @@ impl SparseSimplex {
         .map_err(|e| e.0)?;
         self.lu.col_perm = order;
         self.etas.clear();
-        self.pivots_since_refactor = 0;
         // x_B = B⁻¹(b̂ − N·x_N)：非基结构列贴界、非基松弛/人工贴 0
         //（行主序扣减，与 simplex.rs::refresh_values 同序）。
         for i in 0..m {
@@ -2185,8 +2194,8 @@ impl SparseSimplex {
     }
 
     /// 主元执行（修正单纯形口径）：x_B 更新与表格引擎同款；基更新走 ETA
-    ///（追加 (r, α)），达到 [`REFACTOR_INTERVAL`] 即整基重因子化 + 重算
-    ///（失败以 Err 上抛，由 run_phase 的数值异常通道处理）。
+    ///（追加 (r, α)），ETA 条数达到 [`ETA_REFLOOR_FLOOR`] 即整基重因子化 +
+    /// 重算（失败以 Err 上抛，由 run_phase 的数值异常通道处理）。
     fn do_pivot(
         &mut self,
         q: usize,
@@ -2530,7 +2539,6 @@ impl SparseSimplex {
         self.bland_permanent = false;
         self.bland_dwell = 0;
         self.bland_rearms = 0;
-        self.pivots_since_refactor = 0;
         self.pivots_since_time_check = TIME_CHECK_INTERVAL;
     }
 
@@ -3459,9 +3467,11 @@ mod tests {
         // simplex.rs:136（W2 条件读钟间隔）。
         assert_eq!(TIME_CHECK_INTERVAL, 64);
         // simplex.rs:113 REFRESH_INTERVAL=200：本引擎 REFACTOR_INTERVAL 为
-        // ETA 数量的绝对上限（eta_over_limit 的 clamp 上界），语义对应
-        // 『每 200 主元用原始数据重算』的漂移控制纪律。
+        // 历史上限与纪律同源标记（eta_over_limit 曾以其为 clamp 上界，复核
+        // 后固化常数下限 ETA_REFLOOR_FLOOR），语义对应『每 200 主元用原始
+        // 数据重算』的漂移控制纪律。
         assert_eq!(REFACTOR_INTERVAL, 200);
+        assert_eq!(ETA_REFLOOR_FLOOR, 64);
         // S5 定档证据见 LU_THRESHOLD 文档注释；防过拟合代表集实测维持 0.1。
         assert_eq!(LU_THRESHOLD, 0.1);
     }
