@@ -4,20 +4,20 @@
 
 | 算例 | micpython | CBC | HiGHS | SCIP | 目标一致 |
 |---|---|---|---|---|---|
-| knapsack-200 | 0.002/optimal | 0.161/optimal | 0.034/optimal | 0.005/optimal | ✓ |
-| knapsack-500 | 0.02/optimal | 0.1/optimal | 0.065/optimal | 0.012/optimal | ✓ |
-| knapsack-2000 | 0.015/optimal | 0.117/optimal | 0.144/optimal | 0.137/optimal | ✓ |
-| knapsack-5000 | 0.026/optimal | 0.176/optimal | 0.421/optimal | 0.043/optimal | △ |
-| mknap-3x100 | 0.081/optimal | 180.0/watchdog_kill | 0.791/optimal | 0.216/optimal | ✓ |
-| mknap-5x300 | 10.849/optimal | 240.0/watchdog_kill | 2.947/optimal | 2.225/optimal | ✓ |
-| setcover-100x150 | 0.365/optimal | 0.232/optimal | 0.208/optimal | 0.314/optimal | ✓ |
-| setcover-300x600 | 59.102/optimal | 240.0/watchdog_kill | 1.838/optimal | 1.957/optimal | ✓ |
-| milp-mixed-250i40c | 0.013/optimal | 0.161/Unbounded | 0.523/optimal | 0.287/optimal | △ |
-| marketsplit-4x30 | 0.014/optimal | 180.0/watchdog_kill | 6.544/optimal | 19.995/optimal | ✓ |
-| marketsplit-4x40 | 8.555/optimal | 180.0/watchdog_kill | 60.008/limit | 59.476/status6 | ✓ |
-| assign-40x40 | 0.102/optimal | 0.212/optimal | 0.035/optimal | 0.033/optimal | ✓ |
-| lp-wide-200x300 | 0.011/optimal | 0.187/Unbounded | 0.035/optimal | 0.145/optimal | △ |
-| lp-sparse-4000x800 | 34.757/optimal | 1.002/Unbounded | 1.036/optimal | 2.872/optimal | △ |
+| knapsack-200 | 0.003/optimal | 0.275/optimal | 0.057/optimal | 0.012/optimal | ✓ |
+| knapsack-500 | 0.021/optimal | 0.196/optimal | 0.07/optimal | 0.014/optimal | ✓ |
+| knapsack-2000 | 0.011/optimal | 0.109/optimal | 0.129/optimal | 0.161/optimal | ✓ |
+| knapsack-5000 | 0.026/optimal | 0.178/optimal | 0.404/optimal | 0.066/optimal | △ |
+| mknap-3x100 | 0.093/optimal | 180.0/watchdog_kill | 0.743/optimal | 0.262/optimal | ✓ |
+| mknap-5x300 | 13.069/optimal | 240.0/watchdog_kill | 10.538/optimal | 5.559/optimal | ✓ |
+| setcover-100x150 | 0.709/optimal | 0.344/optimal | 0.602/optimal | 0.667/optimal | ✓ |
+| setcover-300x600 | 82.574/optimal | 240.0/watchdog_kill | 1.865/optimal | 1.942/optimal | ✓ |
+| milp-mixed-250i40c | 0.014/optimal | 0.16/Unbounded | 0.52/optimal | 0.322/optimal | △ |
+| marketsplit-4x30 | 0.01/optimal | 180.0/watchdog_kill | 7.269/optimal | 6.236/optimal | ✓ |
+| marketsplit-4x40 | 9.873/optimal | 180.0/watchdog_kill | 60.01/limit | 59.047/status6 | ✓ |
+| assign-40x40 | 0.087/optimal | 0.193/optimal | 0.032/optimal | 0.025/optimal | ✓ |
+| lp-wide-200x300 | 0.009/optimal | 0.161/Unbounded | 0.029/optimal | 0.126/optimal | △ |
+| lp-sparse-4000x800 | 10.046/optimal | 1.06/Unbounded | 1.183/optimal | 2.84/optimal | △ |
 
 ## MISMATCH（目标不一致，需人工核查）
 
@@ -25,4 +25,4 @@
 - knapsack-5000 [DP]: [('scip', 88525.0, 88526.0)]
 - milp-mixed-250i40c: [('micpython', 1275.791751746084, 'optimal'), ('cbc', 445078867824000.0, 'Unbounded'), ('highs', 1275.7917517463113, 'optimal'), ('scip', 1275.791751746084, 'optimal')]
 - lp-wide-200x300: [('micpython', 112.66861478047609, 'optimal'), ('cbc', 23475.870994099987, 'Unbounded'), ('highs', 112.66861478047613, 'optimal'), ('scip', 112.66861478047622, 'optimal')]
-- lp-sparse-4000x800: [('micpython', 5893.705756617977, 'optimal'), ('cbc', 360949672.7894396, 'Unbounded'), ('highs', 5893.705755757289, 'optimal'), ('scip', 5893.705756618257, 'optimal')]
+- lp-sparse-4000x800: [('micpython', 5893.705756618241, 'optimal'), ('cbc', 360949672.7894396, 'Unbounded'), ('highs', 5893.705755757289, 'optimal'), ('scip', 5893.705756618257, 'optimal')]

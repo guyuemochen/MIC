@@ -308,6 +308,10 @@ const TIME_CHECK_INTERVAL: u32 = 64;
 /// 清空 ETA 文件，恢复三角求解成本与数值精度）。
 const REFACTOR_INTERVAL: u64 = 200;
 /// LU 阈值主元比：候选 |v| ≥ 该值 × max|v| 才可入选（稳定性下界）。
+/// S5 定档证据（代表集防过拟合，目标值全部恒同）：lp-sparse
+/// 0.05/0.1/0.25 = 9.74/9.56/10.16s（噪声带内持平）；setcover-300x600
+///（revised 路径）= 59.8/41.2/72.8s——0.1 显著最优（0.05 主元质量差、
+/// 0.25 填充重），维持 0.1 不改。
 const LU_THRESHOLD: f64 = 0.1;
 
 // ===========================================================================
@@ -3436,6 +3440,76 @@ mod tests {
             "稀疏中位 {med:.3}s 未达稠密 {dense_secs:.3}s 的一半"
         );
         assert!(med <= 15.0, "稀疏中位 {med:.3}s 超 15s 验收线");
+    }
+
+    /// S5：与稠密引擎（simplex.rs）的退化/重构纪律常量逐项对齐钉死。
+    /// dense 侧常量为私有（不可程序读取），此处按其源码钉值
+    ///（simplex.rs:97-136）：任何一侧改动使口径分叉时，本测试提醒人工
+    /// 复核对齐（允许有意分叉——但须改钉值并记因）。
+    #[test]
+    fn bland_and_refactor_constants_parity_with_tableau() {
+        // simplex.rs:97 / 本文件同值。
+        assert_eq!(DEGENERATE_STREAK_LIMIT, 50);
+        // simplex.rs:108/111/115。
+        assert_eq!(BLAND_DWELL, 8);
+        assert_eq!(BLAND_REARM_MAX, 64);
+        assert_eq!(BLAND_TOTAL_FACTOR, 3);
+        // simplex.rs:125（RATIO_BAND_CAP 实测踩坑封顶）。
+        assert_eq!(RATIO_BAND_CAP, 1e3);
+        // simplex.rs:136（W2 条件读钟间隔）。
+        assert_eq!(TIME_CHECK_INTERVAL, 64);
+        // simplex.rs:113 REFRESH_INTERVAL=200：本引擎 REFACTOR_INTERVAL 为
+        // ETA 数量的绝对上限（eta_over_limit 的 clamp 上界），语义对应
+        // 『每 200 主元用原始数据重算』的漂移控制纪律。
+        assert_eq!(REFACTOR_INTERVAL, 200);
+        // S5 定档证据见 LU_THRESHOLD 文档注释；防过拟合代表集实测维持 0.1。
+        assert_eq!(LU_THRESHOLD, 0.1);
+    }
+
+    /// S5：并列破键敏感的退化 LP（全对称系数 ⇒ 大量 Dantzig 并列 + 退化
+    /// 顶点）：resolve 序列（逐步固定）与稠密引擎目标恒同——Bland 触发/
+    /// 释放路径的值级行为对账。
+    #[test]
+    fn degenerate_tie_heavy_parity_with_dense() {
+        // 8 变量全对称 max Σx s.t. 两两容量行（全等系数 ⇒ 全部比值并列）。
+        let n = 8usize;
+        let vars: Vec<Variable> = (0..n).map(|j| var(&format!("x{j}"), 0.0, 1.0)).collect();
+        let obj: Vec<(usize, f64)> = (0..n).map(|j| (j, 1.0)).collect();
+        let mut cons: Vec<(Vec<(usize, f64)>, RelOp, f64)> = Vec::new();
+        for i in 0..4 {
+            // 每行 4 个全等系数、rhs=2：任意 2 个变量取 1 即触界（退化）。
+            let terms: Vec<(usize, f64)> = (0..4).map(|k| ((i * 2 + k) % n, 1.0)).collect();
+            cons.push((terms, RelOp::Le, 2.0));
+        }
+        let p = prob(Sense::Maximize, vars, obj, cons);
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let s0 = sp.solve(&root);
+        let d0 = d.solve(&root);
+        assert_eq!(s0.status, d0.status);
+        assert!((s0.objective - d0.objective).abs() <= 1e-9);
+        // 逐步固定序列（每次固定产生并列破键敏感的退化子问题）。
+        let mut b = root.clone();
+        for j in 0..n {
+            b.lb[j] = 1.0;
+            let rs = sp.resolve(&b);
+            let rd = d.resolve(&b);
+            assert_eq!(
+                format!("{:?}", rs.status),
+                format!("{:?}", rd.status),
+                "step {j}"
+            );
+            if rs.status == LpStatus::Optimal {
+                assert!(
+                    (rs.objective - rd.objective).abs() <= 1e-9 * (1.0 + rd.objective.abs()),
+                    "step {j}: {} vs {}",
+                    rs.objective,
+                    rd.objective
+                );
+            }
+        }
     }
 
     // ---- F. S3 集成面：resolve 热启动 / add_row 割 / 快照作用域 ----
