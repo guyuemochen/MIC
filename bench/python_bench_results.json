@@ -2,7 +2,7 @@
  {
   "instance": "knapsack-200",
   "solver": "micpython",
-  "build_secs": 0.0032,
+  "build_secs": 0.0033,
   "solve_secs": 0.003,
   "status": "optimal",
   "objective": 3409.0,
@@ -11,8 +11,8 @@
  {
   "instance": "knapsack-200",
   "solver": "cbc",
-  "build_secs": 0.0023,
-  "solve_secs": 0.275,
+  "build_secs": 0.0018,
+  "solve_secs": 0.167,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -21,7 +21,7 @@
   "instance": "knapsack-200",
   "solver": "highs",
   "build_secs": 0.0004,
-  "solve_secs": 0.057,
+  "solve_secs": 0.034,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -29,8 +29,8 @@
  {
   "instance": "knapsack-200",
   "solver": "scip",
-  "build_secs": 0.0272,
-  "solve_secs": 0.012,
+  "build_secs": 0.0282,
+  "solve_secs": 0.013,
   "status": "optimal",
   "objective": 3409.0,
   "limit": 60
@@ -38,8 +38,8 @@
  {
   "instance": "knapsack-500",
   "solver": "micpython",
-  "build_secs": 0.0052,
-  "solve_secs": 0.021,
+  "build_secs": 0.0042,
+  "solve_secs": 0.019,
   "status": "optimal",
   "objective": 8975.0,
   "limit": 60
@@ -47,62 +47,62 @@
  {
   "instance": "knapsack-500",
   "solver": "cbc",
-  "build_secs": 0.0039,
-  "solve_secs": 0.196,
-  "status": "optimal",
-  "objective": 8975.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-500",
-  "solver": "highs",
-  "build_secs": 0.0006,
-  "solve_secs": 0.07,
-  "status": "optimal",
-  "objective": 8975.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-500",
-  "solver": "scip",
-  "build_secs": 0.0037,
-  "solve_secs": 0.014,
-  "status": "optimal",
-  "objective": 8975.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-2000",
-  "solver": "micpython",
-  "build_secs": 0.0145,
-  "solve_secs": 0.011,
-  "status": "optimal",
-  "objective": 35328.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-2000",
-  "solver": "cbc",
-  "build_secs": 0.0186,
-  "solve_secs": 0.109,
-  "status": "optimal",
-  "objective": 35328.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-2000",
-  "solver": "highs",
-  "build_secs": 0.0013,
-  "solve_secs": 0.129,
-  "status": "optimal",
-  "objective": 35328.0,
-  "limit": 60
- },
- {
-  "instance": "knapsack-2000",
-  "solver": "scip",
   "build_secs": 0.0055,
-  "solve_secs": 0.161,
+  "solve_secs": 0.095,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "highs",
+  "build_secs": 0.0003,
+  "solve_secs": 0.058,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-500",
+  "solver": "scip",
+  "build_secs": 0.0043,
+  "solve_secs": 0.009,
+  "status": "optimal",
+  "objective": 8975.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "micpython",
+  "build_secs": 0.016,
+  "solve_secs": 0.012,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "cbc",
+  "build_secs": 0.022,
+  "solve_secs": 0.114,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "highs",
+  "build_secs": 0.0011,
+  "solve_secs": 0.127,
+  "status": "optimal",
+  "objective": 35328.0,
+  "limit": 60
+ },
+ {
+  "instance": "knapsack-2000",
+  "solver": "scip",
+  "build_secs": 0.0051,
+  "solve_secs": 0.137,
   "status": "optimal",
   "objective": 35328.0,
   "limit": 60
@@ -110,8 +110,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "micpython",
-  "build_secs": 0.0703,
-  "solve_secs": 0.026,
+  "build_secs": 0.0472,
+  "solve_secs": 0.023,
   "status": "optimal",
   "objective": 88526.0,
   "limit": 60
@@ -119,8 +119,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "cbc",
-  "build_secs": 0.0493,
-  "solve_secs": 0.178,
+  "build_secs": 0.0466,
+  "solve_secs": 0.172,
   "status": "optimal",
   "objective": 88526.0,
   "limit": 60
@@ -128,8 +128,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "highs",
-  "build_secs": 0.0043,
-  "solve_secs": 0.404,
+  "build_secs": 0.0028,
+  "solve_secs": 0.398,
   "status": "optimal",
   "objective": 88526.0,
   "limit": 60
@@ -137,8 +137,8 @@
  {
   "instance": "knapsack-5000",
   "solver": "scip",
-  "build_secs": 0.0107,
-  "solve_secs": 0.066,
+  "build_secs": 0.008,
+  "solve_secs": 0.062,
   "status": "optimal",
   "objective": 88525.0,
   "limit": 60
@@ -146,8 +146,8 @@
  {
   "instance": "mknap-3x100",
   "solver": "micpython",
-  "build_secs": 0.0019,
-  "solve_secs": 0.093,
+  "build_secs": 0.0022,
+  "solve_secs": 0.086,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
@@ -165,7 +165,7 @@
   "instance": "mknap-3x100",
   "solver": "highs",
   "build_secs": 0.0002,
-  "solve_secs": 0.743,
+  "solve_secs": 0.662,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
@@ -173,8 +173,8 @@
  {
   "instance": "mknap-3x100",
   "solver": "scip",
-  "build_secs": 0.0035,
-  "solve_secs": 0.262,
+  "build_secs": 0.0031,
+  "solve_secs": 0.233,
   "status": "optimal",
   "objective": 2331.0,
   "limit": 60
@@ -182,8 +182,8 @@
  {
   "instance": "mknap-5x300",
   "solver": "micpython",
-  "build_secs": 0.0072,
-  "solve_secs": 13.069,
+  "build_secs": 0.0073,
+  "solve_secs": 10.357,
   "status": "optimal",
   "objective": 4762.0,
   "limit": 120
@@ -200,8 +200,8 @@
  {
   "instance": "mknap-5x300",
   "solver": "highs",
-  "build_secs": 0.0048,
-  "solve_secs": 10.538,
+  "build_secs": 0.0004,
+  "solve_secs": 3.123,
   "status": "optimal",
   "objective": 4762.000000000001,
   "limit": 120
@@ -209,8 +209,8 @@
  {
   "instance": "mknap-5x300",
   "solver": "scip",
-  "build_secs": 0.0429,
-  "solve_secs": 5.559,
+  "build_secs": 0.0044,
+  "solve_secs": 2.457,
   "status": "optimal",
   "objective": 4762.0,
   "limit": 120
@@ -218,8 +218,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "micpython",
-  "build_secs": 0.0192,
-  "solve_secs": 0.709,
+  "build_secs": 0.0091,
+  "solve_secs": 0.313,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -227,8 +227,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "cbc",
-  "build_secs": 0.0144,
-  "solve_secs": 0.344,
+  "build_secs": 0.0059,
+  "solve_secs": 0.239,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -236,8 +236,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "highs",
-  "build_secs": 0.0011,
-  "solve_secs": 0.602,
+  "build_secs": 0.0005,
+  "solve_secs": 0.229,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -245,8 +245,8 @@
  {
   "instance": "setcover-100x150",
   "solver": "scip",
-  "build_secs": 0.0096,
-  "solve_secs": 0.667,
+  "build_secs": 0.0036,
+  "solve_secs": 0.286,
   "status": "optimal",
   "objective": 276.0,
   "limit": 60
@@ -254,8 +254,8 @@
  {
   "instance": "setcover-300x600",
   "solver": "micpython",
-  "build_secs": 0.0814,
-  "solve_secs": 82.574,
+  "build_secs": 0.034,
+  "solve_secs": 57.71,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
@@ -272,8 +272,8 @@
  {
   "instance": "setcover-300x600",
   "solver": "highs",
-  "build_secs": 0.0032,
-  "solve_secs": 1.865,
+  "build_secs": 0.0033,
+  "solve_secs": 1.796,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
@@ -281,8 +281,8 @@
  {
   "instance": "setcover-300x600",
   "solver": "scip",
-  "build_secs": 0.0301,
-  "solve_secs": 1.942,
+  "build_secs": 0.0073,
+  "solve_secs": 1.782,
   "status": "optimal",
   "objective": 144.0,
   "limit": 120
@@ -290,8 +290,8 @@
  {
   "instance": "milp-mixed-250i40c",
   "solver": "micpython",
-  "build_secs": 0.0143,
-  "solve_secs": 0.014,
+  "build_secs": 0.0119,
+  "solve_secs": 0.013,
   "status": "optimal",
   "objective": 1275.791751746084,
   "limit": 60
@@ -299,8 +299,8 @@
  {
   "instance": "milp-mixed-250i40c",
   "solver": "cbc",
-  "build_secs": 0.0164,
-  "solve_secs": 0.16,
+  "build_secs": 0.0168,
+  "solve_secs": 0.157,
   "status": "Unbounded",
   "objective": 445078867824000.0,
   "limit": 60
@@ -308,8 +308,8 @@
  {
   "instance": "milp-mixed-250i40c",
   "solver": "highs",
-  "build_secs": 0.002,
-  "solve_secs": 0.52,
+  "build_secs": 0.0013,
+  "solve_secs": 0.5,
   "status": "optimal",
   "objective": 1275.7917517463113,
   "limit": 60
@@ -318,7 +318,7 @@
   "instance": "milp-mixed-250i40c",
   "solver": "scip",
   "build_secs": 0.0045,
-  "solve_secs": 0.322,
+  "solve_secs": 0.311,
   "status": "optimal",
   "objective": 1275.791751746084,
   "limit": 60
@@ -326,7 +326,7 @@
  {
   "instance": "marketsplit-4x30",
   "solver": "micpython",
-  "build_secs": 0.0012,
+  "build_secs": 0.0013,
   "solve_secs": 0.01,
   "status": "optimal",
   "objective": 15.0,
@@ -344,8 +344,8 @@
  {
   "instance": "marketsplit-4x30",
   "solver": "highs",
-  "build_secs": 0.0001,
-  "solve_secs": 7.269,
+  "build_secs": 0.0003,
+  "solve_secs": 7.195,
   "status": "optimal",
   "objective": 15.0,
   "limit": 60
@@ -353,8 +353,8 @@
  {
   "instance": "marketsplit-4x30",
   "solver": "scip",
-  "build_secs": 0.003,
-  "solve_secs": 6.236,
+  "build_secs": 0.0032,
+  "solve_secs": 6.232,
   "status": "optimal",
   "objective": 15.0,
   "limit": 60
@@ -362,8 +362,8 @@
  {
   "instance": "marketsplit-4x40",
   "solver": "micpython",
-  "build_secs": 0.0014,
-  "solve_secs": 9.873,
+  "build_secs": 0.0028,
+  "solve_secs": 9.082,
   "status": "optimal",
   "objective": 19.0,
   "limit": 60
@@ -380,8 +380,8 @@
  {
   "instance": "marketsplit-4x40",
   "solver": "highs",
-  "build_secs": 0.0002,
-  "solve_secs": 60.01,
+  "build_secs": 0.0001,
+  "solve_secs": 60.011,
   "status": "limit",
   "objective": null,
   "limit": 60
@@ -390,7 +390,7 @@
   "instance": "marketsplit-4x40",
   "solver": "scip",
   "build_secs": 0.003,
-  "solve_secs": 59.047,
+  "solve_secs": 59.405,
   "status": "status6",
   "objective": null,
   "limit": 60
@@ -398,8 +398,8 @@
  {
   "instance": "assign-40x40",
   "solver": "micpython",
-  "build_secs": 0.0167,
-  "solve_secs": 0.087,
+  "build_secs": 0.0164,
+  "solve_secs": 0.111,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -407,8 +407,8 @@
  {
   "instance": "assign-40x40",
   "solver": "cbc",
-  "build_secs": 0.0192,
-  "solve_secs": 0.193,
+  "build_secs": 0.0174,
+  "solve_secs": 0.179,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -416,8 +416,8 @@
  {
   "instance": "assign-40x40",
   "solver": "highs",
-  "build_secs": 0.0014,
-  "solve_secs": 0.032,
+  "build_secs": 0.0018,
+  "solve_secs": 0.027,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -426,7 +426,7 @@
   "instance": "assign-40x40",
   "solver": "scip",
   "build_secs": 0.0054,
-  "solve_secs": 0.025,
+  "solve_secs": 0.024,
   "status": "optimal",
   "objective": 176.0,
   "limit": 60
@@ -434,8 +434,8 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "micpython",
-  "build_secs": 0.1152,
-  "solve_secs": 0.009,
+  "build_secs": 0.1079,
+  "solve_secs": 0.01,
   "status": "optimal",
   "objective": 112.66861478047609,
   "limit": 60
@@ -443,8 +443,8 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "cbc",
-  "build_secs": 0.1803,
-  "solve_secs": 0.161,
+  "build_secs": 0.1682,
+  "solve_secs": 0.152,
   "status": "Unbounded",
   "objective": 23475.870994099987,
   "limit": 60
@@ -452,8 +452,8 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "highs",
-  "build_secs": 0.0123,
-  "solve_secs": 0.029,
+  "build_secs": 0.0108,
+  "solve_secs": 0.031,
   "status": "optimal",
   "objective": 112.66861478047613,
   "limit": 60
@@ -461,7 +461,7 @@
  {
   "instance": "lp-wide-200x300",
   "solver": "scip",
-  "build_secs": 0.0173,
+  "build_secs": 0.0166,
   "solve_secs": 0.126,
   "status": "optimal",
   "objective": 112.66861478047622,
@@ -470,8 +470,8 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "micpython",
-  "build_secs": 0.5901,
-  "solve_secs": 10.046,
+  "build_secs": 0.5992,
+  "solve_secs": 9.156,
   "status": "optimal",
   "objective": 5893.705756618241,
   "limit": 60
@@ -479,8 +479,8 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "cbc",
-  "build_secs": 1.1396,
-  "solve_secs": 1.06,
+  "build_secs": 0.8176,
+  "solve_secs": 0.832,
   "status": "Unbounded",
   "objective": 360949672.7894396,
   "limit": 60
@@ -488,8 +488,8 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "highs",
-  "build_secs": 0.0832,
-  "solve_secs": 1.183,
+  "build_secs": 0.0665,
+  "solve_secs": 0.895,
   "status": "optimal",
   "objective": 5893.705755757289,
   "limit": 60
@@ -497,8 +497,8 @@
  {
   "instance": "lp-sparse-4000x800",
   "solver": "scip",
-  "build_secs": 0.0988,
-  "solve_secs": 2.84,
+  "build_secs": 0.0732,
+  "solve_secs": 2.095,
   "status": "optimal",
   "objective": 5893.705756618257,
   "limit": 60

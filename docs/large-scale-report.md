@@ -1,4 +1,4 @@
-# milp 大规模优化轮交付报告（R1–R9 + 并行效率修复 P1–P3）
+# milp 大规模优化轮交付报告（R1–R9 + P1–P3 + W1–W7 + S1–S5）
 
 > 分支 `feat/gurobi-large-scale`（`git diff main...HEAD` = 10 提交：bench 扩充
 > `334e352` + 算法轮 `fc9f5ee..cac558e`，其间 `54271e4` 为本报告首版与终局
@@ -9,7 +9,14 @@
 > 再后 `6f85594`（P 轮文档收尾）起 `70de19e..d0e47ba`（**W1–W7 遗留清零轮**，
 > 2026-10-13/14，七轮全保留）见 §7。
 >
-> **总裁决：R1–R8 八轮保留，R9 回退（空集——无代码改动，见 R9 节）。**
+> 再后 `165f31a`（bench：micpython 与 CBC/HiGHS/SCIP 同机对比脚手架，
+> 2026-10-14 17:11）起 `d1b581f..b1f8ccd`（**S1–S5 稀疏核心与批量接口轮**，
+> 2026-10-14/15，五轮全保留：批量 addVars 与 quicksum 修复、稀疏修正单纯形
+> 核心、主求解路径接入、类自适应引擎默认、数值稳健性与外部交叉验证）
+> 见 §8。
+>
+> **总裁决：R1–R8 八轮保留，R9 回退（空集——无代码改动，见 R9 节）；
+> P1–P3 与 W1–W7 全部保留（见 §6/§7）；S1–S5 全部保留（见 §8）。**
 >
 > **数据口径声明**：各轮收益数字均为实现者/裁决在**同机同窗交错 A/B 的中位数**
 > （两版本二进制交替各跑 2–3 次），这是本分支唯一认可的墙钟口径。跨窗口的
@@ -1088,3 +1095,264 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 | #7 首轮复核低危 | R7 已修复（不变） |
 | #8 lp-sparse gate 越窗 | **W2 清零**：内部时限 30.1–30.3s 诚实截断，gate 基线已重钉 |
 | #9 终局复核发现 | 维持留档（W4 无关）；另 W2 新增 simplex.rs 模块头「每 256」注释陈旧一条 |
+
+---
+
+## 8. 稀疏核心与批量接口（S1–S5，`d1b581f..b1f8ccd`，2026-10-14/15）
+
+> 基线 `165f31a`（bench python 对比脚手架）之后五轮：S1 批量 addVars +
+> quicksum 修复（FFI/micpython 侧）、S2 稀疏修正单纯形核心 standalone、
+> S3 接入主求解路径、S4 类自适应引擎默认定档 + revised 热路径修复、S5
+> 数值稳健性与 python_bench 全量外部复跑。区间 `git diff 165f31a...HEAD`
+> = 5 提交 24 文件 +5175/−227（`milp/src/simplex_sparse.rs` 3773 行为全新
+> 模块；`AGENTS.md` 为工作区沟通规范文件，非求解产物）。**总裁决：五轮
+> 全部保留**。数据口径与 §开头声明一致（同窗交错 A/B 中位；跨窗墙钟不可
+> 比）；S5 起另有 python_bench（CBC/HiGHS/SCIP 外部求解器）交叉验证口径。
+>
+> **旗标/默认值变化（本轮文档同步）**：新增 CLI `--lp-engine
+> auto|tableau|revised`（S3 接线、S4 默认翻 **auto**——表格规模 m×(n+m)
+> ≥ 10^6 格自动走稀疏 revised 引擎，阈下留稠密 tableau）；milp-ffi ABI
+> 纯增符号 `milp_ffi_add_vars_batch`（22→23，ABI 版本恒 1）；micpython
+> `quicksum` 就地累加修复（O(n²)→O(n)）、`addVars` 改单次 FFI 跨界。
+
+### S1（d1b581f）批量 addVars：FFI 批量符号 + micpython addVars 改走批量
+
+**交付与归因（重要：提速主力是 quicksum 修复，不是批量符号）**：
+① `quicksum` 就地累加（`micpython/core.py:383` 起）——共享项字典就地
+累加（每项 O(1)），替代旧 `total = total + term` 算子链（每步经
+`LinExpr.__add__` 整拷增长中的字典，O(n²)；5000 项微基准 1.28s →
+0.0018s，约 712×）；数学语义逐项等价（同序浮点加法、终态删零等价，
+中途归零再复活向量钉死在测试）。② FFI 批量符号
+`milp_ffi_add_vars_batch`（`milp-ffi/src/api.rs`，函数总表 #9，符号
+22→23）：validate-then-mutate 两阶段（预检 vtype/lb/ub/名字 UTF-8/
+批内重名全部先于任何状态变更，消息带元素下标），入模失败
+`vars.truncate(原长度)` 精确回滚；`names` 数组 NULL ⇒ 自动命名 `x{k}`
+（仅为 C 消费方便利，micpython 恒显式传名）；ABI 版本恒 1 不提升
+（纯增符号、既有签名零改动；旧 DLL 配新绑定在装载期逐名校验即失败，
+无静默路径——三处记因）。③ micpython `addVars` 改单次跨界（ctypes
+严格类型数组 ×count），与逐个 addVar 的等价性（名字/下标连续/界/
+Binary-ub=1/obj 镜像）由契约测试断言。
+
+**实测**：python_bench 口径（`--pair knapsack-5000 micpython`，--pair
+仅打印不落盘）build_secs 中位 0.0468–0.0488s（3 rep）vs 记录基线
+2.3484s——**约 48–50×，<0.3s 验收线达标**；objective 88526 三次恒同
+（= DP 真值，目标红线守住）；solve_secs 0.022–0.026 不变。**诚实归因
+（冷审 F1 调整执行）**：build 提速来自 quicksum 修复（逐变量 ctypes
+跨界本只占 build ~1%），批量符号的独立微基准 addVars(5000) 0.0201s vs
+addVar 循环 0.0274s（0.735×）——批量诚实地定位为 **ABI 卫生项**而非
+提速主力。测试：milp-ffi 5 单元 + 21 集成全绿（新增 5 个 batch_* 契约
+测试）、micpython 63 全绿（新增批量契约 4 + quicksum 回归 3）；范围红线
+：simplex.rs 与 milp 求解核心零改动。
+
+**偏差记档（任务书 → 实际，均已核实成立）**：批量 ABI 不带 obj 数组
+（FFI/milp 无逐变量 obj 存储，obj 属 Python 镜像、setObjective 时并入）；
+NULL 自动命名仅 C 便利（服务不了 addVars 重名拒绝语义）；build 提速
+归因 quicksum 而非批量符号（实测）。
+
+### S2（30138fe）稀疏修正单纯形核心 v1：CSC + 稀疏 LU + FTRAN/BTRAN + 有界原单纯形
+
+**架构**（`milp/src/simplex_sparse.rs`，standalone 落地、`simplex.rs`
+零改动红线）：① 约束矩阵 CSC（列起点/行号/值，行升序）；② 稀疏 LU =
+Gilbert-Peierls 左视（逐列稀疏三角求解 + 非零模式 DFS）+ 阈值主元
+|v| ≥ 0.1·max|v|（`LU_THRESHOLD = 0.1`，`simplex_sparse.rs:315`）+ 基
+三角形部分先行列序（**性能关键**，见下）；③ ETA 乘子形式基更新 +
+周期整基重因子化并从原始数据重算 x_B（类比稠密引擎 REFRESH_INTERVAL
+纪律）；④ 有界原单纯形主循环：全列 Dantzig 定价（rc 每迭代 BTRAN 现算
+，无增量漂移）、有界比值测试（基变量上下界 + 入基界翻转、
+`RATIO_BAND_CAP = 1e3` 同款封顶）、Bland 兑底 + W4 停滞证据门 + R8 释放
+语义逐款复制。初始基与残差规则、两阶段 Phase-1（人工列永不入基定价）
+与稠密引擎同源。
+
+**实测（standalone 对账 + 速度门，单线程）**：lp-sparse-4000x800 双引擎
+Optimal 目标恒同钉 **5893.705757**，稀疏引擎迭代数 7774 与稠密引擎
+**逐次一致**（lp-wide-200x300 亦对账，钉 112.66861478047609）；
+速度门（`#[ignore]` 显式跑）：稠密 1 rep 32–35s vs 稀疏 3 rep 中位
+9.2–9.5s ≈ **3.5×（≥2× 验收线）**、≤15s 线达标。**设计迭代记录**：
+第一版无列序 Q 时 18.4s（1.85×）不达线——瓶颈为 LU 填充（基矩阵 8%
+密度列近随机，LU 近稠密）；加三角形先行列序后 9.4s 两轮内达标。测试
+21 个新单元（LU 重建/奇异/随机、9 个小 LP 语义、hint 截断、时限双态、
+逐位确定性、Clone、访问器对账）；crash 基按证据弃用（迭代序列与稠密
+完全一致 ⇒ 松弛基已是最优起点）。范围外诚实声明：resolve 热启动/
+add_row/parallel_bb 接线留 S3；Markowitz 完整右视计数与部分定价留后续
+（部分定价会改换入基序列引入回归风险，模块文档已记因）。
+
+### S3（cbf2bda）接入主求解路径：热启动、加割、旗标与全套件对账
+
+**接线**：① `LpEngine` trait（`simplex_sparse.rs:146`，15 方法 =
+branch_bound/cuts/heuristics 全消费面）+ `LpEngineKind` 三值 + 工厂
+`new_engine`；B&B 持有 `Box<dyn LpEngine>`，W6 局部割快照改走 trait
+`snapshot()`。② resolve 热启动（语义对齐 `simplex.rs::resolve`）：
+prev_bounds swap 协议 → 非基贴界双向 snap → 违反时对偶修复快路径
+（无欠账、无人工基列、静态对偶可行时有界对偶比值测试数步恢复；任何
+异常 GiveUp 回退整基重建 + Phase-1）。③ `add_row` 加割行（同款 Le/Ge/Eq
+规则；新行**不即时更新因子**——置脏标记，由下次 solve/resolve 入口整基
+重因子化，割批共享一次）。④ CLI `--lp-engine tableau|revised`（本轮
+默认 tableau 不变）+ `BbOptions.lp_engine` 透传；**revised × threads≥2
+双层显式拒**（CLI 解析层用法错误 + 库层 InvalidModel，不静默分叉）。
+⑤ W2/W3 接通：条件读钟、cut_loop R8 的迭代 hint 收紧与回滚重建全部经
+trait。
+
+**关键 bug（本轮实测抓出）**：`add_row` 首版漏把割行结构系数拼进 CSC
+各结构列段 → 重因子化重建出缺行基矩阵 → setcover-300x600 误报
+infeasible、mknap-5x300 节点爆炸（200,166）；修复为单遍 O(nnz+|割项|)
+CSC 重构后 setcover-300x600 正确 optimal 144（nodes 2090）。
+
+**实测**：全套件绿——lib 290 过 0 挂 2 ignored（debug/release 双跑）、
+bin 23、acceptance 13 过 2 ignored（**默认 tableau 路径逐字节基线钉死**
+= 行为不变证据）、warm_cold_parity 1、`cargo check --all-targets` 零警告。
+重负载验收（release 显式跑）：mknap-5x300 Optimal 4762.0 @约 44s、
+setcover-300x600 Optimal 144.0 @约 238s。**全 14 个 bench 实例 revised
+目标与 tableau/DP 真值恒同对账**（knapsack-200/500/2000/5000 = 3409/
+8975/35328/88526 与 `.opt` 逐一相符；mknap-3x100=2331、setcover-100x150
+=276、milp-mixed-250i40c=1275.791752、marketsplit 15/19、assign-40x40
+=176、lp 两例钉值同 S2）。性能观测（S4 素材，非本轮门）：lp-sparse
+全路径 revised 9.6s（tableau ~35s）；setcover-300x600 revised 237.5s vs
+tableau 64.8s（热启动成本如实披露）；mknap-5x300 revised 44.4s/200,166
+nodes vs tableau 72,891 nodes。
+
+### S4（dc9f016）类自适应默认与计时定档：哪些类默认走 revised
+
+**revised 热路径四项修复（全部先诊断后修，逐项实测）**：① ETA 生命
+周期 bug（阻断级）——逐次短 resolve 永不触发周期重构 ⇒ ETA 文件跨
+resolve 无界增长（setcover-300x600 实测 470 条，每次 FTRAN/BTRAN 多付
+|etas|×m 乘加），修复为按 ETA 实际数量跨生命周期触发（237.5s→104s）；
+② 稀疏 ETA（主元项分离 + 非零稀疏施加）；③ factorize 复用版（持久
+缓冲，~10×m 次堆分配→0）；④ ETA/重构平衡阈（floor 64 经 {16,64,128,
+200} 全程 A/B 定档：16 重构过频反亏 124.9s、64 最优 47.1s）。四项合计
+setcover-300x600 revised 237.5→42.5s（solve 口径，5.6×）。诊断方法学
+：路径计数（98% 走对偶修复快路径）、阶段耗时累加器、根 LP 迭代数双引擎
+对比（同为 10,331 次 ⇒ 排除算法分叉、锁定每迭代成本）。
+
+**类自适应默认（三层接线）**：`LpEngineKind::Auto` 成为新默认（
+`simplex_sparse.rs:111`），`effective_engine`（`simplex_sparse.rs:126`）
+规则 = **m×(n+m) ≥ `ENGINE_AUTO_CELL_THRESHOLD` = 10^6 格 ⇒ revised，
+否则 tableau**（`simplex_sparse.rs:122`；阈落在 setcover-400x800 480k
+与 lp-sparse 3.84M 之间的整数量级空带，一句话可解释「表格超百万格」）；
+显式 tableau/revised 覆盖优先；CLI `--lp-engine auto|tableau|revised`
+默认 auto。**定档证据（同窗交错 3 rep 显式旗标，目标值全部恒同）**：
+翻 revised——lp-sparse 35.8→10.2s（3.5×）、lp-wide-1000x2000 15.4→
+8.2s（1.88×）；阈下留 tableau——mknap-5x300 tableau 胜 3.4×、
+setcover-100x150 tableau 胜 1.5×、knapsack 族单行表格式；**边界案例
+诚实降档**——setcover-300x600 revised 1.37×（63.7→46.5s）低于 2× 线
+且处单窗噪声带 ⇒ 保守留 tableau（瓶颈为 8% 密度内核的 LU 填充致重构
+~4.5ms/次，微基准实证 37k nnz 内核 4.55ms——需 Markowitz 级列序工程，
+后续轮次素材）；assign-40x40 1.29× 但 0.2s 级噪声且阈下（R1 教训防
+codegen 扰动）。
+
+**gate 重钉（逐条记因）**：`bench/gate_runs.json` lp-sparse-4000x800
+行 limit_reached/30.33s/objective=null → **optimal/约 9.4s/5893.705757
+/nodes=1**（Auto 下 3.84M 格吃 revised，30s 名义时限不再截断；目标值
+与 tableau 恒同、lpi 仍 7774 逐次一致）；其余 5 行零改动。**未达项如实
+声明**：setcover-300x600 ≥2× 未达（1.37×，降档留 tableau + 瓶颈诊断
+留档）。测试：lib 293 过 0 挂 3 ignored 双跑、acceptance 13（**默认输出
+逐字节基线不变**——Auto 阈下 = tableau 的端到端证据）、新增 4 测试
+（规则钉值/阈下等价/有效引擎守卫/大算例默认确定性双跑）。
+
+### S5（b1f8ccd）数值稳健性与外部交叉验证：refactorization 调优 + python_bench 复跑
+
+**① 数值稳健性三项**：(a) 常量对齐——simplex_sparse 与 simplex.rs 逐项
+核对 7 项共享常量全同（DEGENERATE_STREAK_LIMIT=50、BLAND_DWELL=8、
+BLAND_REARM_MAX=64、BLAND_TOTAL_FACTOR=3、RATIO_BAND_CAP=1e3、
+TIME_CHECK_INTERVAL=64、REFACTOR_INTERVAL=200），Bland 触发条件为 S2
+逐款移植；新增 2 契约测试钉死（常量钉值 + 全对称系数退化并列 LP 与稠密
+引擎恒同）。(b) 参数扫描（代表集防过拟合）——LU_THRESHOLD 0.05/0.1/
+0.25 两类实测目标值全部恒同，0.1 显著最优；eta floor 32/64 绑定类实测
+64 最优；**结论：两参数均维持现值**（最优即当前值，零过拟合风险），
+扫描证据写入 const 文档注释。(c) 漂移实测——四大重负载 revised 全程
+数值重试事件（主元过小/NaN 触发的重因子化重试）全部 = 0（周期重构纪律
+裕量充足）。
+
+**② python_bench 全量外部复跑**（重建含 S2–S4 引擎的 DLL；FFI 走
+`SolveOptions::default` ⇒ Auto 默认生效）：**micpython 14/14 全部
+optimal，13 个有外部共识对的算例与 HiGHS/SCIP 全部 AGREE**（纯 LP 三
+算例位级吻合；lp-sparse micpython 5893.705756618241 比 tableau 旧值
+更贴近 SCIP 参考值）；**MISMATCH 5 条 = 既有外部离群原样**（scip
+knapsack-5000=88525，mic/cbc/highs 三方 88526 = DP 真值；cbc Unbounded
+×3 为 CBC 已知行为）——**零新增、零涉及 micpython**；表内唯一数值变化
+lp-sparse micpython 末 4 位 2.6e-10（引擎路径差异，容差内不触发
+mismatch）。**性能对比（落档同口径）**：lp-sparse-4000x800 micpython
+**34.757s → 10.046s（3.46×，Auto→revised）**；mknap-5x300 10.85→
+13.07s、setcover-300x600 59.1→82.6s、marketsplit-4x40 8.56→9.87s 为
+tableau 类单窗墙钟噪声（状态/目标 14/14 无一变化，与文档噪声带一致）。
+不劣化验收：空闲机 CLI 默认路径 3-rep 中位 9.47s vs S2 态 9.0–10.4s
+波动带——不劣化（首次 3-rep 14.5–18.3s 为后台并发污染，识别后空闲机
+重测，如实记因）。测试：release lib 295 过 0 挂 3 ignored（+2 新测试）、
+bin 23、`cargo check --all-targets` 零警告。
+
+### 8.6 lp-engine 双引擎架构（S2–S4 落地后的形态）
+
+**两套实现、同一 LP 语义**：`simplex.rs`（稠密表格两阶段有界单纯形，
+WP2 + R1 稀疏簿记）与 `simplex_sparse.rs`（稀疏修正单纯形：CSC 矩阵 +
+Gilbert-Peierls 左视稀疏 LU + ETA 乘子基更新 + 对偶修复热启动）是同一
+LP 语义的两个实现——比值测试、反循环、两阶段纪律的契约逐条写在
+`simplex_sparse.rs` 模块头注释（前 60 行即架构文档），改任一侧都要检查
+另一侧是否需要对齐（AGENTS.md 代码铁律）。
+
+- **接口**：`LpEngine` trait（`simplex_sparse.rs:146`）统一
+  branch_bound/cuts/heuristics 的全部消费面（solve/resolve/add_row/
+  tableau_row_terms/snapshot/set_iter_limit_hint/set_time_deadline 等
+  15 方法）；`Simplex` 与 `SparseSimplex` 各有一份实现，B&B 持有
+  `Box<dyn LpEngine>`。
+- **选择**：`LpEngineKind` = `Auto | Tableau | Revised`（
+  `simplex_sparse.rs:104`），默认 **Auto**；`effective_engine`（
+  `simplex_sparse.rs:126`）把 Auto 按规模解析——m×(n+m) ≥ 10^6 格 ⇒
+  Revised（lp-sparse-4000x800 3.84M 命中；setcover-400x800 480k 不命中
+  ），否则 Tableau。显式指定覆盖优先。
+- **CLI 三层**：`--lp-engine auto|tableau|revised`（默认 auto，等号/
+  空格两式，`main.rs:431`）；`BbOptions.lp_engine` 透传；`new_engine`
+  工厂内解析（B&B/cuts 回滚工厂自动生效）。**`--lp-engine revised`
+  仅支持 `--threads 1`**——CLI 解析层显式报错（`main.rs:477`），auto
+  在大算例上解析为 revised × threads≥2 由库层按有效引擎拒绝（解析层
+  不知规模，双层守卫不静默分叉）。
+- **数值纪律对齐（S5 钉死）**：7 项共享常量与 Bland/W4/R8 触发语义
+  与稠密引擎逐款相同，契约测试钉值；refactor 从 CSC 原始数据重算 x_B
+  （漂移双保险），数值异常确定性重试一次（无墙钟决策）。
+- **确定性**：revised t1 双跑目标逐位、nodes/lpi/cuts/values 全等
+  （solver 层测试钉死）；auto 默认路径大算例双跑逐字节相同。
+- **为什么阈下留 tableau**：revised 的 ETA/LU 每次调用有固定底价，
+  小表格式问题稠密表格更低；且小算例保持旧路径防 codegen 扰动（R1
+  教训）。setcover-300x600 类（270k 格、8% 密度内核）revised 1.37×
+  不达 2× 线——LU 填充瓶颈需 Markowitz 级列序工程，留后续轮次。
+
+### 8.7 S1–S5 终局复核与遗留状态
+
+**终局独立复核（区间 `git diff 165f31a...HEAD` 5 提交 24 文件逐文件
+读毕 + 定点实跑）：通过，无正确性阻断项**。重点核查全过：稀疏 LU/
+FTRAN/BTRAN 置换代数逐行验算、有界比值测试与界翻转与稠密引擎逐行
+等价、两阶段/人工列/热启动/加割纪律、W2/W3 时限接线、批量 FFI 两阶段
++ 回滚、类自适应默认与全部钉值对账（lp-wide-1000x2000=112.600268 由
+复核方 CLI 双跑实测命中；mknap-3x100 双引擎同 2331 逐字节确定性）。
+定向实跑：`cargo test --release --lib simplex_sparse` 29 过 0 挂 1
+ignored；`--test abi` 21 过；lp_engine 解析测试过。发现 **1 中危（文档
+缺口，本轮文档更新已补）+ 4 低危**，全部为文档/死代码/潜在契约危险类：
+
+1. **（中危→已处置）milp/README.md CLI 参数契约表未收录 `--lp-engine`**
+   ——全文零命中（grep 验证），而该表是 CLI 语义的权威表；仓库布局也不
+   列 simplex_sparse.rs。**本轮文档更新已补齐**（参数表 + 双引擎架构
+   小节 + 仓库布局）。
+2. **（低危）`eta_over_limit` 的 flops 平衡公式是死逻辑**：`lu_nnz`
+   取三个 Vec 的外层长度（各恒为 m）而非 LU 非零元数 ⇒ balance 恒 12
+   ⇒ limit 恒 clamp 至 64——注释宣称的「比例失衡即重构」分支永不触发
+   （稠密 LU 场景本应升至 200 的路径不可达）。确定性与正确性不受影响
+   （64 恰为 S4 实测最优 floor），纯为文档与实现不符 + 潜在性能意图
+   未实现（`simplex_sparse.rs:1606` 一带）。
+3. **（低危）模块头「每 REFACTOR_INTERVAL（200）主元整基重因子化」
+   与实际触发口径不一致**：实际按 ETA 条数（恒 64）触发；字段
+   `pivots_since_refactor` 只写不读为死状态。常量对账测试已把 200
+   重新解释为 eta_over_limit 的 clamp 上界（有测试锚），但模块头描述
+   仍按主元计数口径书写。
+4. **（低危，潜在契约危险、当前不可达）`add_row` 置脏间隙的
+   `tableau_row_terms` 越界**：add_row 追加割行后推迟重构，此间隙内
+   lu 仍 m×m 而 basis.len()=m+1，行收集处新行号 m 会越界 panic。已
+   逐一核对现有全部调用方顺序均安全（cut_loop 分离在 resolve 之后、
+   add_row 批后必先 resolve）；稠密引擎 add_row 即时更新表格无此间隙
+   ——这是两引擎接口时序契约的差异点，未来新调用方易踩。
+5. **（低危）`main.rs:509` 过期注释**「默认 tableau（S3：本轮不改
+   默认）」与实际默认 Auto（S4 已翻）矛盾，误导读者以为 CLI 默认仍是
+   tableau。
+
+**功能遗留（非缺陷，按证据定档）**：setcover-300x600 类 revised ≥2×
+未达（1.37×）留 tableau，LU 填充瓶颈微基准留档（4.55ms/重构）——需
+Markowitz 完整右视计数级列序工程；部分定价被记因弃用（会改换入基序列
+引入回归风险，当前定价非瓶颈）；并行 revised（threads≥2）不在 S1–S5
+范围（并行 worker 直接构造稠密 Simplex，双层显式拒守卫）。

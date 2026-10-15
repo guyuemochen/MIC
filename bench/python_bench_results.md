@@ -4,20 +4,20 @@
 
 | 算例 | micpython | CBC | HiGHS | SCIP | 目标一致 |
 |---|---|---|---|---|---|
-| knapsack-200 | 0.003/optimal | 0.275/optimal | 0.057/optimal | 0.012/optimal | ✓ |
-| knapsack-500 | 0.021/optimal | 0.196/optimal | 0.07/optimal | 0.014/optimal | ✓ |
-| knapsack-2000 | 0.011/optimal | 0.109/optimal | 0.129/optimal | 0.161/optimal | ✓ |
-| knapsack-5000 | 0.026/optimal | 0.178/optimal | 0.404/optimal | 0.066/optimal | △ |
-| mknap-3x100 | 0.093/optimal | 180.0/watchdog_kill | 0.743/optimal | 0.262/optimal | ✓ |
-| mknap-5x300 | 13.069/optimal | 240.0/watchdog_kill | 10.538/optimal | 5.559/optimal | ✓ |
-| setcover-100x150 | 0.709/optimal | 0.344/optimal | 0.602/optimal | 0.667/optimal | ✓ |
-| setcover-300x600 | 82.574/optimal | 240.0/watchdog_kill | 1.865/optimal | 1.942/optimal | ✓ |
-| milp-mixed-250i40c | 0.014/optimal | 0.16/Unbounded | 0.52/optimal | 0.322/optimal | △ |
-| marketsplit-4x30 | 0.01/optimal | 180.0/watchdog_kill | 7.269/optimal | 6.236/optimal | ✓ |
-| marketsplit-4x40 | 9.873/optimal | 180.0/watchdog_kill | 60.01/limit | 59.047/status6 | ✓ |
-| assign-40x40 | 0.087/optimal | 0.193/optimal | 0.032/optimal | 0.025/optimal | ✓ |
-| lp-wide-200x300 | 0.009/optimal | 0.161/Unbounded | 0.029/optimal | 0.126/optimal | △ |
-| lp-sparse-4000x800 | 10.046/optimal | 1.06/Unbounded | 1.183/optimal | 2.84/optimal | △ |
+| knapsack-200 | 0.003/optimal | 0.167/optimal | 0.034/optimal | 0.013/optimal | ✓ |
+| knapsack-500 | 0.019/optimal | 0.095/optimal | 0.058/optimal | 0.009/optimal | ✓ |
+| knapsack-2000 | 0.012/optimal | 0.114/optimal | 0.127/optimal | 0.137/optimal | ✓ |
+| knapsack-5000 | 0.023/optimal | 0.172/optimal | 0.398/optimal | 0.062/optimal | △ |
+| mknap-3x100 | 0.086/optimal | 180.0/watchdog_kill | 0.662/optimal | 0.233/optimal | ✓ |
+| mknap-5x300 | 10.357/optimal | 240.0/watchdog_kill | 3.123/optimal | 2.457/optimal | ✓ |
+| setcover-100x150 | 0.313/optimal | 0.239/optimal | 0.229/optimal | 0.286/optimal | ✓ |
+| setcover-300x600 | 57.71/optimal | 240.0/watchdog_kill | 1.796/optimal | 1.782/optimal | ✓ |
+| milp-mixed-250i40c | 0.013/optimal | 0.157/Unbounded | 0.5/optimal | 0.311/optimal | △ |
+| marketsplit-4x30 | 0.01/optimal | 180.0/watchdog_kill | 7.195/optimal | 6.232/optimal | ✓ |
+| marketsplit-4x40 | 9.082/optimal | 180.0/watchdog_kill | 60.011/limit | 59.405/status6 | ✓ |
+| assign-40x40 | 0.111/optimal | 0.179/optimal | 0.027/optimal | 0.024/optimal | ✓ |
+| lp-wide-200x300 | 0.01/optimal | 0.152/Unbounded | 0.031/optimal | 0.126/optimal | △ |
+| lp-sparse-4000x800 | 9.156/optimal | 0.832/Unbounded | 0.895/optimal | 2.095/optimal | △ |
 
 ## MISMATCH（目标不一致，需人工核查）
 
