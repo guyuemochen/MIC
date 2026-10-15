@@ -26,6 +26,19 @@
 //! violation（当前 LP 解代入 lhs−rhs）≥ min_violation 才收；
 //! max|c|/min 非零|c| > 1e9 整条丢弃（同时补偿割行不缩放的数值风险）。
 //!
+//! # 分离边界数值卫生闸（清洁化 + 密度闸）
+//!
+//! 生成器内部的 tol.zero（1e-12）级清洁挡不住表格噪声经 GMI 连续列公式
+//! （f0 ≥ away ⇒ 放大至多 1/away 倍）与松弛列回代复合后的残差，且全族
+//! 均无密度控制——Devex 基下根割循环曾产出 160 条 661~681 nnz（矩阵
+//! 900 列、约 74% 密度）的病态割，真零位残留 3.5e-18~7.0e-15 的 B⁻¹
+//! 计算噪声，全局保留后毒化全树（每迭代成本 2-3×、退化打转死节点、
+//! 端到端 10×+ 劣化）。为此在**施加边界**（[`cut_loop_recorded`] 与
+//! [`separate_local_cuts`]，全部割族与两引擎的唯一汇聚点）对合并后的
+//! 每条割统一过 [`sanitize_cut`]：小系数清洁化（只弱化，论证见该函数）
+//! → 密度闸（nnz 超上限整条丢弃）→ violation 复核。闸只依赖割自身与
+//! 变量界，不按算例名或规模分支。
+//!
 //! # 覆盖割（WP4 增补，仅根节点）
 //!
 //! [`cover_cuts`] 对每条合格背包行（Le、全 Binary 支撑、权全正、全支撑
@@ -140,6 +153,20 @@ const LIFT_TOP_PER_ROUND: usize = 4;
 
 /// 建表判据与取整 ε 的统一相对容差（1e-9·(1+|v|)）。
 const NUMERIC_SNAP_TOL: f64 = 1e-9;
+
+/// 分离边界清洁化容差（数值卫生闸）：|c_j| ≤ 此值（且该列界幅有限）的
+/// 割系数项按「只弱化」纪律丢弃并按界幅补偿右端。取值依据见
+/// [`sanitize_cut`] 的论证（上界盖住 B⁻¹ 噪声放大后的全部残差，下界不
+/// 误伤有分离价值的显著项）。
+const CUT_CLEANUP_EPS: f64 = 1e-9;
+
+/// 密度闸 nnz 上限的绝对下限（项数）：割非零元超过上限即整条丢弃。
+/// 取值依据见 [`sanitize_cut`]。
+const CUT_DENSITY_NNZ_FLOOR: usize = 200;
+
+/// 密度闸 nnz 上限的相对系数：上限 = max(下限, ⌈n × 此值⌉)，n 为结构
+/// 列数。取值依据见 [`sanitize_cut`]。
+const CUT_DENSITY_NNZ_FRAC: f64 = 0.1;
 
 /// 结构变量空间的一条割（op 恒为 Le）。
 #[derive(Debug, Clone)]
@@ -982,6 +1009,114 @@ fn assemble_gated_cut(
     })
 }
 
+/// 分离边界的数值卫生闸：小系数清洁化（只弱化）→ 密度闸 → violation
+/// 复核；任一门不过返回 None。丢割永远安全——只丢界强度，绝不切掉
+/// 整数可行点。
+///
+/// 【为什么落在施加边界】五个割族的产出全部经 [`cut_loop_recorded`] /
+/// [`separate_local_cuts`] 汇聚后施加，且稠密/稀疏两引擎共用本模块，
+/// 在此单点过闸即全覆盖，无需改任何引擎或生成器语义。
+///
+/// 【清洁化只弱化的论证（数学红线）】割为 Le 形式 Σ_j c_j·x_j ≤ r。对被
+/// 清洁列 k（|c_k| ≤ CUT_CLEANUP_EPS 且界幅 M_k = max(|lb_k|, |ub_k|)
+/// 有限），清洁后右端取
+///     r' = r + Σ_{被清洁 k} |c_k|·M_k。
+/// 对箱内任意满足原割的点 x：
+///     Σ_{j 保留} c_j·x_j = Σ_j c_j·x_j − c_k·x_k ≤ r − c_k·x_k
+///                        ≤ r + |c_k|·|x_k| ≤ r + |c_k|·M_k = r'
+/// （逐列累加即得全体被清洁列的联合界）。故清洁后割的可行域 ⊇（原割
+/// 可行域 ∩ 变量箱）。生成器产出的割对全部整数可行点有效，而整数可行
+/// 点都落在箱内且满足原割 ⇒ 清洁后割仍对全部整数可行点有效。
+/// 补偿方向恒为**抬高右端（放宽）**；被清洁项无论是正贡献还是负贡献，
+/// 同一个 |c_k|·M_k 界都成立（−c_k·x_k ≤ |c_k|·|x_k| ≤ |c_k|·M_k 对
+/// 任意符号的 c_k 与箱内 x_k 成立），无需按符号分支。若某列界幅无界
+/// （ub_k = +∞ ⇒ M_k = +∞），无法界定补偿 ⇒ 该列**原样保留**，绝不
+/// 清洁——宁可不清洁也不冒强化方向的风险。
+///
+/// 【容差 CUT_CLEANUP_EPS = 1e-9 的依据】
+/// 上界（要盖住的噪声）：实测 Devex 基表格噪声 ≤ 7.0e-15，经 GMI 连续列
+/// 公式 π = max(α/f0, −α/(1−f0))（f0 ≥ away = 0.005 ⇒ 放大 ≤ 200×）
+/// 与松弛列回代（原始行构建期按 g = max|a_ij| 归一 ⇒ 每项 |a_ij|/g ≤ 1；
+/// 割行按原尺度回代）后，单源残差 ≤ ~1.4e-12，跨轮割行复合仍有数量级
+/// 余量——1e-9 全覆盖。
+/// 下界（不误伤显著项）：清洁对割的扰动以 |c_k|·M_k 计入右端补偿；
+/// violation 门在 min_violation = 1e-7 量级，被清洁项的 lhs 贡献
+/// （≤ 1e-9·|x̄_k|，同量级于界幅时 ≤ 1e-9·M_k）比它小两个数量级，
+/// 清洁不会吃掉有分离价值的强度；万一吃掉（大界幅 × 噪声系数），由
+/// ③ 的复核兜底丢弃该割。
+///
+/// 【密度闸上限 = max(CUT_DENSITY_NNZ_FLOOR, ⌈n·CUT_DENSITY_NNZ_FRAC⌉)
+/// 的依据】
+/// (i) 病态实证：Devex 基根割循环曾产出 160 条 661~681 nnz（900 列、
+///     约 74% 密度）的割——每迭代成本 2-3×、退化打转、端到端 10×+
+///     劣化，近稠密割必须整条丢弃；
+/// (ii) 绝对下限 200：割行 nnz 直接进入两引擎的每迭代代价（稠密表格
+///     每枢轴 O(nnz) 行更新、revised 引擎 BTRAN/FTRAN 行密度），200 项
+///     以上已足以拖慢；同时结构列至多两百项的良性割（仓库内 setcover
+///     -100x150 结构列至多 150 项、mknap 覆盖割数十项）不受影响；
+/// (iii) 相对系数 0.1：超大 n（> 2000）时固定 200 会过度杀伤（10 万列
+///     问题上 300 项割仅 0.3% 密度、边际代价小），按 10% 密度随 n 放宽
+///     上限。判据只依赖割自身 nnz 与结构列数 n，与算例名/规模无特判。
+fn sanitize_cut(
+    cut: Cut,
+    bounds: &Bounds,
+    x_bar: Option<&[f64]>,
+    opts: CutOptions,
+) -> Option<Cut> {
+    let n = bounds.lb.len();
+    // 防御：本闸的补偿论证只对 Le 形式成立（其它关系符的方向分析不同）；
+    // 非有限系数/右端、或下标越界的割整条丢弃（丢割安全）。
+    if cut.op != RelOp::Le
+        || !cut.rhs.is_finite()
+        || cut.terms.iter().any(|&(_, c)| !c.is_finite())
+        || cut.terms.iter().any(|&(j, _)| j >= n)
+    {
+        return None;
+    }
+    // ① 清洁化（只弱化）：|c| ≤ 容差且界幅有限 ⇒ 丢项并按界幅抬高右端。
+    let mut terms: Vec<(usize, f64)> = Vec::with_capacity(cut.terms.len());
+    let mut rhs = cut.rhs;
+    for (j, c) in cut.terms {
+        if c.abs() <= CUT_CLEANUP_EPS {
+            let magnitude = bound_magnitude(bounds.lb[j], bounds.ub[j]);
+            if magnitude.is_finite() {
+                rhs += c.abs() * magnitude;
+                continue; // 丢弃该项（补偿后只弱化）
+            }
+            // 界幅无界（ub = +∞）：无法界定只弱化补偿 ⇒ 原样保留该项。
+        }
+        terms.push((j, c));
+    }
+    if terms.is_empty() {
+        return None; // 清洁后无剩余项：无分离价值，丢弃（安全）
+    }
+    // ② 密度闸：nnz 超上限整条丢弃（丢割永远安全）。
+    let limit = CUT_DENSITY_NNZ_FLOOR.max(((n as f64) * CUT_DENSITY_NNZ_FRAC).ceil() as usize);
+    if terms.len() > limit {
+        return None;
+    }
+    // ③ violation 复核：右端补偿可能吃掉 violation；弱化到不再被当前 LP
+    //    解违反的割已无分离价值，丢弃（安全）。x_bar 不可得（防御路径，
+    //    正常接线不可达）时无法复核，只做①②。
+    if let Some(x_bar) = x_bar {
+        if x_bar.len() != n {
+            return None; // 维数不符（防御）：丢割安全
+        }
+        let mut lhs = 0.0f64;
+        for &(j, c) in &terms {
+            lhs += c * x_bar[j];
+        }
+        if !lhs.is_finite() || lhs - rhs < opts.min_violation {
+            return None;
+        }
+    }
+    Some(Cut {
+        terms,
+        op: RelOp::Le,
+        rhs,
+    })
+}
+
 /// 单行 c-MIR（WP6，仅原始 Le 行，根节点调用）。
 ///
 /// 流程（见模块文档「单行 c-MIR」节）：
@@ -1615,9 +1750,11 @@ pub fn implied_bound_cuts(
 /// 终态返回（调用方按根终局映射 SolveStatus::Infeasible）；Unbounded/
 /// W6：树内局部割的单轮分离（**只读**表格，不 add_row——行的作用域/
 /// 施加/重解由调用方 branch_bound 管理：子树出口经 Simplex 快照恢复）。
-/// 批序复用根割（c-MIR → GMI → 隐含界 → 覆盖），按配额截断；无
-/// CutRecord 去重（ledger 只存在于根循环的跨轮记账；局部割生命周期
-/// ≤ 子树，重复 Le 行至多冗余不切错）。分离失败/维度不符返回空。
+/// 批序复用根割（c-MIR → GMI → 隐含界 → 覆盖），先统一过分离边界数值
+/// 卫生闸 [`sanitize_cut`]（清洁化 + 密度闸 + violation 复核，见模块
+/// 文档）再按配额截断；无 CutRecord 去重（ledger 只存在于根循环的跨轮
+/// 记账；局部割生命周期 ≤ 子树，重复 Le 行至多冗余不切错）。
+/// 分离失败/维度不符返回空。
 pub fn separate_local_cuts(
     s: &dyn LpEngine,
     bounds: &Bounds,
@@ -1650,6 +1787,13 @@ pub fn separate_local_cuts(
         tol,
         &mut LiftBudget::new(),
     ));
+    // 分离边界数值卫生闸（与 cut_loop_recorded 同一单点，见模块文档）：
+    // 清洁化（只弱化）+ 密度闸 + violation 复核，之后再按 max_cuts 配额
+    // 截断（配额只花在过闸存活者上）。
+    batch = batch
+        .into_iter()
+        .filter_map(|cut| sanitize_cut(cut, bounds, Some(&x_bar), opts))
+        .collect();
     batch.truncate(max_cuts);
     batch
 }
@@ -1682,9 +1826,11 @@ pub fn cut_loop<E: LpEngine>(
 /// 「表格行 ⊕ 原始行」聚合 GMI，R2-retry）→ 隐含界批
 /// （[`implied_bound_cuts`]）→ 覆盖割批（[`cover_cuts_with_lifting`]，
 /// 行序；提升预算 [`LiftBudget`] 跨轮共享、全程 3×10^7 状态操作，耗尽即
-/// 关闭提升）**，再统一截断 `max_cuts_per_round`。x̄ 经 [`rebuild_x_bar`]
-/// 重建（每轮一次，割批共用）。全部割行照走 `add_row` + [`CutRecord`]
-/// 记账，worker 按序重放契约不变。
+/// 关闭提升）**，先统一过分离边界数值卫生闸 [`sanitize_cut`]（小系数
+/// 清洁化（只弱化）+ 密度闸 + violation 复核，见模块文档），再截断
+/// `max_cuts_per_round`——ledger/recorded 记账的即过闸后的行。x̄ 经
+/// [`rebuild_x_bar`] 重建（每轮一次，割批共用）。全部割行照走 `add_row`
+/// + [`CutRecord`] 记账，worker 按序重放契约不变。
 pub fn cut_loop_recorded<E: LpEngine>(
     s: &mut E,
     bounds: &Bounds,
@@ -1743,6 +1889,15 @@ pub fn cut_loop_recorded<E: LpEngine>(
                 &mut lift_budget,
             ));
         }
+        // 分离边界数值卫生闸（两引擎共用单点，见模块文档）：清洁化（只
+        // 弱化）+ 密度闸 + violation 复核，之后再按 max_cuts_per_round 截断
+        //（截断额度只花在过闸存活者上）。被闸丢弃的割不进入 add_row/
+        // ledger/recorded——ledger 记账与 worker 按序重放始终与实际施加行
+        // 逐字节一致。
+        batch = batch
+            .into_iter()
+            .filter_map(|cut| sanitize_cut(cut, bounds, x_bar.as_deref(), opts))
+            .collect();
         if batch.len() > opts.max_cuts_per_round {
             batch.truncate(opts.max_cuts_per_round);
         }
@@ -3149,5 +3304,172 @@ mod tests {
         // 验证割后根界 ≥ 某个下界不具一般性——此处只验证 ≥ LP 收紧方向与
         // 终态 Optimal（穷举有效性已由三族专项测试覆盖）。
         assert_eq!(r1.1, LpStatus::Optimal);
+    }
+
+    // ===================== 分离边界数值卫生闸 ======================
+
+    /// 清洁化只弱化：带小系数噪声项的割清洁后，箱内全部满足原割的点必
+    /// 满足清洁后割（可行域包含），右端按界幅精确补偿（含负系数噪声项
+    /// ——同一界幅界对两种符号都成立）。
+    #[test]
+    fn sanitize_cleanup_only_weakens_exhaustive() {
+        // 3 列：x0 ∈ [0,1]、x1 ∈ [-2,5]、x2 ∈ [0,1000]。
+        let bounds = Bounds {
+            lb: vec![0.0, -2.0, 0.0],
+            ub: vec![1.0, 5.0, 1000.0],
+        };
+        // 原割：x0 + 5e-10·x1 − 3e-10·x2 ≤ 0.5（后两项为噪声量级）。
+        let cut = Cut {
+            terms: vec![(0, 1.0), (1, 5e-10), (2, -3e-10)],
+            op: RelOp::Le,
+            rhs: 0.5,
+        };
+        let out = sanitize_cut(cut.clone(), &bounds, None, CutOptions::default())
+            .expect("有限界幅 ⇒ 割存活");
+        assert_eq!(out.terms, vec![(0, 1.0)], "噪声项须被清洁");
+        let expect_rhs = 0.5 + 5e-10 * 5.0 + 3e-10 * 1000.0;
+        assert!(
+            (out.rhs - expect_rhs).abs() < 1e-15,
+            "右端补偿：{} 期望 {expect_rhs}",
+            out.rhs
+        );
+        // 穷举网格：满足原割 ⇒ 满足清洁后割（只弱化不变量）。
+        for x0 in [0.0f64, 0.25, 0.5, 0.75, 1.0] {
+            for x1 in [-2.0f64, 0.0, 2.5, 5.0] {
+                for x2 in [0.0f64, 333.3, 1000.0] {
+                    let x = [x0, x1, x2];
+                    let orig = 1.0 * x0 + 5e-10 * x1 - 3e-10 * x2;
+                    if orig <= 0.5 {
+                        assert!(
+                            eval_cut(&out, &x) <= out.rhs + 1e-15,
+                            "清洁后割切掉原可行点 {x:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// 界幅无界（ub = +∞）的小系数项不得清洁（无法界定只弱化补偿），
+    /// 右端不动。
+    #[test]
+    fn sanitize_keeps_tiny_term_on_infinite_bound() {
+        let bounds = Bounds {
+            lb: vec![0.0, 0.0],
+            ub: vec![1.0, f64::INFINITY],
+        };
+        let cut = Cut {
+            terms: vec![(0, 1.0), (1, 4e-10)],
+            op: RelOp::Le,
+            rhs: 0.5,
+        };
+        let out = sanitize_cut(cut, &bounds, None, CutOptions::default()).unwrap();
+        assert_eq!(out.terms, vec![(0, 1.0), (1, 4e-10)], "无界列小项须保留");
+        assert_eq!(out.rhs, 0.5, "未清洁 ⇒ 右端不动");
+    }
+
+    /// 密度闸：nnz 超上限整条丢弃、恰在上限存活（violation 0.5 隔离密度
+    /// 维度）。上限 = max(200, ⌈201×0.1⌉=21) = 200。
+    #[test]
+    fn sanitize_density_gate_drops_over_limit() {
+        let n = 201usize;
+        let bounds = Bounds {
+            lb: vec![0.0; n],
+            ub: vec![1.0; n],
+        };
+        let opts = CutOptions::default();
+        let x_bar = vec![1.0f64; n];
+        let mk = |k: usize| Cut {
+            terms: (0..k).map(|j| (j, 1.0)).collect(),
+            op: RelOp::Le,
+            rhs: k as f64 - 0.5, // k 个 1 ⇒ violation = 0.5
+        };
+        assert!(
+            sanitize_cut(mk(201), &bounds, Some(&x_bar), opts).is_none(),
+            "201 nnz > 上限 200 ⇒ 整条丢弃"
+        );
+        let kept = sanitize_cut(mk(200), &bounds, Some(&x_bar), opts).unwrap();
+        assert_eq!(kept.terms.len(), 200, "恰在上限 ⇒ 存活");
+    }
+
+    /// violation 复核：右端补偿吃掉 violation 至 min_violation 以下的割
+    /// 丢弃（弱化后已无分离价值）。大界幅 × 噪声系数是触发形态。
+    #[test]
+    fn sanitize_drops_cut_whose_compensation_eats_violation() {
+        let bounds = Bounds {
+            lb: vec![0.0, 0.0],
+            ub: vec![10.0, 1000.0],
+        };
+        // x̄ = (5, 0)：原 violation = 1.5e-7 ≥ min_violation=1e-7；清洁
+        // 补偿 = 1e-9×1000 = 1e-6 ⇒ 复核 violation < 1e-7 ⇒ 丢弃。
+        let cut = Cut {
+            terms: vec![(0, 1.0), (1, 1e-9)],
+            op: RelOp::Le,
+            rhs: 5.0 - 1.5e-7,
+        };
+        assert!(
+            sanitize_cut(cut, &bounds, Some(&[5.0, 0.0]), CutOptions::default())
+                .is_none()
+        );
+    }
+
+    /// 清洁化只弱化（性质 fuzz）：随机割（噪声/显著项混排、随机有限箱）
+    /// 上穷举网格点验证「满足原割 ⇒ 满足清洁后割」。
+    #[test]
+    fn sanitize_cleanup_weakening_property_fuzz() {
+        for seed in 1..=200u64 {
+            let mut lcg = seed.wrapping_mul(0x9E3779B97F4A7C15);
+            let mut rnd = || {
+                lcg = lcg
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((lcg >> 33) % 100) as f64 / 100.0
+            };
+            // 4 列随机有限箱 [lo, lo+span]。
+            let (mut lbs, mut ubs, mut axes) = (Vec::new(), Vec::new(), Vec::new());
+            for _ in 0..4 {
+                let lo = ((rnd() * 4.0) as i64 as f64) - 2.0;
+                let span = (rnd() * 3.0).max(0.25);
+                lbs.push(lo);
+                ubs.push(lo + span);
+                axes.push(vec![lo, lo + span / 2.0, lo + span]);
+            }
+            let bounds = Bounds { lb: lbs, ub: ubs };
+            let mut terms = Vec::new();
+            for j in 0..4usize {
+                // 四成概率注入噪声量级项（正/负随机），否则显著项。
+                let c = if rnd() < 0.4 {
+                    (rnd() * 2.0 - 1.0) * 1e-9
+                } else {
+                    rnd() * 2.0 - 1.0 + if rnd() < 0.5 { 0.0 } else { 0.75 }
+                };
+                terms.push((j, c));
+            }
+            let rhs = rnd() * 2.0 - 0.5;
+            let cut = Cut {
+                terms,
+                op: RelOp::Le,
+                rhs,
+            };
+            let Some(out) = sanitize_cut(cut.clone(), &bounds, None, CutOptions::default())
+            else {
+                continue; // 被闸丢弃（清洁后空等）也安全，无性质可验
+            };
+            for &a in &axes[0] {
+                for &b in &axes[1] {
+                    for &c in &axes[2] {
+                        for &d in &axes[3] {
+                            let x = [a, b, c, d];
+                            if cut.terms.iter().map(|&(j, cf)| cf * x[j]).sum::<f64>() <= rhs {
+                                assert!(
+                                    eval_cut(&out, &x) <= out.rhs + 1e-12,
+                                    "seed {seed}：清洁后割切掉原可行点 {x:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
