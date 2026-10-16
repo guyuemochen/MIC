@@ -75,9 +75,19 @@
 //!
 //! # 范围边界（诚实声明）
 //! - S3 起提供全套引擎面：`solve` 冷启动 / `resolve` 热启动（snap+传播 →
-//!   对偶修复快路径或整基重建，语义对齐 simplex.rs::resolve）/ `add_row`
+//!   **三层修复**（S11 重实现，设计源 S10 节留档）：对偶主循环（有界
+//!   变量对偶单纯形 + BFRT 长步界翻转 + 对偶 Bland，见
+//!   `dual_main_resolve`）→ 对偶修复快路径 `dual_repair`（原样保留）
+//!   → 整基重建 + Phase-1） / `add_row`
 //!   割行（原尺度不缩放；脏因子化标记 + 下次调用整基重构——F6『宜随后
-//!   重构』的最简落法）/ W6 快照（Clone）。访问器按 cuts.rs 消费面
+//!   重构』的最简落法）/ W6 快照（Clone）。**resolve 与稠密引擎的语义
+//!   对齐点 = 目标值与状态恒同**（多解顶点下热启动迭代序列与 x 允许
+//!   分叉——与 Devex 口径变更同源的既定红线）；三层化的前两层只加速、
+//!   任何触发逐层回退，正确性下界 = 老路径。第一层（主循环）的启用受
+//!   三闸约束——构造期规模闸 [`DUAL_MAIN_CELL_CEILING`]（大格域无红利
+//!   净亏）+ 失败熔断双通道（连续/比率），闸住或熔断时跳过第一层
+//!   **仍走 `dual_repair`**（等价老路径行为，不走远贵的整基重建）。
+//!   访问器按 cuts.rs 消费面
 //!   （cuts.rs:267/448-465/1247/1754）：表格行 = e_iᵀB⁻¹A 经 BTRAN +
 //!   行收集实现，列空间 [结构|松弛]、人工列不外露（simplex.rs:262-269
 //!   同款约定）；
@@ -348,6 +358,60 @@ const LU_THRESHOLD: f64 = 0.1;
 /// 失真；而过小的阈值又迫使频繁重置、每次丢掉全部累积权重信息退化回
 /// Dantzig。1e6 居中兼顾（重置后从全 1 起步需多轮放大才触阈）。
 const DEVEX_RESET_THRESHOLD: f64 = 1e6;
+/// 对偶主循环（S10 三层 resolve 第一层）单次调用预算 = m + 该基值
+///（**每行 1 步 + 64 基值**，近线性于规模）。定档依据（A/B 调参，
+/// 2026-10-16）：旧值 2000+50/m 在阈上大格域「慢磨」失控（2.96× 硬
+/// 回归）——该域已由 [`DUAL_MAIN_CELL_CEILING`] 规模闸整体禁用；阈下
+/// 启用域的两实测点：setcover-100x150 修复最长 ~100+ 步（budget=64 会
+/// 掐掉长修复丢红利，节点 19→23）、setcover-300x600 平均 47 步——
+/// m+64 同时覆盖两者；且慢磨浪费上限被压到 m+64 步（300 行基 ≈
+/// 0.1s/触发），失败熔断（连续 8 次）最坏前期浪费 < 1s。
+const DUAL_MAIN_BUDGET_BASE: u32 = 64;
+/// 对偶主循环预算每行增量：1（m + 64；定档依据见上）。
+const DUAL_MAIN_BUDGET_PER_ROW: u32 = 1;
+/// 失败熔断阈值·连续通道（A/B 调参，2026-10-16）：主循环**连续**
+/// Fallthrough 达该次数 ⇒ 本实例后续 resolve 跳过主循环、直接走
+/// dual_repair（等价老路径行为，正确性下界不变）。
+const DUAL_MAIN_FAIL_FUSE: u32 = 8;
+/// 失败熔断阈值·比率通道（A/B 调参，2026-10-16）：入口调用数 ≥
+/// [`DUAL_MAIN_FUSE_MIN_CALLS`] 且累计 Fallthrough 率 ≥ 40% ⇒ 永久
+/// 熔断（不清零——浪费的成本不因后续成功退回）。定档依据（真 dive
+/// 诊断）：setcover-300x600 失败率 22%（18 次中 4 次、成功修复平均
+/// 47 步 + B&B 节点 591→229 的轨迹红利 ⇒ 净赚，不熔断）；
+/// setcover-400x800 失败率 44%（budget=64 下 74 步修复被掐 + 成功
+/// 修复 49 步也比 dual_repair 贵 + B&B 节点无减少 ⇒ 每次触发净亏
+/// ~40ms，数千次触发 = 2.96× 回归的主体）。40% 线在两者之间；误熔断
+/// （健康算例失败率漂移过线）只是回到老路径行为，安全侧。计数跨
+/// resolve 生命周期、随快照（Clone）继承/回退，纯计数确定性。
+const DUAL_MAIN_FUSE_MIN_CALLS: u64 = 32;
+/// 比率通道的失败率阈值（百分数；fall×100 ≥ calls×40）。
+const DUAL_MAIN_FAIL_RATE_PCT: u64 = 40;
+/// 主循环规模闸（A/B 调参，2026-10-16）：构造期表格规模 m×(n+m) ≥ 该
+/// 值 ⇒ 主循环构造期即禁用（resolve 直接走 dual_repair，等价老路径）。
+/// 定档依据（实测）：主循环的收益机制是**修复基质量对 B&B 树形态的
+/// 改善**（setcover-300x600 = 270k 格：节点 591→229，端到端 0.66-0.78×）
+/// ——该红利随规模衰减（割主导树形态、基质量影响变小），且主循环修复
+/// 步数（~50）恒为 dual_repair（~20，|主元|最大破键收敛快）的 2.5×，
+/// 无红利即净亏（setcover-400x800 = 480k 格：每次触发净亏 ~40ms，节点
+/// 反增，端到端 1.4-3×）；两者 engine 层在线指标同构（失败率 22% vs
+/// 24%、成功步数 47 vs 49）——红利差异只在 B&B 层，engine 层不可见，
+/// 故按 S4 类自适应（ENGINE_AUTO_CELL_THRESHOLD）先例做构造期规模闸，
+/// 阈值居 270k（赢）与 480k（亏）之间取 350k。阈下域内失败熔断双通道
+/// 仍是安全网。
+const DUAL_MAIN_CELL_CEILING: u64 = 350_000;
+/// 对偶退化步（对偶比值测试步长 θ ≤ tol.optimality，即对偶目标零改进）
+/// 连续达该步数 ⇒ 切入对偶 Bland（S10 钉值 32：eligible 最小下标入基、
+/// 禁长步）。量级对齐 primal 主路径 DEGENERATE_STREAK_LIMIT=50 的「数十
+/// 步内介入」纪律，取 2 的幂便于人工核对。
+const DUAL_BLAND_DEGEN_LIMIT: u32 = 32;
+/// 复盘补丁 A（S10 复核中危意见）：对偶 Bland 介入后**仍**连续退化达该
+/// 步数 ⇒ 直接 GiveUp 回退老路径，不许只靠迭代 cap（budget）兜底。
+/// 取值依据：与 [`DUAL_BLAND_DEGEN_LIMIT`] 同源（2×）——Bland 已是最保守
+/// 的确定性入基规则（eligible 最小下标、禁长步），其后同量级证据窗口
+///（2×32 步）内仍无一次非退化步，说明当前基上对偶修复在原地打转，
+/// 继续迭代只是烧预算；独立阈值让「退化打转」在预算耗尽前就触发回退，
+/// 回退链（dual_repair → 整基重建）的正确性下界兜底。
+const DUAL_BLAND_GIVEUP_DEGEN: u32 = 64;
 
 // ===========================================================================
 // LU 因子化与三角求解
@@ -788,6 +852,108 @@ enum DualRepair {
     GiveUp,
 }
 
+/// 对偶主循环结果（S10 三层 resolve 第一层）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DualResolveOutcome {
+    /// 已恢复原始可行（随后 Phase-2 收尾应为零迭代）。
+    Repaired,
+    /// 主循环放弃：回退第二层 dual_repair → 第三层整基重建（普通回退
+    /// 通道；含「候选空 = 该基上对偶无界 ⇒ 交 Phase-1 判原始不可行」的
+    /// 场景——主循环不下结论，只回退）。因子化完好，dual_repair 入口的
+    /// dual_feasible 复查可安全执行。
+    Fallthrough,
+    /// 因子化已损坏（refactor 失败）：factorize_into 奇异失败会清空
+    /// lu.perm（f.m 保持旧维度 ⇒ btran 的 y[self.perm[i]] 空索引 panic）、
+    /// x_B 重算 NaN 会置 lu = default（m=0 ⇒ 空 y 再被索引 panic）。此态
+    /// 上 dual_repair 入口的 dual_feasible 复查**自身会 panic 而非返回
+    /// false**——该出口不得进 dual_repair，直达整基重建（rebuild 内部
+    /// 对 ±1 对角基 refactor 必成，损坏因子化被完全覆写；老路径对同类
+    /// 失败同款语义：数值失败 ⇒ rebuild + Phase-1 诚实映射，绝不 panic）。
+    FactorizationBroken,
+    /// 墙钟超限：独立 TimedOut 通道——跳过 dual_repair（其循环不读钟，
+    /// 超限后跑它等于盲迭代）直达整基重建，run_phase 的 W2 条件读钟
+    /// 接管，Phase-1/2 将诚实返回 TimeLimit。
+    TimedOut,
+}
+
+/// 对偶主循环的退化/Bland 记账（S10 对偶 Bland + 复盘补丁 A）。独立
+/// 结构体（而非内联计数）是为了确定性单测能直接驱动计数语义——退化
+/// 打转的触发时机是正确性相关行为，值得脱离 LP 实例钉死。
+#[derive(Debug, Clone, Default)]
+struct DualDegenGuard {
+    /// 连续对偶退化步（θ ≤ tol.optimality）计数；任一非退化步清零。
+    degen: u32,
+    /// 对偶 Bland 是否已介入。一旦介入保持到本次主循环结束（快路径无
+    /// 释放机制——与 primal 主路径的 Bland 释放纪律有意分叉：resolve 快
+    /// 路径生命周期短，持续退化的正确处置是回退而非继续抗战，由补丁 A
+    /// 的独立 GiveUp 兜底）。
+    bland: bool,
+    /// Bland 介入后的连续退化步计数（补丁 A 的独立触发器）。
+    degen_after_bland: u32,
+}
+
+impl DualDegenGuard {
+    /// 记录一步（theta = 本步对偶步长，tol_opt = tol.optimality）；
+    /// 返回 true = 补丁 A 触发（Bland 后仍连续退化达
+    /// [`DUAL_BLAND_GIVEUP_DEGEN`] ⇒ 直接 GiveUp 回退老路径）。
+    fn on_step(&mut self, theta: f64, tol_opt: f64) -> bool {
+        if theta <= tol_opt {
+            self.degen = self.degen.saturating_add(1);
+            if self.bland {
+                self.degen_after_bland = self.degen_after_bland.saturating_add(1);
+                if self.degen_after_bland >= DUAL_BLAND_GIVEUP_DEGEN {
+                    return true; // 补丁 A：退化打转独立 GiveUp，不等迭代 cap。
+                }
+            } else if self.degen >= DUAL_BLAND_DEGEN_LIMIT {
+                self.bland = true; // 对偶 Bland 介入：eligible 最小下标、禁长步。
+            }
+        } else {
+            self.degen = 0;
+            self.degen_after_bland = 0;
+        }
+        false
+    }
+}
+
+/// 对偶比值测试 + BFRT 长步选择（S10 主循环核心；纯函数，确定性单测
+/// 直接驱动选列与吸收语义）。
+///
+/// 输入：方向可行候选 `cands`（元素 `(θ_j, j, αr_j, δ_j, range_j)`，**已
+/// 按 (θ, 列号) 全序升序**——调用方排序）；`rem` = 出基行到目标界的带
+/// 符号剩余违反（方向过滤保证 rem 与每个候选的 −δ_j·αr_j 同号 ⇒ 商
+/// 非负）。θ_j = 该列 rc 越零所需的对偶步长（有符号 rc 取对偶可行侧、
+/// 除以 |αr_j|）；range_j = 该列界幅 ub−lb（翻转自由度）。
+///
+/// 输出：`Some((k, t))` = 以候选 k 入基、primal 步长 t（出基变量恰落到
+/// 被违反界；此前 0..k 的候选**全部界翻转吸收**——调用方逐列 FTRAN +
+/// 翻转传播）；`None` = 候选耗尽（全部翻转后仍到不了目标界 ⇒ 该基上
+/// 对偶无界 ⇒ 原始不可行候选，交回退链 Phase-1 判定）或步长异常
+///（t 非有限/为负的数值防御）。两种 None 都发生在任何翻转执行之前 ⇒
+/// 调用方状态干净。
+///
+/// 机制（BFRT / Fourer–Maros 型长步比值测试）：沿 θ 升序走候选——入选
+/// 列以步长 θ_k 更新对偶变量后，θ_j < θ_k 的候选其 rc 已越零变号，翻到
+/// 对面界即「步后 rc=0 落对偶可行侧」（对偶目标继续上升）；候选 j 若在
+/// 自己界幅内走不到目标界（t_j > range_j），翻它吸收一部分剩余违反、
+/// 取下一候选，直到某候选以 ≤ 其界幅的步长入基清零 rem。无界上界列
+/// range = +∞ ⇒ 恒可入基 ⇒ 循环必终于某次入基（或候选耗尽）。
+fn dual_ratio_bfrt(cands: &[(f64, usize, f64, f64, f64)], rem: f64) -> Option<(usize, f64)> {
+    let mut rem = rem;
+    for (k, &(_, _, a, delta, range)) in cands.iter().enumerate() {
+        // x_B[r] 每单位 j 移动的变化量 = −δ_j·αr_j（与 rem 同号）。
+        let move_per_unit = -delta * a;
+        let t = rem / move_per_unit;
+        if !t.is_finite() || t < 0.0 {
+            return None; // 数值防御（方向过滤后不应出现）
+        }
+        if t <= range {
+            return Some((k, t));
+        }
+        rem -= move_per_unit * range; // 界翻转吸收后剩余违反递减
+    }
+    None
+}
+
 /// 稀疏修正单纯形求解器（standalone v1；语义契约见模块文档）。
 ///
 /// `Clone`：全字段纯数据（CSC/LU/ETA/基），克隆即精确状态（W6 快照纪律
@@ -867,6 +1033,25 @@ pub struct SparseSimplex {
     iter_limit_hint: Option<u64>,
     time_deadline: Option<std::time::Instant>,
     pivots_since_time_check: u32,
+    /// 对偶主循环（S10 三层 resolve 第一层）累计主元数（跨调用累计，
+    /// 口径同 iterations_total）：诊断/测试用——断言三层路径被真实覆盖。
+    dual_main_pivots: u64,
+    /// 对偶主循环累计 BFRT 界翻转数（跨调用累计）：诊断/测试用。
+    dual_main_flips: u64,
+    /// 对偶主循环累计入口调用数（含入口红线拒入）：调参诊断用——
+    /// 平均每次调用的主元数 = pivots / calls。
+    dual_main_calls: u64,
+    /// 对偶主循环累计 Fallthrough 次数（含入口红线拒入与各回退触发）：
+    /// 调参诊断用——失败占比与熔断阈值的依据。
+    dual_main_fallthroughs: u64,
+    /// 失败熔断记账：主循环**连续** Fallthrough 次数（Repaired 清零）；
+    /// 达 [`DUAL_MAIN_FAIL_FUSE`] ⇒ 后续 resolve 跳过主循环直接走
+    /// dual_repair（等价老路径行为）。跨 resolve 生命周期、随快照继承。
+    dual_main_consecutive_fails: u32,
+    /// 主循环规模闸（构造期定死，同 devex_active 模式）：m×(n+m) ≥
+    /// [`DUAL_MAIN_CELL_CEILING`] ⇒ false（大格域主循环无红利净亏，
+    /// 见常量 doc）。
+    dual_main_enabled: bool,
     /// 数值异常重试闸：刚重因子化 ⇒ 不再重试（防循环；确定性）。
     just_refactored: bool,
     // —— 热路径暂存（容量跨迭代复用）——
@@ -1005,6 +1190,17 @@ impl SparseSimplex {
             iter_limit_hint: None,
             time_deadline: None,
             pivots_since_time_check: 0,
+            dual_main_pivots: 0,
+            dual_main_flips: 0,
+            dual_main_calls: 0,
+            dual_main_fallthroughs: 0,
+            dual_main_consecutive_fails: 0,
+            // 规模闸与 effective_engine 同阈同维（m = 约束行数、n+m 列
+            // 数、原始问题口径）：大格域主循环无红利净亏（见
+            // DUAL_MAIN_CELL_CEILING doc），构造期即禁用。
+            dual_main_enabled: (problem.constraints.len() as u64)
+                .saturating_mul(n as u64 + problem.constraints.len() as u64)
+                < DUAL_MAIN_CELL_CEILING,
             just_refactored: false,
             ftran_in: Vec::new(),
             alpha: Vec::new(),
@@ -1277,15 +1473,69 @@ impl SparseSimplex {
         self.bounds.lb.clone_from(&bounds.lb);
         self.bounds.ub.clone_from(&bounds.ub);
         self.snap_nonbasics();
-        // (3) 基变量越界 / Phase-1 欠账检查 → 对偶修复或整基重建。
+        // (3) 基变量越界 / Phase-1 欠账检查 → 三层修复（S10：对偶主循环
+        // → dual_repair → 整基重建；正确性下界 = 老路径——前两层只加速、
+        // 绝不改变结果，任何触发都逐层回退）。
         let need_repair = self.basics_violated() || self.phase1_pending;
         let mut dual_repaired = false;
-        if need_repair
-            && !self.phase1_pending
-            && !self.artificials_in_basis()
-            && self.dual_repair() == DualRepair::Repaired
-        {
-            dual_repaired = true;
+        // 主循环启用闸 = 构造期规模闸（大格域无红利净亏，见
+        // DUAL_MAIN_CELL_CEILING doc）AND 在线失败熔断（双通道，阈下
+        // 域内的安全网）。熔断后跳过第一层**仍走 dual_repair**（等价老
+        // 路径行为，不走整基重建——重建 + Phase-1 远贵于 dual_repair，
+        // 调参实测该误接一次就把 setcover-300x600 拖垮 4.5×）；未熔断
+        // 时的 Repaired 会清零连续计数——健康算例的零星失败不触发连续
+        // 通道（比率通道不清零）。
+        let main_fused = !self.dual_main_enabled
+            || self.dual_main_consecutive_fails >= DUAL_MAIN_FAIL_FUSE
+            || (self.dual_main_calls >= DUAL_MAIN_FUSE_MIN_CALLS
+                && self.dual_main_fallthroughs.saturating_mul(100)
+                    >= self.dual_main_calls.saturating_mul(DUAL_MAIN_FAIL_RATE_PCT));
+        if need_repair && !self.phase1_pending && !self.artificials_in_basis() {
+            // 熔断跳过时**不**计入 Fallthrough 计数（主循环未被调用，
+            // 计数冻结在熔断阈值上；重开尝试的通道是上方 Repaired 清零，
+            // 只对未熔断状态有效）。
+            let outcome = if main_fused {
+                DualResolveOutcome::Fallthrough
+            } else {
+                self.dual_main_resolve()
+            };
+            match outcome {
+                DualResolveOutcome::Repaired => {
+                    dual_repaired = true;
+                    self.dual_main_consecutive_fails = 0;
+                }
+                DualResolveOutcome::TimedOut => {
+                    // 墙钟独立 TimedOut 通道：跳过 dual_repair（其循环不
+                    // 读钟，超限后跑它等于盲迭代）直达整基重建；run_phase
+                    // 的 W2 条件读钟接管，Phase-1/2 诚实返回 TimeLimit。
+                    self.rebuild_initial_basis();
+                }
+                DualResolveOutcome::FactorizationBroken => {
+                    // 因子化损坏通道（refactor 失败）：损坏态（perm 空 /
+                    // m=0）上 dual_repair 入口的 dual_feasible→btran 会索引
+                    // 越界 panic 而非返回 false——跳过 dual_repair 直达整
+                    // 基重建（rebuild 内部对 ±1 对角基 refactor 必成，因子
+                    // 化与中间态一并覆写）。老路径对同类失败（dual_repair
+                    // 内 refactor Err ⇒ GiveUp ⇒ rebuild）同款语义：数值
+                    // 失败 ⇒ rebuild + Phase-1 诚实映射，绝不 panic。
+                    self.rebuild_initial_basis();
+                }
+                DualResolveOutcome::Fallthrough => {
+                    // 第二层：dual_repair（原样保留，经长期验证的稳健回
+                    // 退；其入口 dual_feasible 复查同时是第一层 BFRT 中途
+                    // GiveUp 后状态污染的防线，见 dual_main_loop 注释）。
+                    if !main_fused {
+                        self.dual_main_fallthroughs += 1;
+                        self.dual_main_consecutive_fails =
+                            self.dual_main_consecutive_fails.saturating_add(1);
+                    }
+                    if self.dual_repair() == DualRepair::Repaired {
+                        dual_repaired = true;
+                    } else {
+                        self.rebuild_initial_basis();
+                    }
+                }
+            }
         } else if need_repair {
             self.rebuild_initial_basis();
         }
@@ -1615,6 +1865,282 @@ impl SparseSimplex {
                 degen += 1;
             } else {
                 degen = 0;
+            }
+        }
+    }
+
+    // ---- 内部：对偶主循环（S10 三层 resolve 第一层） ----
+
+    /// 对偶主循环（S10 设计重实现，仅 revised 引擎热启动路径）：从（对偶
+    /// 可行、原始违约）基出发的有界变量对偶单纯形。规则：
+    /// - 离基行 = |违反| 最大，并列最小行号（绝对违反量，非 dual_repair
+    ///   的界幅归一——主循环求速度，先修最痛的行）；
+    /// - 对偶比值测试最小 θ 并列最小列号（(θ, 列号) 全序，确定性破键）；
+    /// - BFRT 长步：升序逐列界翻转吸收剩余违反（`dual_ratio_bfrt`）；
+    /// - 对偶退化步（θ ≤ tol.optimality）连续 [`DUAL_BLAND_DEGEN_LIMIT`]
+    ///   步 ⇒ 对偶 Bland（eligible 最小下标、禁长步）；
+    /// - 复盘补丁 A：Bland 后仍连续退化达 [`DUAL_BLAND_GIVEUP_DEGEN`] ⇒
+    ///   直接 GiveUp 回退老路径（不等迭代 cap）。
+    ///
+    /// 回退触发表（逐条见函数内注释）：对偶不可行入口扫描不过 / x_B 或
+    /// rc 非有限 / 候选空或耗尽（对偶无界 ⇒ 交 Phase-1 判原始不可行）/
+    /// 主元过小（refactor 单次确定性重试后仍小）/ 步长异常 / 迭代超限
+    ///（m+64，快路径量级）/ 补丁 A 的 Bland 后仍退化——以上 ⇒
+    /// [`DualResolveOutcome::Fallthrough`]（因子化完好，dual_repair 可
+    /// 安全接手）；do_pivot 或主元闸的 refactor 失败（因子化损坏，
+    /// dual_repair 入口复查会 panic）⇒ [`DualResolveOutcome::
+    /// FactorizationBroken`] 直达整基重建；墙钟超限单独走
+    /// [`DualResolveOutcome::TimedOut`] 通道。连续 [`DUAL_MAIN_FAIL_FUSE`]
+    /// 次 Fallthrough ⇒ resolve 接线熔断（后续跳过主循环，见 resolve）。
+    /// **正确性下界 = 老路径**。
+    ///
+    /// 与第二层 dual_repair 的算法分叉是有意的（同为对偶单纯形、规则
+    /// 不同）：主循环求速度（BFRT 长步、θ 最小列），dual_repair 是经
+    /// 长期验证的稳健回退（归一化行选择、|主元| 最大破键）。两层的
+    /// rc/BTRAN 现算与主元执行纪律（|主元| 闸、refactor 单次重试）同款。
+    fn dual_main_resolve(&mut self) -> DualResolveOutcome {
+        // 预算 = m + 64（定档依据见常量 doc）。
+        let m = self.basis.len();
+        let budget =
+            DUAL_MAIN_BUDGET_BASE.saturating_add((m as u32).saturating_mul(DUAL_MAIN_BUDGET_PER_ROW));
+        self.dual_main_loop(budget)
+    }
+
+    /// [`Self::dual_main_resolve`] 的预算参数化内核：预算是唯一的可注入
+    /// 参数，确定性单测以极小预算直接驱动「预算耗尽 ⇒ Fallthrough ⇒
+    /// 回退链仍给出正确解」的诚实回退路径。
+    fn dual_main_loop(&mut self, budget: u32) -> DualResolveOutcome {
+        self.dual_main_calls += 1;
+        // 入口对偶可行性 rc 扫描红线：对偶不可行基不跑主循环（对偶单纯形
+        // 的前提），回退第二层 dual_repair——其入口同款 dual_feasible 复查
+        // 同时是本循环 BFRT 中途 GiveUp 后状态污染的防线（见下方两处
+        // GiveUp 的【复盘补丁 B】注释）。
+        if !self.dual_feasible() {
+            self.dual_main_fallthroughs += 1;
+            return DualResolveOutcome::Fallthrough;
+        }
+        let m = self.basis.len();
+        let ncs = self.ncols_static();
+        let mut guard = DualDegenGuard::default();
+        let mut iters: u32 = 0;
+        // 候选缓冲 (θ_j, j, αr_j, δ_j, range_j)，跨迭代复用容量。
+        let mut cands: Vec<(f64, usize, f64, f64, f64)> = Vec::new();
+        loop {
+            if iters >= budget {
+                return DualResolveOutcome::Fallthrough; // 迭代超限
+            }
+            // 墙钟：W2 条件读钟纪律（deadline 未注入 ⇒ 零墙钟读点）。
+            if let Some(deadline) = self.time_deadline {
+                self.pivots_since_time_check = self.pivots_since_time_check.saturating_add(1);
+                if self.pivots_since_time_check >= TIME_CHECK_INTERVAL {
+                    self.pivots_since_time_check = 0;
+                    if std::time::Instant::now() >= deadline {
+                        return DualResolveOutcome::TimedOut; // 独立通道，防超限后盲迭代
+                    }
+                }
+            }
+            // y = BTRAN(c_B)：rc 每迭代现算（与 run_phase 同款新鲜度契约，
+            // 无增量漂移）。
+            for i in 0..m {
+                self.cb[i] = self.cost_of(self.basis[i], 2);
+            }
+            let y = self.btran_full(&self.cb);
+            if y.iter().any(|v| !v.is_finite()) {
+                return DualResolveOutcome::Fallthrough; // 对偶变量非有限
+            }
+            // (1) 离基行 = |违反| 最大，并列最小行号（升序扫描 + 严格大于
+            // 才替换 ⇒ 并列保留先见的最小行号）。
+            let mut worst: Option<(usize, f64, bool)> = None; // (行, 违反, below)
+            for i in 0..m {
+                let (lb, ub) = self.col_bounds(self.basis[i]);
+                let v_lb = lb - self.x_b[i];
+                let v_ub = self.x_b[i] - ub;
+                let (viol, below) = if v_lb > v_ub { (v_lb, true) } else { (v_ub, false) };
+                if !viol.is_finite() {
+                    return DualResolveOutcome::Fallthrough; // x_B 非有限
+                }
+                if viol <= self.tol.feasibility {
+                    continue;
+                }
+                match worst {
+                    // 旧值 ≥ 当前（含并列）⇒ 保留先见者 ⇒ 并列取最小行号
+                    //（与 dual_repair 的 w >= norm 同款破键方向）。
+                    Some((_, w, _)) if w >= viol => {}
+                    _ => worst = Some((i, viol, below)),
+                }
+            }
+            let Some((r, _, below)) = worst else {
+                return DualResolveOutcome::Repaired; // 全部基变量回界 ⇒ 修复完成
+            };
+            let (lb_r, ub_r) = self.col_bounds(self.basis[r]);
+            let target = if below { lb_r } else { ub_r };
+            // (2) BTRAN(e_r) 取表格行 ρ，扫全部静态非基列现算 αr_j 与 rc_j，
+            // 收集方向可行候选（below ⇒ δ·αr < 0 / above ⇒ δ·αr > 0——
+            // 只有向界移动能缩小本行违反的列才 eligible）。
+            let mut e = vec![0.0f64; m];
+            e[r] = 1.0;
+            let rho = self.btran_full(&e);
+            if rho.iter().any(|v| !v.is_finite()) {
+                return DualResolveOutcome::Fallthrough; // ρ 非有限
+            }
+            cands.clear();
+            for j in 0..ncs {
+                if self.in_basis[j] {
+                    continue;
+                }
+                let (lb, ub) = self.col_bounds(j);
+                if ub - lb <= self.tol.feasibility {
+                    continue; // 固定列：无对偶语义、无翻转自由度
+                }
+                let mut a = 0.0;
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let rr = rho[self.col_rows[k]];
+                    if rr != 0.0 {
+                        a += rr * self.col_vals[k];
+                    }
+                }
+                if !a.is_finite() || a.abs() < self.tol.pivot {
+                    continue; // 主元过小的列不参与（含非有限数值防御）
+                }
+                let delta = if self.at_upper[j] { -1.0 } else { 1.0 };
+                let da = delta * a;
+                if below && da >= 0.0 {
+                    continue; // 方向不可行
+                }
+                if !below && da <= 0.0 {
+                    continue;
+                }
+                let mut dot = 0.0;
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let yr = y[self.col_rows[k]];
+                    if yr != 0.0 {
+                        dot += yr * self.col_vals[k];
+                    }
+                }
+                let rc = self.cost_of(j, 2) - dot;
+                if !rc.is_finite() {
+                    return DualResolveOutcome::Fallthrough; // rc 非有限
+                }
+                let signed = if self.at_upper[j] { -rc } else { rc };
+                let theta = (signed / a.abs()).max(0.0);
+                if !theta.is_finite() {
+                    return DualResolveOutcome::Fallthrough; // θ 非有限
+                }
+                cands.push((theta, j, a, delta, ub - lb));
+            }
+            if cands.is_empty() {
+                // 候选空：该基上对偶无界 ⇒ 原始不可行候选——主循环不在此
+                // 下结论，回退链交 Phase-1 判定（老路径同款语义；此时未
+                // 执行任何翻转/主元，状态干净）。
+                return DualResolveOutcome::Fallthrough;
+            }
+            // (3) 选列与长步。Bland 期：eligible 最小下标、禁长步（无翻转
+            // 吸收）；否则 (θ, 列号) 全序升序 + BFRT 逐列吸收。
+            let (pick, t, theta_final, flip_end): (usize, f64, f64, usize);
+            if guard.bland {
+                let mut best = 0usize;
+                for idx in 1..cands.len() {
+                    if cands[idx].1 < cands[best].1 {
+                        best = idx; // 并列最小下标（j 互异 ⇒ 唯一）
+                    }
+                }
+                let (_, _, a, delta, _) = cands[best];
+                let t_bland = (target - self.x_b[r]) / (-delta * a);
+                if !t_bland.is_finite() || t_bland < 0.0 {
+                    return DualResolveOutcome::Fallthrough; // 步长异常（Bland 期未翻转，状态干净）
+                }
+                pick = best;
+                t = t_bland;
+                theta_final = cands[best].0;
+                flip_end = 0; // 禁长步
+            } else {
+                cands.sort_unstable_by(|x, w| {
+                    // θ 已过滤为有限 ⇒ partial_cmp 恒 Some；(θ, j) 二元组
+                    // 因 j 互异而唯一 ⇒ 排序结果与算法无关地确定。
+                    x.0.partial_cmp(&w.0)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(x.1.cmp(&w.1))
+                });
+                match dual_ratio_bfrt(&cands, target - self.x_b[r]) {
+                    Some((k, tk)) => {
+                        pick = k;
+                        t = tk;
+                        theta_final = cands[k].0;
+                        flip_end = k; // 0..k 的候选全部界翻转吸收
+                    }
+                    None => {
+                        // 候选耗尽/步长异常——纯函数阶段未执行任何翻转，
+                        // 状态干净，直接回退（对偶无界 ⇒ 交 Phase-1）。
+                        return DualResolveOutcome::Fallthrough;
+                    }
+                }
+            }
+            let q = cands[pick].1;
+            let delta_q = cands[pick].3;
+            // (4) 执行翻转（先于主元）：被翻列走到对面界、x_B 全行传播；
+            // 入选列以 θ_final 更新对偶变量后这些列 rc 越零变号、「步后
+            // rc=0 落对偶可行侧」（本引擎 y/rc 每迭代 BTRAN 现算，无需
+            // 显式对偶更新）。
+            for idx in 0..flip_end {
+                let (_, j, _, delta, range) = cands[idx];
+                self.ftran_col(j);
+                self.do_flip(j, delta, range);
+                self.dual_main_flips += 1;
+            }
+            // (5) 入基主元：FTRAN 列、|主元| 闸（refactor 单次确定性重试，
+            // just_refactored 闸保证至多一次，与 dual_repair/run_phase 同款）。
+            self.ftran_col(q);
+            if self.alpha[r].abs() < self.tol.pivot {
+                // 【复盘补丁 B：状态污染声明之一】走到这三个 GiveUp 出口
+                // 时，(4) 的 BFRT 翻转（若有）**已执行**——留下「已翻转未
+                // 主元」中间态：被翻列 x_j 已到新界侧，但其 rc 还在旧界侧
+                // 符号（y 未更新 ⇒ 该列对偶不可行），x_b 已含翻转传播。
+                // 出口分两类，安全依赖不同（勿混）：
+                // · refactor Err 出口：因子化已损坏（perm 清空 / m=0）——
+                //   dual_repair 入口的 dual_feasible 复查在损坏因子化上
+                //   **必然 panic 而非返回 false**，补丁 B 的复查防线在此
+                //   不成立 ⇒ 走 FactorizationBroken 直达整基重建（±1 对角
+                //   基 refactor 必成，污染与损坏因子化一并覆写），不依赖
+                //   任何前置复查。
+                // · 两个「主元仍过小」出口：因子化完好（refactor 成功或
+                //   未动），仅翻转污染 ⇒ 普通回退，安全性**完全依赖回退
+                //   链**：第二层 dual_repair 入口的 dual_feasible() 复查会
+                //   发现被翻列的对偶违反 ⇒ GiveUp ⇒ 第三层整基重建从零
+                //   重来。⚠️ 禁止在 dual_repair 之前插入任何不经
+                //   dual_feasible 复查的修复/续跑路径——那会在对偶不可行
+                //   基上跑对偶算法，静默产生错误结果。
+                if !self.just_refactored {
+                    if self.refactor().is_err() {
+                        return DualResolveOutcome::FactorizationBroken; // refactor 出错（因子化损坏态）
+                    }
+                    self.ftran_col(q);
+                    if self.alpha[r].abs() < self.tol.pivot {
+                        return DualResolveOutcome::Fallthrough; // 重试后主元仍过小（因子化完好）
+                    }
+                } else {
+                    return DualResolveOutcome::Fallthrough; // 刚重因子化仍过小（因子化完好）
+                }
+            }
+            if self.do_pivot(q, r, delta_q, t, !below).is_err() {
+                // 【复盘补丁 B：状态污染声明之二】do_pivot 的 Err 唯一来源
+                // 是其内部 ETA 越限触发的 refactor 失败——因子化已损坏
+                // （perm 清空 / m=0），且发生在 (4) 翻转已执行之后。与上方
+                // refactor Err 出口同类：dual_repair 入口复查在损坏态上必
+                // panic ⇒ 走 FactorizationBroken 直达整基重建覆写一切，
+                // 不依赖 dual_feasible 复查；同样不得插入不经复查的修复
+                // 路径。
+                return DualResolveOutcome::FactorizationBroken; // do_pivot 内 refactor 失败（因子化损坏态）
+            }
+            iters += 1;
+            self.iter_call += 1;
+            self.iterations_total += 1;
+            self.dual_main_pivots += 1;
+            if guard.on_step(theta_final, self.tol.optimality) {
+                // 复盘补丁 A：Bland 后仍连续退化达独立阈值 ⇒ 直接 GiveUp
+                // 回退老路径，不等迭代 cap 兜底。此刻上一步主元已完整
+                // 落地（翻转与主元成对执行），基自洽、无中间态污染——
+                // dual_repair 可安全接手。
+                return DualResolveOutcome::Fallthrough;
             }
         }
     }
@@ -3677,9 +4203,10 @@ mod tests {
     }
 
     /// S5：并列破键敏感的退化 LP（全对称系数 ⇒ 任一定价规则下打分全并列
-    /// （Dantzig 与 Devex 同为全等 rc/全等权重）+ 退化顶点）：resolve 序列
-    /// （逐步固定）与稠密引擎目标恒同——Bland 触发/释放路径的值级行为
-    /// 对账。
+    ///（Dantzig 与 Devex 同为全等 rc/全等权重）+ 退化顶点）：resolve 序列
+    ///（逐步固定）与稠密引擎目标恒同——Bland 触发/释放路径的值级行为
+    /// 对账。重锚注（S10 三层化）：口径 = 目标值与状态恒同（热启动迭代
+    /// 序列允许分叉）。
     #[test]
     fn degenerate_tie_heavy_parity_with_dense() {
         // 8 变量全对称 max Σx s.t. 两两容量行（全等系数 ⇒ 全部比值并列）。
@@ -3723,10 +4250,455 @@ mod tests {
         }
     }
 
+    // ---- G. S10 重实现：对偶主循环 resolve（三层化）----
+
+    /// G1（S10 测试 1 对齐）：对偶主循环路径下的热启动 resolve——目标与
+    /// 冷解、与稠密引擎 resolve 三方恒同，且 `dual_main_pivots > 0` 证明
+    /// 第一层路径被真实覆盖（不是静默回退到 dual_repair 的假绿）。
+    #[test]
+    fn dual_main_resolve_matches_cold_and_dense_objective() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        // 形态 1：x0 收紧上界（分支形态）。
+        let mut b = root.clone();
+        b.ub[0] = 0.0;
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&root);
+        let warm = sp.resolve(&b);
+        let cold = {
+            let mut sp2 = SparseSimplex::new(&p, tol).unwrap();
+            sp2.solve(&b)
+        };
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&root);
+        let dense = d.resolve(&b);
+        assert_eq!(format!("{:?}", warm.status), format!("{:?}", cold.status));
+        assert_eq!(format!("{:?}", warm.status), format!("{:?}", dense.status));
+        if warm.status == LpStatus::Optimal {
+            assert!((warm.objective - cold.objective).abs() <= 1e-7 * (1.0 + cold.objective.abs()));
+            assert!((warm.objective - dense.objective).abs() <= 1e-7 * (1.0 + dense.objective.abs()));
+        }
+        // 形态 2：dive 序列连续固定（每次固定都是一次热启动修复机会）。
+        let mut sp2 = SparseSimplex::new(&p, tol).unwrap();
+        let mut d2 = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d2.solve(&root);
+        let base = sp2.solve(&root);
+        let root_x = base.x.clone();
+        let mut b2 = root.clone();
+        for j in 0..5 {
+            let v = root_x[j].round().max(b2.lb[j]).min(b2.ub[j]);
+            b2.lb[j] = v;
+            b2.ub[j] = v;
+            let rs = sp2.resolve(&b2);
+            let rd = d2.resolve(&b2);
+            assert_eq!(
+                format!("{:?}", rs.status),
+                format!("{:?}", rd.status),
+                "step {j}: 状态分叉"
+            );
+            if rs.status == LpStatus::Optimal {
+                assert!(
+                    (rs.objective - rd.objective).abs() <= 1e-7 * (1.0 + rd.objective.abs()),
+                    "step {j}: {} vs {}",
+                    rs.objective,
+                    rd.objective
+                );
+            }
+        }
+        // 路径覆盖：两个实例的 resolve 序列合计必须真的跑过对偶主循环主元。
+        assert!(
+            sp.dual_main_pivots + sp2.dual_main_pivots > 0,
+            "对偶主循环未被覆盖（dual_main_pivots 全 0）——测试退化为旧路径对账"
+        );
+    }
+
+    /// G2（S10 测试 2 对齐）：对偶比值测试选列——最小 θ 胜出；θ 并列时
+    /// (θ, 列号) 全序取小列号。输入按调用方约定（升序）手工构造。
+    #[test]
+    fn dual_ratio_bfrt_selects_min_theta_then_min_col() {
+        // rem = 4：三个候选都能以小步长直接入基（range 充裕）。
+        // (θ, j, αr, δ, range)：move_per_unit = −δ·αr = +1（与 rem 同号）。
+        let cands = [
+            (0.1, 9usize, 1.0, -1.0, 10.0),
+            (0.2, 2usize, 1.0, -1.0, 10.0),
+            (0.3, 7usize, 1.0, -1.0, 10.0),
+        ];
+        // 最小 θ（候选 0，尽管列号 9 最大）胜出；t = rem/1 = 4。
+        assert_eq!(dual_ratio_bfrt(&cands, 4.0), Some((0, 4.0)));
+        // θ 并列（升序输入下小列号在前）：仍取 idx 0 = 列 3。
+        let tie = [
+            (0.5, 3usize, 1.0, -1.0, 10.0),
+            (0.5, 7usize, 1.0, -1.0, 10.0),
+        ];
+        assert_eq!(dual_ratio_bfrt(&tie, 2.0), Some((0, 2.0)));
+        // 步长恰等于界幅（t == range）⇒ 入基而非翻转（闭区间语义）。
+        assert_eq!(dual_ratio_bfrt(&tie, 10.0), Some((0, 10.0)));
+    }
+
+    /// G3（S10 测试 3 对齐）：BFRT 长步——升序逐列界翻转吸收剩余违反，
+    /// 直至某候选以 ≤ 其界幅的步长入基；全部吸收仍不够 ⇒ 候选耗尽 None；
+    /// 无界上界列（range=∞）恒可入基（长步必终于入基）。
+    #[test]
+    fn dual_ratio_bfrt_bound_flip_absorbs_remaining() {
+        // rem = 10：候选 0 界幅 3（翻吸收 rem→7）、候选 1 界幅 4（→3）、
+        // 候选 2 无上界（range=∞ ⇒ 恒可入基）⇒ 入基 t = 3，翻转集 = [0,2)。
+        let cands = [
+            (0.1, 2usize, 1.0, -1.0, 3.0),
+            (0.2, 5usize, 1.0, -1.0, 4.0),
+            (0.3, 8usize, 1.0, -1.0, f64::INFINITY),
+        ];
+        assert_eq!(dual_ratio_bfrt(&cands, 10.0), Some((2, 3.0)));
+        // 候选 2 也只有界幅 1：翻转三个候选共吸收 8，rem 仍余 2 ⇒ 耗尽
+        // None（对偶无界 ⇒ 调用方回退交 Phase-1）。
+        let finite = [
+            (0.1, 2usize, 1.0, -1.0, 3.0),
+            (0.2, 5usize, 1.0, -1.0, 4.0),
+            (0.3, 8usize, 1.0, -1.0, 1.0),
+        ];
+        assert_eq!(dual_ratio_bfrt(&finite, 10.0), None);
+        // 空候选表：候选空场景（主循环同款回退语义）。
+        assert_eq!(dual_ratio_bfrt(&[], 1.0), None);
+        // 负步长（rem 与 move_per_unit 反号的数值防御）⇒ None 且未翻转。
+        let one = [(0.1, 2usize, 1.0, -1.0, 10.0)];
+        assert_eq!(dual_ratio_bfrt(&one, -1.0), None);
+    }
+
+    /// G4（S10 测试 4 对齐）：候选空（该基上对偶无界 ⇒ 原始不可行）的
+    /// GiveUp 回退——主循环不下结论、回退链交 Phase-1 判 Infeasible，
+    /// 与稠密引擎 resolve 状态恒同。
+    #[test]
+    fn dual_main_candidate_empty_yields_infeasible_via_phase1() {
+        // min x s.t. x+y ≥ 2、x−y ≤ 0、x,y ∈ [0,1]：根最优 x=y=1；
+        // 收紧 y.ub=0.5 后 x+y ≤ 1.5 < 2 ⇒ 不可行。
+        let vars = vec![var("x", 0.0, 1.0), var("y", 0.0, 1.0)];
+        let cons = vec![
+            (vec![(0usize, 1.0), (1usize, 1.0)], RelOp::Ge, 2.0),
+            (vec![(0usize, 1.0), (1usize, -1.0)], RelOp::Le, 0.0),
+        ];
+        let p = prob(Sense::Minimize, vars, vec![(0usize, 1.0)], cons);
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        let mut b = root.clone();
+        b.ub[1] = 0.5;
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let s0 = sp.solve(&root);
+        assert_eq!(format!("{:?}", s0.status), "Optimal");
+        let warm = sp.resolve(&b);
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&root);
+        let dense = d.resolve(&b);
+        assert_eq!(
+            format!("{:?}", warm.status),
+            format!("{:?}", dense.status),
+            "与稠密引擎 resolve 状态分叉"
+        );
+        assert_eq!(format!("{:?}", warm.status), "Infeasible");
+    }
+
+    /// G5（S10 测试 5 对齐）：预算耗尽诚实映射——预算参数化内核以 0 预算
+    /// 直接驱动（单测规模不可稳定构造真实耗尽，0 预算 = 耗尽的极限形态：
+    /// 一次主元未做即回退），回退链 dual_repair 接住后仍给出与稠密引擎
+    /// 一致的正确目标；任何一层都不谎报状态。
+    #[test]
+    fn dual_main_budget_exhaustion_maps_honestly() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        let mut b = root.clone();
+        b.ub[0] = 0.0;
+        // 稠密引擎参照。
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&root);
+        let dense = d.resolve(&b);
+        // 手动复现 resolve 的 (1)(2) 前奏（换界 + snap），以便注入预算。
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&root);
+        sp.start_call();
+        std::mem::swap(&mut sp.bounds, &mut sp.prev_bounds);
+        sp.bounds.lb.clone_from(&b.lb);
+        sp.bounds.ub.clone_from(&b.ub);
+        sp.snap_nonbasics();
+        assert!(
+            sp.basics_violated() && !sp.phase1_pending && !sp.artificials_in_basis(),
+            "前奏后应处于「对偶修复适用」状态"
+        );
+        // 预算 0 ⇒ 主循环立即耗尽回退（未做任何主元/翻转，状态干净）。
+        assert_eq!(sp.dual_main_loop(0), DualResolveOutcome::Fallthrough);
+        // 第二层 dual_repair 接住。
+        assert_eq!(sp.dual_repair(), DualRepair::Repaired);
+        // Phase-2 收尾 + 解构造：目标与稠密引擎 resolve 恒同。
+        let st = sp.run_two_phase(false);
+        let sol = sp.build_solution(st);
+        assert_eq!(format!("{:?}", sol.status), format!("{:?}", dense.status));
+        assert_eq!(format!("{:?}", sol.status), "Optimal");
+        assert!(
+            (sol.objective - dense.objective).abs() <= 1e-7 * (1.0 + dense.objective.abs()),
+            "{} vs {}",
+            sol.objective,
+            dense.objective
+        );
+    }
+
+    /// G6（S10 测试 6 对齐）：对偶退化步（θ ≤ tol.optimality 的零代价
+    /// 收紧）连续 32 步 ⇒ 切入对偶 Bland；非退化步清零退化计数（Bland
+    /// 本身保持——快路径无释放机制，持续退化由补丁 A 兜底）。
+    #[test]
+    fn dual_degen_guard_bland_threshold_and_reset() {
+        let tol_opt = Tolerances::default().optimality;
+        let mut g = DualDegenGuard::default();
+        for _ in 0..31 {
+            assert!(!g.on_step(0.0, tol_opt));
+        }
+        assert!(!g.bland, "31 步退化不应触发 Bland");
+        assert!(!g.on_step(0.0, tol_opt));
+        assert!(g.bland, "第 32 步连续退化应触发对偶 Bland");
+        // 非退化步：退化计数清零，Bland 保持介入。
+        assert!(!g.on_step(1.0, tol_opt));
+        assert_eq!(g.degen, 0);
+        assert!(g.bland);
+        // θ 恰等于 tol.optimality 也是退化步（闭区间语义）。
+        let mut g2 = DualDegenGuard::default();
+        for _ in 0..32 {
+            assert!(!g2.on_step(tol_opt, tol_opt));
+        }
+        assert!(g2.bland, "θ == tol.optimality 应计为退化步");
+    }
+
+    /// G7（S10 测试 7 对齐）：对偶主循环阈值钉值——S10 钉值 32（Bland
+    /// 介入）与补丁 A 的 GiveUp 阈值 64（2× 同源）；预算为 A/B 调参后
+    /// 的固定快路径量级 128（setcover-400x800 慢磨 2.96× 回归的修参，
+    /// 见常量 doc），失败熔断 8 次。任何一侧改动使口径分叉时，本测试
+    /// 提醒人工复核对齐（允许有意分叉——但须改钉值并记因）。
+    #[test]
+    fn dual_main_constants_pinned() {
+        assert_eq!(DUAL_BLAND_DEGEN_LIMIT, 32); // S10 钉值。
+        assert_eq!(DUAL_BLAND_GIVEUP_DEGEN, 64); // 复盘补丁 A：2× 同源。
+        assert_eq!(DUAL_MAIN_BUDGET_BASE, 64); // A/B 调参：m + 64。
+        assert_eq!(DUAL_MAIN_BUDGET_PER_ROW, 1); // 每行 1 步。
+        assert_eq!(DUAL_MAIN_FAIL_FUSE, 8); // A/B 调参：连续失败熔断。
+        assert_eq!(DUAL_MAIN_FUSE_MIN_CALLS, 32); // 比率熔断最小样本。
+        assert_eq!(DUAL_MAIN_FAIL_RATE_PCT, 40); // 比率熔断失败率线（%）。
+        assert_eq!(DUAL_MAIN_CELL_CEILING, 350_000); // 规模闸（270k 赢/480k 亏之间）。
+    }
+
+    /// G8（复盘补丁 A 用例）：对偶 Bland 介入后**仍连续**退化达 64 步 ⇒
+    /// on_step 返回 true（直接 GiveUp 回退老路径，不等迭代 cap）；期间
+    /// 任何一步非退化都会重置「Bland 后计数」——只有连续打转才触发。
+    #[test]
+    fn dual_degen_guard_gives_up_after_bland_still_degenerate() {
+        let tol_opt = Tolerances::default().optimality;
+        let mut g = DualDegenGuard::default();
+        // 32 步退化 ⇒ Bland。
+        for _ in 0..32 {
+            assert!(!g.on_step(0.0, tol_opt));
+        }
+        assert!(g.bland);
+        // Bland 后连续退化：63 步不触发，第 64 步触发 GiveUp。
+        for k in 0..63 {
+            assert!(!g.on_step(0.0, tol_opt), "Bland 后第 {} 步退化不应触发", k + 1);
+        }
+        assert!(
+            g.on_step(0.0, tol_opt),
+            "Bland 后连续第 64 步退化应触发补丁 A 的 GiveUp"
+        );
+        // 「连续」语义：Bland 后退化 63 步 → 一步非退化（重置）→ 再退化
+        // 63 步不触发。
+        let mut g2 = DualDegenGuard::default();
+        for _ in 0..32 {
+            assert!(!g2.on_step(0.0, tol_opt));
+        }
+        for _ in 0..63 {
+            assert!(!g2.on_step(0.0, tol_opt));
+        }
+        assert!(!g2.on_step(1.0, tol_opt)); // 非退化步重置 after_bland。
+        for _ in 0..63 {
+            assert!(!g2.on_step(0.0, tol_opt));
+        }
+        // 重置后重新累计：第 64 步退化触发。
+        assert!(g2.on_step(0.0, tol_opt));
+    }
+
+    /// G9（终审高危项回归锚）：FactorizationBroken 通道的安全支柱——
+    /// refactor 失败留下的两类损坏因子化（perm 清空 / m=0）在
+    /// rebuild_initial_basis 后必须被完全覆写恢复（±1 对角基 refactor 必
+    /// 成），随后任何 btran 消费点不 panic。主循环两个 refactor-Err 出口
+    /// 的真实触发需数值奇异基（单测无法稳定构造，如终审所注「未实机
+    /// 复现」），此处直接钉住接线所依赖的恢复语义。
+    #[test]
+    fn rebuild_recovers_from_broken_factorization() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&bounds);
+        let m = sp.basis.len();
+        // 损坏态一：x_B 重算 NaN 路径（refactor Err）——lu = default（m=0）。
+        sp.lu = LuFactors::default();
+        sp.rebuild_initial_basis();
+        let y = sp.btran_full(&vec![1.0; m]);
+        assert_eq!(y.len(), m, "m=0 损坏态 rebuild 后 btran 须恢复正常维度");
+        // 损坏态二：factorize_into 奇异 Err 路径——perm 清空、f.m 保留
+        // 旧维度（btran 的 y[self.perm[i]] 空索引 panic 形态）。
+        sp.lu.perm.clear();
+        sp.lu.u_diag.iter_mut().for_each(|v| *v = 0.0);
+        sp.rebuild_initial_basis();
+        let y2 = sp.btran_full(&vec![1.0; m]);
+        assert_eq!(y2.len(), m);
+        assert!(y2.iter().all(|v| v.is_finite()), "覆写恢复后对偶变量须有限");
+        // rebuild 后引擎仍可正常求解（损坏不粘滞）。
+        let mut b = bounds.clone();
+        b.ub[0] = 0.0;
+        let sol = sp.resolve(&b);
+        assert_eq!(format!("{:?}", sol.status), "Optimal");
+    }
+
+    /// G10（终审低危项补缺）：BFRT 界翻转的**真实路径**集成覆盖——手工
+    /// 构造 LP 使主循环一次迭代内「最小 θ 候选界幅不足以入基（翻转吸收）
+    /// + 下一候选入基清零剩余违反」，断言 dual_main_flips/pivots 均 ≥ 1、
+    /// 修复后 Optimal 且目标与手工推导值及稠密引擎 resolve 恒同。
+    ///
+    /// 构造（行归一化 ÷2）：max x0+x1−0.1·x2 s.t. x0−x1−2·x2 ≤ 1，
+    /// x0∈[0,3]、x1∈[0,10]、x2∈[0,0.5]。根最优 = 界角点 (3,10,0)、
+    /// 基 {s1}（s1=4），全部非基贴界且对偶可行（x2 正成本保贴下界）。
+    /// 收紧 x1.ub→0：snap 传播 Δ=−10 ⇒ s1 = −1（below，rem=1）。
+    /// 候选（θ,列号）升序：x2（θ=0.1，range=0.5，t=1>0.5 ⇒ **翻转**，
+    /// rem→0.5）→ x0（θ=2，range=3，t=1≤3 ⇒ 入基）。修复后最优
+    /// x0=2、x1=0、x2=0.5，目标 = 2−0.05 = 1.95。
+    #[test]
+    fn dual_main_bfrt_flip_real_path() {
+        let vars = vec![
+            var("x0", 0.0, 3.0),
+            var("x1", 0.0, 10.0),
+            var("x2", 0.0, 0.5),
+        ];
+        let cons = vec![(
+            vec![(0usize, 1.0), (1usize, -1.0), (2usize, -2.0)],
+            RelOp::Le,
+            1.0,
+        )];
+        let p = prob(Sense::Maximize, vars, vec![(0, 1.0), (1, 1.0), (2, -0.1)], cons);
+        let tol = Tolerances::default();
+        let root = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let s0 = sp.solve(&root);
+        assert_eq!(format!("{:?}", s0.status), "Optimal");
+        assert!(
+            (s0.objective - 13.0).abs() <= 1e-9,
+            "根最优须为界角点 13（构造前提），实得 {}",
+            s0.objective
+        );
+        // 收紧 x1 上界 ⇒ 主循环 BFRT 翻转 + 入基。
+        let mut b = root.clone();
+        b.ub[1] = 0.0;
+        let warm = sp.resolve(&b);
+        let mut d = DenseSimplex::new(&p, tol).unwrap();
+        let _ = d.solve(&root);
+        let dense = d.resolve(&b);
+        assert_eq!(
+            format!("{:?}", warm.status),
+            format!("{:?}", dense.status),
+            "与稠密引擎 resolve 状态分叉"
+        );
+        assert_eq!(format!("{:?}", warm.status), "Optimal");
+        assert!(
+            (warm.objective - dense.objective).abs() <= 1e-7 * (1.0 + dense.objective.abs()),
+            "目标恒同失败：{} vs {}",
+            warm.objective,
+            dense.objective
+        );
+        assert!(
+            (warm.objective - 1.95).abs() <= 1e-7,
+            "手工推导最优 1.95，实得 {}",
+            warm.objective
+        );
+        assert!(sp.dual_main_pivots >= 1, "对偶主循环主元未被覆盖");
+        assert!(sp.dual_main_flips >= 1, "BFRT 界翻转未被真实路径覆盖");
+    }
+
+    /// G11（A/B 调参诊断，重负载 #[ignore]；release 显式跑）：root 割循环 +
+    /// 真 dive（每步固定当前 LP 解的最大分数基变量——B&B 分支的真实形态，
+    /// 保证触发修复）序列上，对偶主循环的每次调用平均主元数（pivots/
+    /// calls）与 Fallthrough 失败占比——budget/熔断阈值的定档依据。
+    #[test]
+    #[ignore]
+    fn dual_main_diagnostics_setcover() {
+        let t0 = std::time::Instant::now();
+        let p = load_instance(&bench_instance("setcover-300x600")).unwrap();
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let int_vars = p.integer_vars();
+        let mut sp = SparseSimplex::new(&p, tol).unwrap();
+        let _ = sp.solve(&bounds);
+        let (cuts, _st, _) = crate::cuts::cut_loop_recorded(
+            &mut sp,
+            &bounds,
+            &p,
+            &int_vars,
+            crate::cuts::CutOptions::default(),
+            &tol,
+            || SparseSimplex::new(&p, tol),
+        )
+        .unwrap();
+        eprintln!(
+            "root+cuts({cuts}): calls={} pivots={} flips={} fall={} ({:.1}s)",
+            sp.dual_main_calls,
+            sp.dual_main_pivots,
+            sp.dual_main_flips,
+            sp.dual_main_fallthroughs,
+            t0.elapsed().as_secs_f64()
+        );
+        // 真 dive：每步把当前解的最大分数变量固定到较近整数 ⇒ 该变量
+        // 多为基变量 ⇒ 界剪出基行违反 ⇒ 触发三层修复（B&B 节点形态）。
+        let mut b = bounds.clone();
+        let n = p.vars.len();
+        for step in 0..40 {
+            let x = sp.resolve(&b).x;
+            let mut bj = usize::MAX;
+            let mut bfrac = 0.0f64;
+            for j in 0..n {
+                let f = (x[j] - x[j].round()).abs();
+                if f > bfrac {
+                    bfrac = f;
+                    bj = j;
+                }
+            }
+            if bj == usize::MAX {
+                break; // 已整数解
+            }
+            let v = x[bj].round().max(b.lb[bj]).min(b.ub[bj]);
+            b.lb[bj] = v;
+            b.ub[bj] = v;
+            if step % 8 == 7 {
+                eprintln!(
+                    "  step {step}: calls={} pivots={} flips={} fall={}",
+                    sp.dual_main_calls,
+                    sp.dual_main_pivots,
+                    sp.dual_main_flips,
+                    sp.dual_main_fallthroughs
+                );
+            }
+        }
+        let calls = sp.dual_main_calls.max(1);
+        eprintln!(
+            "TOTAL: calls={} pivots={} (avg {:.0}/call) flips={} fall={} ({:.1}s)",
+            sp.dual_main_calls,
+            sp.dual_main_pivots,
+            sp.dual_main_pivots as f64 / calls as f64,
+            sp.dual_main_flips,
+            sp.dual_main_fallthroughs,
+            t0.elapsed().as_secs_f64()
+        );
+    }
+
     // ---- F. S3 集成面：resolve 热启动 / add_row 割 / 快照作用域 ----
 
     /// 界收紧（分支形态）下的热启动 resolve：目标与冷解、与稠密引擎
     /// resolve 三方一致。
+    ///
+    /// 重锚注（S10 三层化：对偶主循环 → dual_repair → 整基重建）：本测试
+    /// 口径 = **目标值与状态恒同**——热启动迭代序列与解顶点允许与冷解/
+    /// 稠密引擎分叉（多解 LP 下 x 不作对账项）。
     #[test]
     fn resolve_warm_matches_cold_and_dense_after_tightening() {
         let p = load_instance(&milp_instance("knapsack-10")).unwrap();
@@ -3789,6 +4761,8 @@ mod tests {
     }
 
     /// dive 形态的连续固定（lb=ub）resolve 序列：终态与目标与稠密引擎一致。
+    /// 重锚注（S10 三层化）：口径 = 目标值与状态恒同（顶点/迭代序列允许
+    /// 分叉，同 `resolve_warm_matches_cold_and_dense_after_tightening`）。
     #[test]
     fn dive_like_fixing_sequence_matches_dense() {
         let p = load_instance(&milp_instance("knapsack-10")).unwrap();
