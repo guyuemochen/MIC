@@ -621,7 +621,9 @@ fn acceptance_cli_progress_log_format() {
 
     // hard-knapsack-12 变体：--log-secs 0.001 --threads 4 --work-stack local
     //（W1 测试调整，断言不变：默认（auto）下小算例调度门会把 threads=4 的
-    // hard-knapsack-12（t1 = 159 节点 < 512 探测预算）接去走顺序路径，亚毫秒
+    // hard-knapsack-12（t1 = 93 节点 < 512 探测预算；S9 方向 1 根节点
+    // sub-MIP 启发式后口径，前值 159，见 small_tree_gate 用例注释）接去走
+    // 顺序路径，亚毫秒
     // 搜索在 0.001s 周期下可能只有首行——「极小周期下并行协调线程必出周期
     // 行」的覆盖改用显式 --work-stack local（点名并行引擎，按门契约不进门）。
     let (code, stdout) = cli(&[
@@ -854,13 +856,19 @@ fn acceptance_cli_heuristic_on_identical() {
     // +48%/knapsack-5000 +26%/knapsack-2000 持平），多行族收益保留
     // （mknap-3x100 −67%）；objective 523 恒为 2^12 穷举真值。显式复现
     // Pseudocost 行：--branch-rule pseudocost（196）。）
+    // （方向 1 根节点 sub-MIP 启发式：根 LP + 根割后跑 RENS 型受限子问题
+    // 封顶嵌套 DFS（生产深限 8 = SUB_MIP_MAX_DEPTH——HiGHS 同款深限 3 在
+    // setcover-300x600 标定中零产出被弃，见 heuristics.rs 常量注释与报告
+    // S9 节），根 incumbent 511→520（首行进度实测）⇒ 剪枝
+    // 提前，159→93（CLI 双跑逐字节实测；目标恒 523。--heuristic-mode off
+    // 复现无 sub-MIP 行：159。））
     assert_eq!(
         stdout,
         "status = optimal
-nodes = 159
+nodes = 93
 objective = 523.000000
 ",
-        "hard-knapsack-12 --heuristic-mode on 输出（P3 收紧后默认 MostFractional 确定性基线）"
+        "hard-knapsack-12 --heuristic-mode on 输出（方向 1 后确定性基线）"
     );
 }
 

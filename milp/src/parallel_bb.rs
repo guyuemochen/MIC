@@ -916,7 +916,7 @@ pub fn parallel_branch_and_bound(
             }
         }
         if terminal.is_none() && opts.heuristics {
-            // 根启发式：round_and_check + dive 供应初始 incumbent。
+            // 根启发式：round_and_check + dive + sub-MIP 供应初始 incumbent。
             if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
@@ -926,6 +926,20 @@ pub fn parallel_branch_and_bound(
                 &bounds,
                 &sol.x,
                 opts.dive_max_fixes,
+                &tol,
+            ) {
+                maybe_update_local(sense, &mut incumbent, inc);
+            }
+            // —— 根节点 sub-MIP 启发式（方向 1，RENS 型受限子问题嵌套分支
+            // 定界）：与顺序路径同实现同口径（heuristics::sub_mip；确定性
+            // 深限/节点上限，无墙钟读点、无随机数），保持 threads≥2 根阶段
+            // incumbent 供应与 t1 一致；置于 MITM 之前（命中即免 MITM）。
+            if let Some(inc) = heuristics::sub_mip(
+                problem,
+                &mut simplex,
+                &bounds,
+                &sol.x,
+                incumbent.as_ref().map(|(o, _)| *o),
                 &tol,
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
@@ -941,7 +955,7 @@ pub fn parallel_branch_and_bound(
                     maybe_update_local(sense, &mut incumbent, inc);
                 }
             }
-            // dive 扰动了 Simplex 内部基：真实界 resolve 回取（记账性）。
+            // dive / sub-MIP 扰动了 Simplex 内部基：真实界 resolve 回取（记账性）。
             sol = simplex.resolve(&bounds);
             if let Some(status) = root_terminal_status(sol.status) {
                 terminal = Some(status);

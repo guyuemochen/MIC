@@ -23,11 +23,13 @@
 //!
 //! 根节点顺序：int_vars 空 ⇒ 单次 LP 直接返回；根 solve 非 Optimal ⇒ 不进割循环
 //! 与启发式，直接按 (a)/(b)/(c) 终局；根 Optimal ⇒ （可选）cut_loop_recorded
-//! ⇒ （可选）round_and_check + dive ⇒ DFS 主循环。割循环的终态分流：Infeasible
-//! 保留整解终局（有效割切空根 LP 是整数不可行的合法证明）；**IterationLimit
-//! 不作终态**——丢弃全部根割、重建无割 Simplex 恢复 Optimal 根态后继续启发式
-//! 与分支（无割松弛更松的界不剪任何整数可行解；重建前迭代经 base_
-//! lp_iterations 累计不丢，stats.cuts 如实清零）。
+//! ⇒ （可选）round_and_check + dive + sub-MIP（方向 1：根 LP 解中已取整数
+//! 值的整数变量固定、分数变量自由的受限子问题封顶嵌套 DFS，见
+//! [`crate::heuristics::sub_mip`]）+ MITM ⇒ DFS 主循环。割循环的终态分流：
+//! Infeasible 保留整解终局（有效割切空根 LP 是整数不可行的合法证明）；
+//! **IterationLimit 不作终态**——丢弃全部根割、重建无割 Simplex 恢复 Optimal
+//! 根态后继续启发式与分支（无割松弛更松的界不剪任何整数可行解；重建前迭代
+//! 经 base_lp_iterations 累计不丢，stats.cuts 如实清零）。
 //!
 //! 终态判定（与上限诚实性整合）：主循环因栈空自然退出或因 node_limit/
 //! time_limit 提前退出后统一判定——limit_hit 为真或上限触发 ⇒ LimitReached
@@ -136,6 +138,11 @@ pub struct BbOptions {
     /// 是否启用根节点割循环。默认 true。
     pub root_cuts: bool,
     /// 是否启用启发式。默认 true。
+    /// 管线（根阶段，全部只供应 incumbent、不影响状态判定）：round_and_check
+    /// + dive + sub-MIP（方向 1：RENS 型受限子问题封顶嵌套分支定界，
+    /// [`crate::heuristics::sub_mip`]）+ MITM（兜底）；自适应档
+    /// （`--heuristic-mode auto`）另在树节点分支路径上按控制器补跑 dive。
+    /// off 档整块不运行（含 sub-MIP）；默认档（CLI `auto`）全管线运行。
     pub heuristics: bool,
     /// dive 修复变量数上限（深潜预算；对偶热修复下单次 resolve 成本极低，
     /// 大预算可控）。默认 4096。
@@ -768,7 +775,7 @@ fn sequential_bb(
         }
     }
 
-    // —— 根启发式（可选）：round_and_check + dive + MITM 供应初始 incumbent ——
+    // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
     if opts.heuristics {
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc);
@@ -779,6 +786,25 @@ fn sequential_bb(
             &bounds,
             &sol.x,
             opts.dive_max_fixes,
+            &tol,
+        ) {
+            maybe_update(sense, &mut incumbent, inc);
+        }
+        // —— 根节点 sub-MIP 启发式（方向 1，RENS 型受限子问题嵌套分支定界）——
+        // 根 LP + 根割循环求解完成后运行：根 LP 解中已取整数值的整数变量按
+        // 该值固定、分数变量保持自由，对受限子问题跑一次封顶嵌套 DFS（确定
+        // 性深限/节点上限，无墙钟读点、无随机数；上限取值依据见
+        // heuristics::sub_mip 的具名常量注释——HiGHS 同款启发式深限 3 在
+        // setcover-300x600 类上实测零产出，深限 8 同质量更快）。候选解经
+        // round_and_check 复核（逐行可行性 + 目标按 x 重算）后仅以严格更优
+        // 经 maybe_update 入池；启发式绝不影响状态判定。置于 MITM 之前
+        //（廉价 LP 驱动先于昂贵组合枚举，命中即免 MITM）。
+        if let Some(inc) = heuristics::sub_mip(
+            problem,
+            &mut simplex,
+            &bounds,
+            &sol.x,
+            incumbent.as_ref().map(|(o, _)| *o),
             &tol,
         ) {
             maybe_update(sense, &mut incumbent, inc);
@@ -794,7 +820,8 @@ fn sequential_bb(
                 maybe_update(sense, &mut incumbent, inc);
             }
         }
-        // dive 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性 resolve）。
+        // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
+        // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。
         sol = simplex.resolve(&bounds);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
@@ -1319,7 +1346,9 @@ pub(crate) fn is_integral(int_vars: &[usize], x: &[f64], integrality: f64) -> bo
 }
 
 /// MostFractional 分支变量选择：max min(f, 1−f)（f = x−⌊x⌋），并列取最小下标。
-fn select_branch_var(int_vars: &[usize], x: &[f64]) -> Option<(usize, f64)> {
+/// pub(crate)：heuristics::sub_mip（根节点 sub-MIP 启发式的嵌套 DFS）与主循环
+/// 共用同一选择规则与破键序，杜绝两套分支序分叉。
+pub(crate) fn select_branch_var(int_vars: &[usize], x: &[f64]) -> Option<(usize, f64)> {
     let mut best: Option<(usize, f64, f64)> = None; // (var, 值, 得分)
     for &j in int_vars {
         let Some(&v) = x.get(j) else {
@@ -2491,8 +2520,12 @@ mod tests {
         // raw（无 presolve）+ adaptive-on 的 pre-W6 基线 = 2,106 节点 /
         // 24,072 迭代（HEAD 实测钉；探针口径的 2,120 是 presolve 重建后
         // 的问题——与本测试的 raw 路径无关）。
-        assert_eq!(off_auto.stats.nodes, 2106, "adaptive-on off-cut = pre-W6 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 24072);
+        // （方向 1 根节点 sub-MIP 启发式：根阶段受限子问题封顶嵌套 DFS
+        // 供应更强根 incumbent ⇒ 剪枝提前，2,106→1,725 节点 / 24,072→
+        // 21,590 迭代（实测钉；目标恒 2331 不变。中间口径：深限 3 时
+        // 1,928/23,050，深限 8 终档节点再降、迭代含 sub-MIP 嵌套 resolve。））
+        assert_eq!(off_auto.stats.nodes, 1725, "adaptive-on off-cut = 方向1终档 raw 基线");
+        assert_eq!(off_auto.stats.lp_iterations, 21590);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
@@ -2587,9 +2620,11 @@ mod tests {
     }
 
     /// （W1）门命中 ⇒ threads=4 输出与 threads=1 **逐字节相同**（同一顺序
-    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 159 节点
-    ///（P3 口径）< 512 探测预算 ⇒ 门命中。行为字段全比：status/objective/
-    /// values/nodes/lp_iterations/cuts/bound/gap_terminated/auto_degraded。
+    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 93 节点
+    ///（方向 1 后口径：根节点 sub-MIP 启发式供应更强根 incumbent ⇒ 剪枝
+    /// 提前，P3 口径 159 → 93，双跑逐字节实测；目标恒 523）< 512 探测预算
+    /// ⇒ 门命中。行为字段全比：status/objective/values/nodes/lp_iterations/
+    /// cuts/bound/gap_terminated/auto_degraded。
     #[test]
     fn small_tree_gate_hit_returns_t1_identical_result() {
         let weights = [
@@ -2620,7 +2655,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(t1.status, SolveStatus::Optimal);
-        assert_eq!(t1.stats.nodes, 159, "P3 口径 t1 节点数（159）");
+        assert_eq!(t1.stats.nodes, 93, "方向 1 后 t1 节点数（P3 口径 159 → 93）");
         let t4 = branch_and_bound_controlled(
             &p,
             &BbOptions::default(),
@@ -2737,6 +2772,73 @@ mod tests {
             with_heur.stats.nodes,
             without_heur.stats.nodes
         );
+    }
+
+    /// （方向 1）根节点 sub-MIP 启发式的 --heuristic-mode 门控与诚实性：
+    /// max 3a+2b s.t. a+b≤2.5（a Binary、b Integer [0,10]），根 LP (1,1.5)
+    /// 目标 6，整数最优 5。node_limit=1 截断在根：on 档根启发式管线
+    ///（round miss → dive 命中 5 → sub-MIP 阈值剪枝无更优）⇒ LimitReached
+    /// 诚实携带 best=5（启发式解不冒充最优）；off 档无启发式 ⇒ 无
+    /// incumbent，双跑全部行为字段逐字节一致（off 路径不经过任何启发式
+    /// 代码）。全量两档均完备 Optimal 5（启发式只影响树形，不改最优值）。
+    /// 关根割：小型 fixture 的确定性分析口径（割循环会移动根 LP 顶点）。
+    #[test]
+    fn root_sub_mip_respects_heuristic_mode_gate() {
+        let mut p = Problem::new("sub-mip-gate", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Integer).unwrap();
+        p.set_var_bounds(1, 0.0, 10.0).unwrap();
+        p.set_objective(vec![(0, 3.0), (1, 2.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 2.5)
+            .unwrap();
+        let base = |heuristics: bool| BbOptions {
+            root_cuts: false,
+            heuristics,
+            ..BbOptions::default()
+        };
+        // node_limit = 1：on ⇒ 截断携带 incumbent 5（诚实 LimitReached）。
+        let on = branch_and_bound(
+            &p,
+            &BbOptions {
+                node_limit: 1,
+                ..base(true)
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(on.status, SolveStatus::LimitReached);
+        assert_close(on.best_objective.expect("on 档应携带根启发式解"), 5.0);
+        assert_eq!(on.stats.nodes, 1, "截断在根节点");
+        // off ⇒ 无 incumbent；双跑全部行为字段逐字节一致。
+        let off1 = branch_and_bound(
+            &p,
+            &BbOptions {
+                node_limit: 1,
+                ..base(false)
+            },
+            tol(),
+        )
+        .unwrap();
+        let off2 = branch_and_bound(
+            &p,
+            &BbOptions {
+                node_limit: 1,
+                ..base(false)
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(off1.status, SolveStatus::LimitReached);
+        assert!(off1.best_objective.is_none(), "off 档不得携带启发式解");
+        assert_eq!(off1.stats.nodes, off2.stats.nodes);
+        assert_eq!(off1.stats.lp_iterations, off2.stats.lp_iterations);
+        assert_eq!(off1.bound, off2.bound);
+        // 全量：两档均完备 Optimal 5（穷举真值；启发式不改最优值）。
+        for heuristics in [true, false] {
+            let r = branch_and_bound(&p, &base(heuristics), tol()).unwrap();
+            assert_eq!(r.status, SolveStatus::Optimal);
+            assert_close(r.best_objective.unwrap(), 5.0);
+        }
     }
 
     /// 节点分类纯函数：(Unbounded, is_root=false) → FailUnbounded（整树终止

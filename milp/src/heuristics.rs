@@ -3,13 +3,17 @@
 //! - [`round_and_check`]：整数变量取最近整数并夹回界，经与 integrality 联动
 //!   的容差阶梯复核后评估目标。
 //! - [`dive`]：fix-and-dive 潜水，逐步固定“最接近整数的非整整数变量”。
+//! - [`sub_mip`]（方向 1）：根节点 sub-MIP 启发式——根 LP 解中已取整数值的
+//!   整数变量按该值固定（RENS 型受限子问题），对剩余分数变量跑一次封顶的
+//!   嵌套分支定界（确定性深限/节点上限）。
 //! - [`subset_sum_mitm`]（R5-retry）：子集和 meet-in-the-middle 可行性
 //!   启发式——全 Binary + 全 Eq + 整系数类的**精确**可行点发现（n ≤ 42
 //!   全变量半枚举；n ≤ 84 窗口半枚举 + LCG 确定性窗口），脱离 LP 信息源
 //!   （round/dive/泵均锚定 LP 顶点邻域，在 market-split 类上零产出——
 //!   planted 解与 LP 取整点汉明距离 ~15，LP 驱动机制原理上跨不过）。
 
-use crate::model::{Problem, RelOp, Tolerances, VarType};
+use crate::branch_bound::{is_integral, select_branch_var};
+use crate::model::{Problem, RelOp, Sense, Tolerances, VarType};
 use crate::simplex::{Bounds, LpStatus};
 use crate::simplex_sparse::LpEngine;
 
@@ -195,6 +199,237 @@ pub fn dive(
                 return round_and_check(problem, bounds, &cur_x, tol);
             }
         }
+    }
+}
+
+// ===========================================================================
+// 根节点 sub-MIP 启发式（方向 1：RENS 型受限子问题嵌套分支定界）
+// ===========================================================================
+
+/// sub-MIP 嵌套分支定界的深限（分支层数上限）。
+///
+/// 取值依据（setcover-300x600 割后根上、阈值 = dive 的 162，release 实测，
+/// 经带参内核 [`sub_mip_with_caps`] 的临时标定探针取证、数字落档后探针
+/// 删除）：深限 3（HiGHS 同款 sub-MIP 启发式深限——`milp/target/hsc_log.txt`
+/// 的 Solving report 明示 `Max sub-MIP depth 3`）在 67 个分数列的受限子问题
+/// 上**零产出**（≤15 节点探不到整数叶，260ms 白烧）；深限 8 ⇒ 节点预算内
+/// 即取得 145（最优 144，HiGHS 同窗 0.9s 得 144），且比深限放开（d=32/∞）
+/// **同质量更快**（3.3s vs 6.2-7.0s——受限 setcover 的深链 LP 界爬升慢，
+/// 深潜是白烧）。8 同时与仓库既有浅层深限惯例对齐（Pseudocost 探测 / W6
+/// 局部割同为 8）。深限 8 下二叉子树至多 2^9−1 = 511 节点，节点上限是
+/// 纯防御性兜底。
+const SUB_MIP_MAX_DEPTH: u32 = 8;
+
+/// sub-MIP 嵌套分支定界的节点上限（每次 resolve 计 1，与
+/// [`crate::branch_bound::BbOptions::node_limit`] 同记账口径）。
+///
+/// 深限 8 已隐含 ≤511 节点，本上限在当前深限下永不触发，是深限未来调整
+/// 时的防御性兜底（防嵌套搜索成本失控）；两上限合起来保证启发式预算恒为
+/// 确定性常数——无墙钟读点、无随机数（成本随算例规模线性缩放：实测
+/// setcover-300x600 全预算 ≈ 3.3s、setcover-100x150 在 dive 已命中最优的
+/// 阈值剪枝下 ≈ 6ms 自限）。
+const SUB_MIP_NODE_LIMIT: u64 = 1_000;
+
+/// 根节点 sub-MIP 启发式（RENS：Relaxation Enforced Neighborhood Search）。
+///
+/// # 时机（调用方契约）
+/// 根 LP 与根割循环求解完成、廉价启发式（[`round_and_check`] / [`dive`]）
+/// 之后、MITM 与 DFS 主循环之前——即“根 LP（及根割循环）求解完成后”的
+/// 根阶段；仅 `--heuristic-mode` 非 off 档（`BbOptions::heuristics = true`，
+/// auto/on 均为 true）运行，off 时调用方整块跳过。
+///
+/// # 机制
+/// 以根 LP 解 x* 为锚构造受限子问题：整数性已满足
+///（|x*_j − round(x*_j)| ≤ tol.integrality）的整数变量按该整数值**固定**
+///（lb = ub = round 值夹回原界），其余分数整数变量保持自由；对受限子问题
+/// 跑一次封顶的嵌套 DFS 分支定界——分支变量选择与主循环同规则
+///（most-fractional、并列最小下标破键，[`select_branch_var`]），下行先
+/// 探索；确定性上限 = 深限 [`SUB_MIP_MAX_DEPTH`] + 节点上限
+/// [`SUB_MIP_NODE_LIMIT`]。
+///
+/// # incumbent 纪律（诚实性红线）
+/// 每个嵌套节点的候选解一律经 [`round_and_check`] 复核——整数变量取整、
+/// 逐行可行性核对、目标按取整后的 x 重算——复核通过且**严格优于**阈值
+///（外部传入的当前 incumbent 目标，无则任一可行解）才作为候选返回；采纳
+/// 与否由调用方按严格更优判定（`maybe_update`）。本启发式只供应
+/// incumbent，**绝不影响状态判定**：Optimal/limit 的语义、退出码、目标
+/// 输出契约全部不动。
+///
+/// # 引擎纪律（对齐 [`dive`]）
+/// 会扰动 Simplex 内部基（嵌套 resolve 热启动），调用方事后必须用真实根界
+/// resolve 恢复根热状态（记账性，不计节点；嵌套迭代数如实累计在引擎
+/// 统计里）。根 LP 已全整时立即返回 `None`（不 resolve、零扰动）。传入
+/// 引擎可以是稠密 `Simplex` 或稀疏 revised 引擎（`&mut dyn LpEngine`），
+/// 两引擎共用同一实现。
+pub fn sub_mip(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    root_lp_x: &[f64],
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+) -> Option<Incumbent> {
+    let n = problem.vars.len();
+    if root_lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
+        return None;
+    }
+    if root_lp_x.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let int_vars = problem.integer_vars();
+    // 受限子问题（RENS 邻域）：整数性已满足的整数变量固定到 round 值
+    //（夹回原界），分数整数变量保持自由。
+    let mut sub = bounds.clone();
+    let mut fractional = 0usize;
+    for &j in &int_vars {
+        let v = root_lp_x[j];
+        if (v - v.round()).abs() > tol.integrality {
+            fractional += 1;
+        } else {
+            let fixed = v.round().max(bounds.lb[j]).min(bounds.ub[j]);
+            sub.lb[j] = fixed;
+            sub.ub[j] = fixed;
+        }
+    }
+    if fractional == 0 {
+        return None; // 根 LP 已全整：无受限邻域可搜（主流程按 (e) 记录）
+    }
+    sub_mip_with_caps(
+        problem,
+        simplex,
+        bounds,
+        &sub,
+        incumbent_obj,
+        tol,
+        SUB_MIP_MAX_DEPTH,
+        SUB_MIP_NODE_LIMIT,
+    )
+}
+
+/// [`sub_mip`] 的带参内核（深限/节点上限显式传入）：生产入口 [`sub_mip`]
+/// 以具名常量调用；单元测试与上限标定取证以候选常量调用，与生产共享
+/// 同一实现。`base` = 原始根界（候选复核口径，保证 incumbent 全局有效）；
+/// `sub` = 已施加整数变量固定的受限界（DFS 起点）。
+#[allow(clippy::too_many_arguments)] // 参数即调用契约（同 branch_or_close 先例）
+pub(crate) fn sub_mip_with_caps(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    base: &Bounds,
+    sub: &Bounds,
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+    max_depth: u32,
+    node_limit: u64,
+) -> Option<Incumbent> {
+    let int_vars = problem.integer_vars();
+    let mut ctx = SubMipCtx {
+        problem,
+        base,
+        int_vars: &int_vars,
+        sense: problem.sense,
+        tol,
+        // 阈值含外部 incumbent 目标：仅接受严格更优候选（防御性滤掉非有限值）。
+        threshold: incumbent_obj.filter(|o| o.is_finite()),
+        nodes_left: node_limit,
+        max_depth,
+        best: None,
+    };
+    sub_mip_dfs(&mut ctx, simplex, sub, 0);
+    ctx.best
+}
+
+/// 嵌套 DFS 的共享上下文（问题与容差只读引用 + 上限/阈值/预算/候选状态）。
+struct SubMipCtx<'a> {
+    problem: &'a Problem,
+    /// 原始根界（候选复核用——保证 incumbent 全局有效，与 dive 同契约）。
+    base: &'a Bounds,
+    int_vars: &'a [usize],
+    sense: Sense,
+    tol: &'a Tolerances,
+    /// 候选采纳阈值（外部 incumbent 目标或已找到候选的目标）：仅严格更优入池。
+    threshold: Option<f64>,
+    /// 剩余节点预算（每次 resolve 计 1；耗尽即整体停止）。
+    nodes_left: u64,
+    /// 深限（生产路径 = [`SUB_MIP_MAX_DEPTH`]；测试/取证可覆盖标定）。
+    max_depth: u32,
+    /// 已找到的最优候选。
+    best: Option<Incumbent>,
+}
+
+impl<'a> SubMipCtx<'a> {
+    /// 候选提取与采纳：对 LP 点做 [`round_and_check`] 复核（整数变量取整 +
+    /// 逐行可行性核对 + 目标按 x 重算），通过且严格优于阈值才更新候选并
+    /// 收紧阈值。
+    fn offer(&mut self, x: &[f64]) {
+        let Some(inc) = round_and_check(self.problem, self.base, x, self.tol) else {
+            return;
+        };
+        let better = match self.threshold {
+            None => true,
+            Some(t) => match self.sense {
+                Sense::Maximize => inc.objective > t,
+                Sense::Minimize => inc.objective < t,
+            },
+        };
+        if better {
+            self.threshold = Some(inc.objective);
+            self.best = Some(inc);
+        }
+    }
+
+    /// 界剪枝判定：节点 LP 界不严格优于阈值 ⇒ 该子树不可能出更优候选
+    ///（LP 界是子树最优值的乐观界；相等即无严格改进空间）。
+    fn bound_pruned(&self, bound: f64) -> bool {
+        match self.threshold {
+            None => false,
+            Some(t) => match self.sense {
+                Sense::Maximize => bound <= t,
+                Sense::Minimize => bound >= t,
+            },
+        }
+    }
+}
+
+/// 嵌套 DFS 单节点：resolve → 界剪枝 → 取整复核（候选提取）→ 深限/整数性
+/// 封闭 → most-fractional 分支（下行先探索，与主循环 DFS 序一致）。
+///
+/// 分支界施加用逐子节点克隆（深限封顶下节点数 ≤ 2^(深限+1)−1，克隆成本
+/// 可忽略；免主循环的 trail 回溯机制）。非 Optimal resolve（不可行/迭代
+/// 上限/内部墙钟超限——后者属既有 W2 时限机制，本启发式不新增墙钟读点）
+/// 一律按子树放弃处理；预算耗尽即整体停止（封顶诚实：放弃剩余邻域，不影
+/// 响正确性）。
+fn sub_mip_dfs(ctx: &mut SubMipCtx, simplex: &mut dyn LpEngine, node_bounds: &Bounds, depth: u32) {
+    if ctx.nodes_left == 0 {
+        return; // 节点预算耗尽：整体停止（确定性封顶）
+    }
+    ctx.nodes_left -= 1;
+    let sol = simplex.resolve(node_bounds);
+    if sol.status != LpStatus::Optimal {
+        return; // 不可行 / 上限截断 / 数值异常：子树放弃
+    }
+    if ctx.bound_pruned(sol.objective) {
+        return;
+    }
+    ctx.offer(&sol.x);
+    if depth >= ctx.max_depth || is_integral(ctx.int_vars, &sol.x, ctx.tol.integrality) {
+        return; // 深限叶：邻域边界；整数性满足：无可分支变量（防御同判）
+    }
+    let Some((var, val)) = select_branch_var(ctx.int_vars, &sol.x) else {
+        return; // 无可分支变量（防御）：节点丢弃
+    };
+    let floor = val.floor();
+    // 下行（ub → ⌊x̄⌋）先探索；可应用性判定与主循环 tighten_child 同口径
+    //（严格收缩且新区间非空）。
+    if floor >= node_bounds.lb[var] && floor < node_bounds.ub[var] {
+        let mut child = node_bounds.clone();
+        child.ub[var] = floor;
+        sub_mip_dfs(ctx, simplex, &child, depth + 1);
+    }
+    // 上行（lb → ⌊x̄⌋+1）。
+    if floor + 1.0 > node_bounds.lb[var] && floor + 1.0 <= node_bounds.ub[var] {
+        let mut child = node_bounds.clone();
+        child.lb[var] = floor + 1.0;
+        sub_mip_dfs(ctx, simplex, &child, depth + 1);
     }
 }
 
@@ -732,5 +967,172 @@ mod tests {
         let inc = dive(&q, &mut s2, &bnds2, &sol2.x, 0, &t).expect("整数解应直接返回");
         assert!((inc.objective - 3.0).abs() < 1e-9);
         assert_eq!(inc.values, vec![3.0]);
+    }
+
+    // —— 根节点 sub-MIP 启发式（方向 1）——
+
+    /// 载体：max 3a + 2b s.t. a + b ≤ 2.5（a Binary、b Integer [0,10]）。
+    /// 根 LP (a=1, b=1.5) 目标 6——a 整数性满足（受限子问题固定 1）、b 分数
+    /// 自由；受限子问题内深限可达的整数最优点 (1,1)=5（全空间穷举真值亦为
+    /// 5：(1,1)=5 > (0,2)=4 > (1,0)=3）。
+    fn sub_mip_problem() -> Problem {
+        let mut p = Problem::new("sub-mip", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Integer).unwrap();
+        p.set_var_bounds(1, 0.0, 10.0).unwrap();
+        p.set_objective(vec![(0, 3.0), (1, 2.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 2.5)
+            .unwrap();
+        p
+    }
+
+    /// （方向 1）命中：受限子问题嵌套 DFS 在深限内找到 (1,1)=5；候选经
+    /// **独立**复核（界/整数性/逐行可行性/目标按 x 重算——不复用生产校验
+    /// 路径）全部通过；同构造双跑逐字节一致（确定性）。
+    #[test]
+    fn sub_mip_hits_restricted_optimum_validated_and_deterministic() {
+        let p = sub_mip_problem();
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let bnds = Bounds::from_problem(&p);
+        let sol = s.solve(&bnds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!((sol.objective - 6.0).abs() < 1e-9, "根 LP 应为 6");
+        assert!(
+            (sol.x[0] - 1.0).abs() < 1e-9 && (sol.x[1] - 1.5).abs() < 1e-9,
+            "根 LP 顶点 (1, 1.5)：a 整数性满足、b 分数"
+        );
+        let inc = sub_mip(&p, &mut s, &bnds, &sol.x, None, &t)
+            .expect("受限子问题深限内应命中 (1,1)=5");
+        assert!((inc.objective - 5.0).abs() < 1e-9);
+        // 独立有效性复核：界、整数性、逐行可行、目标按 x 重算。
+        assert_eq!(inc.values.len(), 2);
+        for (j, v) in inc.values.iter().enumerate() {
+            assert!(
+                *v >= bnds.lb[j] - 1e-9 && *v <= bnds.ub[j] + 1e-9,
+                "变量 j={j} 取值 {v} 越界"
+            );
+            if matches!(p.vars[j].var_type, VarType::Binary | VarType::Integer) {
+                assert!((v - v.round()).abs() < 1e-9, "整数变量 j={j} 须取整");
+            }
+        }
+        for c in &p.constraints {
+            let lhs = c.expr.eval(&inc.values);
+            let ok = match c.op {
+                RelOp::Le => lhs <= c.rhs + 1e-9,
+                RelOp::Ge => lhs >= c.rhs - 1e-9,
+                RelOp::Eq => (lhs - c.rhs).abs() <= 1e-9,
+            };
+            assert!(ok, "行可行性：lhs={lhs} rhs={}", c.rhs);
+        }
+        let obj = p.obj.eval(&inc.values) + p.obj_offset;
+        assert!((obj - inc.objective).abs() < 1e-9, "目标按 x 重算一致");
+        // 确定性：同构造新引擎双跑逐字节一致。
+        let mut s2 = Simplex::new(&p, t).unwrap();
+        let sol2 = s2.solve(&bnds);
+        let inc2 = sub_mip(&p, &mut s2, &bnds, &sol2.x, None, &t)
+            .expect("双跑第二次也应命中");
+        assert_eq!(inc.values, inc2.values);
+        assert_eq!(inc.objective, inc2.objective);
+    }
+
+    /// （方向 1）不命中：整数不可行带（x ∈ [2.2, 2.8] 内无整数点）——根 LP
+    /// 2.8 分数，下行（⌊2.8⌋=2 < lb）与上行（3 > ub）分支界均空 ⇒ None
+    ///（诚实 miss，不得伪造候选）。
+    #[test]
+    fn sub_mip_misses_on_integer_infeasible_band() {
+        let mut p = Problem::new("band", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 10.0).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Ge, 2.2).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 2.8).unwrap();
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let bnds = Bounds::from_problem(&p);
+        let sol = s.solve(&bnds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!((sol.x[0] - 2.8).abs() < 1e-9, "根 LP 应取上界 2.8");
+        assert!(sub_mip(&p, &mut s, &bnds, &sol.x, None, &t).is_none());
+    }
+
+    /// （方向 1）阈值剪枝：外部 incumbent 目标恰为受限子问题最优 5 ⇒ 唯一
+    /// 整数叶 (1,1) 的 LP 界 5 不严格更优 ⇒ 剪枝不采纳，返回 None；弱阈值
+    ///（4.0）⇒ 5 严格更优 ⇒ 命中（只在优于当前 incumbent 时采纳）。
+    #[test]
+    fn sub_mip_threshold_prunes_non_improving_candidates() {
+        let p = sub_mip_problem();
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let bnds = Bounds::from_problem(&p);
+        let sol = s.solve(&bnds);
+        assert!(
+            sub_mip(&p, &mut s, &bnds, &sol.x, Some(5.0), &t).is_none(),
+            "阈值 = 受限最优 ⇒ 无严格更优候选"
+        );
+        let mut s2 = Simplex::new(&p, t).unwrap();
+        let sol2 = s2.solve(&bnds);
+        let inc = sub_mip(&p, &mut s2, &bnds, &sol2.x, Some(4.0), &t)
+            .expect("弱阈值应命中 5");
+        assert!((inc.objective - 5.0).abs() < 1e-9);
+    }
+
+    /// （方向 1）根 LP 已全整：无受限邻域可搜 ⇒ 立即 None 且零引擎扰动
+    ///（迭代数不变——早退路径不 resolve，不扰动基）。
+    #[test]
+    fn sub_mip_skips_and_does_not_touch_engine_when_root_integral() {
+        let mut p = Problem::new("int-root", Sense::Maximize);
+        p.add_var("x", VarType::Integer).unwrap();
+        p.set_var_bounds(0, 0.0, 5.0).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 3.0).unwrap();
+        let t = tol();
+        let mut s = Simplex::new(&p, t).unwrap();
+        let bnds = Bounds::from_problem(&p);
+        let sol = s.solve(&bnds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!((sol.x[0] - 3.0).abs() < 1e-9, "根 LP 应全整 (3)");
+        let iters = s.iterations();
+        assert!(sub_mip(&p, &mut s, &bnds, &sol.x, None, &t).is_none());
+        assert_eq!(s.iterations(), iters, "全整早退不 resolve（零扰动）");
+    }
+
+    /// （方向 1）确定性上限语义（带参内核 [`sub_mip_with_caps`]）：深限 0
+    ///（只解析受限根、不分支）与节点上限 1（恰一次 resolve）在受限根取整
+    /// miss 的载体上都 ⇒ None 且引擎只多花一次 resolve 的迭代；深限放开到
+    /// 1（下行叶 (1,1) 可达）⇒ 命中 5——两上限各自独立封顶搜索。
+    #[test]
+    fn sub_mip_caps_bound_the_nested_search() {
+        let p = sub_mip_problem();
+        let t = tol();
+        // 受限界的构造与生产入口同口径（a=1 固定、b 自由）。
+        let mk = || {
+            let mut s = Simplex::new(&p, t).unwrap();
+            let bnds = Bounds::from_problem(&p);
+            let sol = s.solve(&bnds);
+            assert_eq!(sol.status, LpStatus::Optimal);
+            let mut sub = bnds.clone();
+            sub.lb[0] = 1.0;
+            sub.ub[0] = 1.0;
+            (s, bnds, sub)
+        };
+        // 深限 0：只解析受限根（round miss）⇒ None（受限根固定 a=1 后同顶点
+        //（1,1.5）仍最优，resolve 可零主元——迭代数不作断言）。
+        {
+            let (mut s, bnds, sub) = mk();
+            assert!(sub_mip_with_caps(&p, &mut s, &bnds, &sub, None, &t, 0, 1_000).is_none());
+        }
+        // 节点上限 1：同深限 0 的语义（预算只够根）⇒ None。
+        {
+            let (mut s, bnds, sub) = mk();
+            assert!(sub_mip_with_caps(&p, &mut s, &bnds, &sub, None, &t, 8, 1).is_none());
+        }
+        // 深限 1：下行叶 (1,1)=5 可达 ⇒ 命中。
+        {
+            let (mut s, bnds, sub) = mk();
+            let inc = sub_mip_with_caps(&p, &mut s, &bnds, &sub, None, &t, 1, 1_000)
+                .expect("深限 1 内下行叶应命中 (1,1)=5");
+            assert!((inc.objective - 5.0).abs() < 1e-9);
+        }
     }
 }

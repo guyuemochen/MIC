@@ -12,8 +12,9 @@
   `--lp-engine auto` 类自适应默认；大规模启用稀疏簿记、退化停滞的 Bland
   释放）+
   深度优先分支定界（类自适应分支默认）+ 根节点 GMI/聚合 MIR 割（循环预算
-  收紧 + 失败轮回滚）+ 取整/潜水/子集和 MITM 启发式 + 数值缩放与保守预
-  处理，可选多线程并行（本地亲和或全局 DFS 工作栈）与 MIP gap 提前终止。
+  收紧 + 失败轮回滚）+ 取整/潜水/根节点 sub-MIP（RENS）/子集和 MITM
+  启发式 + 数值缩放与保守预处理，可选多线程并行（本地亲和或全局 DFS
+  工作栈）与 MIP gap 提前终止。
   `threads = 1` 时求解完全确定，同一算例同一结果（`threads ≥ 2` 见
   「并行架构与确定性」一节）。
 - **规模目标**：以 ≤500 结构变量、≤2000 行的正确性为设计目标；2026-10
@@ -151,9 +152,10 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 
 ## 自适应启发式（--heuristic-mode）
 
-- **三档语义**：`off` ⇒ 关闭启发式（`BbOptions.heuristics = false`）；
-  `on` ⇒ 仅根节点启发式（取整复核 + dive，即历史版本行为）；
-  `auto`（默认）⇒ 根节点启发式 + **自适应**树节点 dive。
+- **三档语义**：`off` ⇒ 关闭启发式（`BbOptions.heuristics = false`，
+  根启发式整块不跑）；`on` ⇒ 仅根节点启发式（取整复核 + dive + 根节点
+  sub-MIP，S9 起）；`auto`（默认）⇒ 根节点启发式 + **自适应**树节点
+  dive。
 - **根预割启发式轮**（2026-10）：割循环可能把根 LP 顶点从「单断点近整数」
   推向「多分数中面」（界更紧但取整/潜水质量塌缩——hard-knapsack-12 割后
   顶点上 dive 仅得 453）。root_cuts 开启时在**割前顶点**先跑一轮
@@ -171,15 +173,17 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   最优**（目标与 `on`/`off` 一致）。
 - **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值 ⇒ `auto ≡ on`，CLI
   默认输出逐字节一致（由验收测试钉死）。
-- **hard-knapsack-12**：159 节点 / objective 523（P3 起的确定性基线——
-  hard-knapsack-12 为**单行**背包，类检测行数下限收到 2 后不再命中，默认
-  回落 MostFractional；目标 523 恒为已知最优；演进史 235→184（根
-  预割启发式轮使根 incumbent 453→511、剪枝提前）→159（默认规则复核回退
-  MostFractional）→196（R3 类自适应命中背包类翻 Pseudocost + 可靠性
-  冷启动）→159（P3 行数下限 1→2，单行类回落；`--branch-rule
-  pseudocost` 显式复现 196 旧径）。一般而言中途 dive 若改进 incumbent
-  可使节点数**变少**（剪枝更早），`auto` 的 nodes/迭代数不承诺与 `on`
-  相同（目标与终态恒同）。
+- **hard-knapsack-12**：93 节点 / objective 523（S9 方向 1 后的确定性
+  基线——hard-knapsack-12 为**单行**背包，类检测行数下限收到 2 后不再
+  命中，默认回落 MostFractional；目标 523 恒为已知最优；演进史 235→184
+  （根预割启发式轮使根 incumbent 453→511、剪枝提前）→159（默认规则
+  复核回退 MostFractional）→196（R3 类自适应命中背包类翻 Pseudocost +
+  可靠性冷启动）→159（P3 行数下限 1→2，单行类回落；`--branch-rule
+  pseudocost` 当时复现 196 旧径——该 196 为方向 1 前口径，未随 S9 重测）
+  →93（S9 方向 1 根节点 sub-MIP 启发式：根 incumbent 511→520、剪枝
+  提前；`--heuristic-mode off` 复现 159）。一般而言中途 dive 若改进
+  incumbent 可使节点数**变少**（剪枝更早），`auto` 的 nodes/迭代数不
+  承诺与 `on` 相同（目标与终态恒同）。
 
 ### 策略级自动降级（auto + --time-limit-secs）
 
@@ -630,6 +634,22 @@ r_i = 1/√(max|a|·min|a|)（行非零上）吸附最近 **2 的幂**后整行�
 ≤ 8 次固定最接近整数的非整变量后重解 LP）只供应 incumbent 以加速剪枝，
 不影响正确性；复核容差与 integrality 联动（见下）。
 
+`sub_mip`（根节点 sub-MIP，大规模轮 S9；RENS——Relaxation Enforced
+Neighborhood Search）：根 LP + 根割循环求解完成后、DFS 主循环之前，把
+根 LP 解中已取整数值的整数变量按该值固定（夹回原界）、分数整数变量保持
+自由，对受限子问题跑一次**封顶嵌套分支定界**——分支变量选择与主循环
+同规则（most-fractional + 最小下标破键、下行先探索），候选一律经
+`round_and_check` 原始界复核、仅严格优于当前 incumbent 才入池（只供应
+incumbent，不影响正确性与状态判定；嵌套 resolve 迭代数如实计入引擎
+统计）。确定性双上限：深限 8 + 节点上限 1000（每次 resolve 计 1 节点）
+——无墙钟读点、无随机数，启发式预算恒为确定性常数、随算例规模线性
+缩放（深限取值依据：HiGHS 同款深限 3 在 setcover 类标定中零产出被弃，
+见 `heuristics.rs` 常量注释与报告 S9 节）。经 `--heuristic-mode` 门控
+（off 不运行），`&mut dyn LpEngine` 双引擎同实现，顺序与并行
+（threads≥2）根阶段同口径。实测 setcover-300x600 同窗 1832→515/591
+节点（tableau/revised，最优 144 恒同）、setcover-400x800（120s 预算）
+gap 20.2%→6.3%。
+
 `subset_sum_mitm`（子集和 MITM，大规模轮 R5；CLI `--mitm=on|off`，默认
 on）是 LP 驱动启发式全部失败后的**最后手段**，在根阶段 dive 之后、仅
 incumbent 为空时启动。类门控（全部满足才启动，否则恒零成本跳过）：全变量
@@ -683,7 +703,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 159 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；`--branch-rule pseudocost` 下为 196；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 93 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降、`--heuristic-mode off` 复现 159；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 
@@ -730,11 +750,10 @@ milp/
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）
 │   ├── simplex.rs       # 两阶段有界单纯形 + 稀疏混合表格簿记（WP2，大规模轮 R1）
-│   ├── simplex_sparse.rs # 稀疏修正单纯形引擎（CSC + 稀疏 LU + ETA，大规模轮 S2-S5；--lp-engine revised/auto）
-│   ├── simplex_sparse.rs # 稀疏修正单纯形引擎 + LpEngine 双引擎接口与类自适应默认（大规模轮 S2–S4）
+│   ├── simplex_sparse.rs # 稀疏修正单纯形引擎（CSC + 稀疏 LU + ETA）+ LpEngine 双引擎接口与类自适应默认（大规模轮 S2–S6）
 │   ├── presolve.rs      # 保守预处理与还原（WP3）
 │   ├── cuts.rs          # 根节点 GMI/聚合 MIR 割（WP3，大规模轮 R2 扩展）
-│   ├── heuristics.rs    # 取整/潜水启发式 + 子集和 MITM（WP3，大规模轮 R5）
+│   ├── heuristics.rs    # 取整/潜水/根节点 sub-MIP 启发式 + 子集和 MITM（WP3，大规模轮 R5/S9）
 │   ├── scaling.rs       # 行列迭代几何均值数值缩放（大规模轮 R4）
 │   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口 + 类自适应分支默认（WP4）
 │   ├── solver.rs        # 统一编排（含缩放接线）、受控求解入口与安全网终检（WP4）

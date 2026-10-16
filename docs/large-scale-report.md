@@ -1099,7 +1099,7 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 
 ---
 
-## 8. 稀疏核心与批量接口（S1–S8，`d1b581f..3e89ec3` + S8 负结果留档，2026-10-14/15）
+## 8. 稀疏核心与批量接口（S1–S9，`d1b581f..3e89ec3` + S8 负结果留档 + S9 工作区待提交，2026-10-14/15–16）
 
 > 基线 `165f31a`（bench python 对比脚手架）之后五轮：S1 批量 addVars +
 > quicksum 修复（FFI/micpython 侧）、S2 稀疏修正单纯形核心 standalone、
@@ -1112,7 +1112,8 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 > S6（Devex 定价替代 Dantzig，`84038ea`）见 S6 节；S7（分离边界数值
 > 卫生闸：割清洁化 + 密度闸 + violation 复核，S6 定价评估引出的 Devex
 > 基毒割根因修复）在其后（`84038ea` 之后的**工作区待提交**改动，提交
-> 哈希以入库为准），见 S7 节。
+> 哈希以入库为准），见 S7 节。S9（根节点 sub-MIP 启发式，S8 节后差距
+> 分析的方向 1）同为其后的工作区待提交改动，见 S9 节。
 >
 > **旗标/默认值变化（本轮文档同步）**：新增 CLI `--lp-engine
 > auto|tableau|revised`（S3 接线、S4 默认翻 **auto**——表格规模 m×(n+m)
@@ -1121,7 +1122,9 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 > `quicksum` 就地累加修复（O(n²)→O(n)）、`addVars` 改单次 FFI 跨界。
 > S6 无新旗标/默认值变化——定价分档内生于 revised 引擎构造期（同
 > `ENGINE_AUTO_CELL_THRESHOLD` 同维），行为口径变化（迭代序列不再与
-> 稠密引擎逐次一致）见 S6 节。
+> 稠密引擎逐次一致）见 S6 节。S9 亦无新旗标/默认值变化——复用既有
+> `--heuristic-mode` 门控（off 档根启发式整块不跑，默认 auto 不变；
+> off 档输出与改动前逐字节一致），见 S9 节。
 
 ### S1（d1b581f）批量 addVars：FFI 批量符号 + micpython addVars 改走批量
 
@@ -1564,6 +1567,139 @@ setcover 类定价维持 S6 分档（阈下 Dantzig）。
 在回退后的空 diff 上以「实现缺失」阻断，工作流以「未完成」报告收场
 ——实际结局为负结果回退，由主控两次裁定（维持回退、不重新落地已判死
 的实现）驱动；本轮产出即本节证据记录。
+
+### S9（工作区待提交，提交哈希以入库为准）根节点 sub-MIP 启发式（RENS 型）：根阶段受限子问题封顶嵌套分支定界 —— S8 节后差距分析·方向 1
+
+**动机（S8 节后差距分析：差距主体在根阶段 incumbent 质量）**：S8 判死
+混合定价后，对 HiGHS 的剩余差距重新定位（证据 `milp/target/hsc_log.txt`，
+HiGHS 1.12.0 在 setcover-300x600 上 presolve 开/关双跑、结论一致）：
+HiGHS 全程 **1.7–1.8s / 7 节点**证完 optimal 144，且决胜动作全部在根
+阶段——根 LP（BestBound 131.4630548，与我们的根界同值）+ 随机取整 R
+（468）之后，**sub-MIP 启发式（日志源 L 行）在 0.9s 拿到最优 incumbent
+144**（Solving report：`Max sub-MIP depth 3`，heuristics 专属 LP 迭代
+4010–4544），此后 7 节点纯收尾；presolve 开路径另有「77.7% inactive
+integer columns, restarting」的模型瘦身（600 列 → 134 列）。同期我们
+（S8 HEAD `3e89ec3`）在同一算例上 **1832 节点 / 约 40s**（revised 同窗
+基线，见下表；auto 默认 tableau 路径 1867 节点）才证完同一最优——
+根界同源、割同源，差距主体不在对偶侧而在**根阶段 incumbent 质量**：
+我们把「找到 144」的成本摊进了整棵树。差距分析据此立项：方向 1 =
+根节点 sub-MIP 启发式（本轮落地）；对偶单纯形主循环、非活跃列
+restart、clique/cover 割族列为后续方向（见本节遗留）。
+
+**机制（`heuristics.rs` 新增 `sub_mip`，RENS：Relaxation Enforced
+Neighborhood Search）**：根 LP + 根割循环求解完成后、DFS 主循环之前，
+把根 LP 解中已取整数值的整数变量按该值固定（lb = ub = round 夹回原界）、
+分数整数变量保持自由，对受限子问题跑一次**封顶嵌套 DFS**——每节点
+resolve → 界剪枝 → `round_and_check` 复核提取候选 → 深限/整数性封闭 →
+分支（变量选择与主循环同规则：most-fractional + 最小下标破键、下行先
+探索；`select_branch_var` 提为 pub(crate) 与主循环共用同一分支序）。
+候选一律经 `round_and_check`（整数取整 + 逐行可行性核对 + 目标按 x
+重算）复核、仅严格优于当前 incumbent 才经 `maybe_update` 入池——启发式
+只供应 incumbent，**绝不影响状态判定**（Optimal/limit 语义、退出码、
+目标输出契约零改动）。接线：`branch_bound.rs` 顺序路径根启发式块
+（round → dive → sub-MIP → MITM，廉价 LP 驱动先于昂贵组合枚举、命中即
+免 MITM）+ 事后用真实根界 resolve 回取（对齐 dive 纪律；嵌套迭代如实
+计入 `stats.lp_iterations`、不计节点）；`parallel_bb.rs` 根阶段同口径
+接线（threads≥2 根阶段 incumbent 供应与 t1 一致）。开关走既有
+`--heuristic-mode` 门控（off ⇒ `BbOptions.heuristics = false` 整块不跑，
+auto/on ⇒ 运行，默认 auto）；引擎经 `&mut dyn LpEngine` 同时支持稠密
+tableau 与 revised 两引擎。`simplex.rs` / `simplex_sparse.rs` 零改动
+（git diff 验证）。
+
+**上限标定（深限未采 HiGHS 的 3，偏差与实测已落常量注释）**：封顶 =
+双确定性常量 `SUB_MIP_MAX_DEPTH` = 8（`heuristics.rs:221`）+
+`SUB_MIP_NODE_LIMIT` = 1000（`heuristics.rs:231`；每次 resolve 计 1
+节点，与 `BbOptions::node_limit` 同记账口径）。取值依据（release 实测，
+setcover-300x600 割后根、阈值 = dive 的 162，经带参内核
+`sub_mip_with_caps` 的临时标定探针取证、数字落档后探针已删）：① 深限
+3（HiGHS 同款，`hsc_log.txt` 明示）在 67 个分数列的受限子问题上**零
+产出**（≤15 节点探不到整数叶，260ms 白烧）——故未采用；② 深限 8 在
+节点预算内取得 145（最优 144，HiGHS 同窗 0.9s 得 144），且比深限放开
+（d=32/∞）**同质量更快**（3.3s vs 6.2–7.0s——受限 setcover 深链 LP 界
+爬升慢，深潜白烧）；③ 8 与仓库既有浅层深限惯例对齐（Pseudocost 探测 /
+W6 局部割同为 8）；④ 深限 8 下二叉子树至多 2^9−1 = 511 节点，节点
+上限 1000 是深限未来调整时的防御性兜底（当前永不触发）；⑤ 两上限保证
+启发式预算恒为确定性常数——无墙钟读点、无随机数，成本随算例规模线性
+缩放（实测 300x600 全预算 ≈3.3s、100x150 在 dive 已命中最优的阈值剪枝
+下 ≈6ms 自限）。
+
+**A/B 实测（同窗交错、threads=1，基线 = 改动前二进制；裁决比值 =
+min(新)/min(基线)，按未取整值计算）**：
+
+| 算例 | 配置 | 各次秒 | min | 节点 | 目标 |
+| --- | --- | --- | --- | --- | --- |
+| setcover-300x600 | 基线·revised | 41.665 / 40.193 / 41.617 | 40.19 | 1832 | 144 |
+| setcover-300x600 | 新·revised | 19.841 / 18.236 / 19.239 | 18.24 | 591 | 144 |
+| setcover-300x600 | 新·tableau | 29.284 / 27.438 / 27.935 | 27.44 | 515 | 144 |
+| setcover-100x150 | 基线·revised | 0.601 / 0.566 / 0.566 | 0.57 | 21 | 276 |
+| setcover-100x150 | 新·revised | 0.595 / 0.584 / 0.579 | 0.58 | 21 | 276 |
+| setcover-100x150 | 新·tableau | 0.269 / 0.256 / 0.261 | 0.26 | 9 | 276 |
+| mknap-5x300 | 基线·auto | 9.114 / 9.402 / 8.831 | 8.83 | 156491 | 4762 |
+| mknap-5x300 | 新·auto | 8.122 / 8.384 / 8.105 | 8.11 | 136077 | 4762 |
+| marketsplit-4x40 | 基线·auto | 9.825 / 9.855 / 9.302 | 9.30 | 854952 | 19 |
+| marketsplit-4x40 | 新·auto | 9.842 / 9.71 / 10.295 | 9.71 | 854952 | 19 |
+| knapsack-2000 | 基线·auto | 0.081 / 0.064 / 0.072 | 0.06 | 36 | 35328 |
+| knapsack-2000 | 新·auto | 0.059 / 0.059 / 0.061 | 0.06 | 34 | 35328 |
+| lp-sparse-4000x800 | 基线·revised | 5.795 | 5.79 | 1 | 5893.705757 |
+| lp-sparse-4000x800 | 新·revised | 5.629 | 5.63 | 1 | 5893.705757 |
+
+裁决：setcover-300x600 **0.45**（18.24/40.19，revised 对 revised，
+约 2.2×；auto 默认 tableau 路径的另窗前后对比 1867 节点/约 154s → 515
+节点/34–44s 为方向性参考——跨窗墙钟不可比口径）；mknap-5x300 0.92
+（节点 156491→136077，根 incumbent 增强使剪枝提前；实现者另窗 release
+观测 10.5→8.8s 同向）；marketsplit-4x40 1.04（节点 854952 两侧逐字节
+相同——sub-MIP 在该类 miss、MITM 供应不受影响，比值属窗口噪声带）；
+knapsack-2000 0.92（36→34 节点）；setcover-100x150 revised 侧 21→21
+不变，tableau 侧 9 节点（基线 tableau 口径 15，S7 期 gate 记录值——
+降幅部分来自根 incumbent 增强、部分来自 sub-MIP 记账性 resolve 后根
+热状态的确定性扰动，目标 276 恒同）；lp-sparse-4000x800 纯 LP 类零
+扰动（nodes 1）。**目标恒同对账：全表最优目标极差全部 0.00**（144 /
+276 / 4762 / 19 / 35328 / 5893.705757）。非同窗补充观测：setcover-
+400x800（`--time-limit-secs 120`，auto 降级终态）best 129→113、gap
+20.20%→6.30%、节点 461→240——120s 预算内证明进度的实质改善；knapsack-
+500 / milp-mixed-250i40c 持平或小优；setcover-60x100 根 LP 后全管线
+照常。**off 档门控证据：`--heuristic-mode off` 下基线与新的 CLI 输出
+diff 为空（逐字节一致）**；300x600 新·tableau 连跑 3 次节点均 515、
+目标均 144（threads=1 确定性）。
+
+**诚实性声明（如实）**：① 深限未采 HiGHS 参考值 3，理由与实测数字已
+落常量注释（3 在目标算例零产出）；② 我们的嵌套 B&B 无内部割（HiGHS
+sub-MIP 有），300x600 根阶段拿到 145 而非 144——最优仍由主树证明，
+sub-MIP 只供应 incumbent；③ setcover-100x150 tableau 侧节点变化部分
+来自 sub-MIP resolve 后恢复的根基扰动（确定性、目标值不变）；④
+node_limit=1 截断用例断言 LimitReached（诚实携带 best，不冒充 Optimal）。
+
+**测试与门禁**：实现者会话实测（任务书记录口径）：`cargo test
+--manifest-path milp/Cargo.toml --quiet`（debug 全套）lib **307 过 0 挂
+3 ignored**、acceptance 23 过、warm_cold_parity 13 过、doc 1 过；
+`--release --test acceptance` 13 过；`--release --lib` 307 过；planner
+（未动，防御性复跑）103+13+11 过。新增 6 个确定性单元/联调用例
+（`heuristics.rs:993` 起）：命中 + 独立复核、整数不可行带不命中、阈值
+剪枝（只在严格优于 incumbent 时采纳）、全整早退零扰动、上限语义
+（深限/节点上限各自封顶，经带参内核）、`--heuristic-mode` 门控联调
+（`branch_bound.rs:2786`）。钉值重钉 3 处（行为变化 = 根 incumbent
+增强，全部实测 + 注释记因）：① `branch_bound.rs` local_cuts 用例
+mknap-3x100 off_auto 2106→1725 节点、24072→21590 迭代；②
+small_tree_gate 用例 hard-knapsack-12 159→93（根 incumbent 511→520）；
+③ acceptance.rs CLI 钉 159→93（off 档对照仍 159，双跑逐字节）。文档
+收尾会话（本节落笔时）复跑：`cargo check --manifest-path milp/Cargo.toml
+--all-targets` 零警告（验证注释级改动编译）、`cargo test --lib`（debug）
+= **307 过 0 挂 3 ignored**（66.95s，与实现者口径一致）；集成与 release
+套件未在收尾会话复跑（本轮仅注释级改动，全套门禁为实现者会话口径）。
+
+**结论与遗留**：方向 1 **保留**——setcover 类同窗 0.45（约 2.2×）+
+400x800 预算内 gap 20.2%→6.3%、mknap 类 0.92、marketsplit/assign/
+knapsack 族零扰动、off 档逐字节不变、默认 auto 全管线生效；上限为
+确定性常数（无墙钟/无随机），预算随算例规模线性缩放。后续方向（S8
+节后差距分析遗留，按证据立项）：① 对偶单纯形主循环——节点 resolve
+由原始单纯形热启动换对偶单纯形，压缩 HiGHS 7 节点收尾背后的每节点
+成本；② 非活跃列 restart——对标 HiGHS「77.7% inactive integer
+columns, restarting」的模型瘦身（600 列砍到 134 列），与本轮「按根
+LP 解固定整数变量」机制互补；③ clique/cover 割族——根阶段组合割
+补强对偶界。文档同步（本轮收尾）：本节 + milp/README（能力列表、
+`--heuristic-mode` 三档语义、启发式小节、hard-knapsack-12 基线、仓库
+布局）+ 根 README milp 行能力列表；acceptance.rs 两处注释口径对齐
+（t1 基线 159→93、深限机制描述 3→8 勘误）。
 
 ### 8.6 lp-engine 双引擎架构（S2–S4、S6 落地后的形态）
 
