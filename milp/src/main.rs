@@ -545,6 +545,8 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             global_work_stack: config.work_stack == WorkStackCli::Global,
             work_stack_auto: config.work_stack == WorkStackCli::Auto,
             lp_engine: config.lp_engine,
+            // 方向 3 根 reduced-cost 固定（库默认 true；CLI 不设旗标）。
+            root_rc_fixing: true,
         },
         use_presolve: true,
         use_scaling: config.scaling,

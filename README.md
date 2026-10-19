@@ -4,7 +4,7 @@ MIC 是一组完全独立的 Rust 求解器 crate：**M**ixed-**I**nteger 精确
 
 | 目录 | 求解器 | 核心算法 | 验证状态 |
 |---|---|---|---|
-| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛**双引擎**（稠密表格 / 稀疏修正单纯形，`--lp-engine auto` 类自适应默认：表格 ≥10^6 格走稀疏引擎；另有大表稀疏簿记、退化停滞的 Bland 释放）+ 分支定界（类自适应分支）+ Gomory/聚合 MIR 割（循环预算回滚、树内局部割、分离边界数值卫生闸——清洁化/密度闸/violation 复核）+ 数值缩放 + 预处理/潜水/根节点 sub-MIP（RENS）/子集和 MITM 启发式；多线程（工作栈按类选栈/本地亲和/全局 DFS，2026-10 W1 起多线程默认按类选栈）、Gurobi 式进度日志、自适应启发式与策略级自动降级、t1 预算制确定性模式（`--determinism budget`） | 6 个已知最优解算例全部精确命中；CLI 端到端一致；大规模基准（bench gate/full 计时矩阵，18 算例 t1/t4）九轮逐轮 A/B 验证（八轮保留 + 一轮空集回退）并经两轮独立复核（无正确性阻断项）；稀疏核心与批量接口轮 S1–S5 全保留（lp-sparse-4000x800 默认引擎约 3.5×、目标恒同），micpython 与 CBC/HiGHS/SCIP 外部交叉验证 14 算例全对账；5000 变量背包与独立 DP 真值一致 |
+| [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛**双引擎**（稠密表格 / 稀疏修正单纯形，`--lp-engine auto` 类自适应默认：表格 ≥10^6 格走稀疏引擎；另有大表稀疏簿记、退化停滞的 Bland 释放）+ 分支定界（类自适应分支）+ Gomory/聚合 MIR 割（循环预算回滚、树内局部割、分离边界数值卫生闸——清洁化/密度闸/violation 复核）+ 数值缩放 + 预处理/潜水/根节点 sub-MIP（RENS）/子集和 MITM 启发式 + 根阶段 reduced-cost 变量固定（对偶界驱动、保最优，S12 起默认开启）；多线程（工作栈按类选栈/本地亲和/全局 DFS，2026-10 W1 起多线程默认按类选栈）、Gurobi 式进度日志、自适应启发式与策略级自动降级、t1 预算制确定性模式（`--determinism budget`） | 6 个已知最优解算例全部精确命中；CLI 端到端一致；大规模基准（bench gate/full 计时矩阵，18 算例 t1/t4）九轮逐轮 A/B 验证（八轮保留 + 一轮空集回退）并经两轮独立复核（无正确性阻断项）；稀疏核心与批量接口轮 S1–S5 全保留（lp-sparse-4000x800 默认引擎约 3.5×、目标恒同），micpython 与 CBC/HiGHS/SCIP 外部交叉验证 14 算例全对账；5000 变量背包与独立 DP 真值一致 |
 | [`planner/`](planner/README.md) | OptaPlanner 式**启发式**约束求解器 | HardSoftScore 硬软评分 + First/Best Fit 构造启发式 + 禁忌/模拟退火/迟到接受局部搜索 | 6 个算例的可行性（hard=0）、搜索改进、固定种子可复现全部满足 |
 
 ## 目录结构
@@ -31,7 +31,7 @@ MIC/
 │                       指派、混合 MILP、宽 LP、稀疏 LP 4000×800、setcover 400×800、marketsplit，共 22 个 .milp）
 ├── docs/
 │   ├── 交付报告.md      验证结果、评审发现（含证据与状态）、未覆盖范围
-│   └── large-scale-report.md   milp 大规模优化轮（R1–R8 保留 + R9 回退 + P1–P3 + W1–W7 + S1–S5 稀疏核心与批量接口）逐轮记录、实测数据与遗留问题
+│   └── large-scale-report.md   milp 大规模优化轮（R1–R9 + P1–P3 + W1–W7 + S1–S12 稀疏核心/启发式/对偶 resolve/reduced-cost 固定）逐轮记录、实测数据与遗留问题
 └── README.md           本文件
 ```
 

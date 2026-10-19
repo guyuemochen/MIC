@@ -862,13 +862,18 @@ fn acceptance_cli_heuristic_on_identical() {
     // S9 节），根 incumbent 511→520（首行进度实测）⇒ 剪枝
     // 提前，159→93（CLI 双跑逐字节实测；目标恒 523。--heuristic-mode off
     // 复现无 sub-MIP 行：159。））
+    // （方向 3 根阶段 reduced-cost 固定：根 incumbent 520 后按 LP 对偶界
+    // 固定非活跃整数列（数学保证只收紧可行域、不改变最优值），固定列被
+    // 定价跳过改变子节点退化基主元路径 ⇒ 树形 93→95（CLI 双跑逐字节
+    // 实测；目标恒 523。复现旧行 93：库侧 BbOptions.root_rc_fixing =
+    // false，CLI 不暴露该开关。））
     assert_eq!(
         stdout,
         "status = optimal
-nodes = 93
+nodes = 95
 objective = 523.000000
 ",
-        "hard-knapsack-12 --heuristic-mode on 输出（方向 1 后确定性基线）"
+        "hard-knapsack-12 --heuristic-mode on 输出（方向 3 后确定性基线）"
     );
 }
 

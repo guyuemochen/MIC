@@ -194,6 +194,29 @@ pub trait LpEngine {
     fn basis_columns(&self) -> &[usize];
     /// 当前全部非基列及其所贴界（不含人工列）。
     fn nonbasic_columns(&self) -> Vec<NonbasicCol>;
+    /// 只读对偶访问面：全部**结构列**的 Phase-2 检验数 rc_j（内部 min
+    /// 口径，长度 = num_structural）。根阶段 reduced-cost 变量固定
+    /// （branch_bound.rs 方向 3）消费；与定价（price）同源同公式**现算**，
+    /// 不是缓存值。
+    ///
+    /// 契约（两引擎同源语义）：
+    /// - **只读**：不改变任何求解状态（不触碰基/表格/因子化/迭代计数）。
+    /// - **时序**：仅在上一次 solve/resolve 返回 Optimal 后调用（与
+    ///   [`Self::tableau_row_terms`] 同款时序契约——稀疏引擎 add_row 后
+    ///   `factorization_dirty` 间隙内 LU 维度与基不符，BTRAN 结果无意义；
+    ///   根固定的调用点在根阶段末尾的记账性 resolve 之后，满足契约）。
+    /// - **同源公式**：稠密 = 表格现算
+    ///   `rc_j = cost_of(j,2) − Σ_i cb_i·(B⁻¹A)_ij`（即定价所用的
+    ///   rc_of）；稀疏 = 同公式的 BTRAN 形式（cb → y = B⁻ᵀ·cb →
+    ///   `rc_j = cost_of(j,2) − yᵀA_j`，CSC 列点积，与 price 的逐列
+    ///   现算同式）。最优基上非基贴下界列 rc ≥ −tol.optimality、贴上界
+    ///   列 rc ≤ +tol.optimality（内部 min 口径）。
+    /// - **行缩放不变**：rc = c_j − c_B B⁻¹ A_j 对正行缩放不变
+    ///   （B̂⁻¹·R = B⁻¹，R 为行缩放阵），引擎内部缩放口径下仍为原始系
+    ///   检验数，可与原始空间阈值直接比较。
+    /// - 值不跨 solve/resolve 复用（新鲜度规范与 compute_rc_batch 的
+    ///   入口重算纪律同源）。
+    fn structural_reduced_costs(&self) -> Vec<f64>;
     /// 列布局（结构列/松弛列含义；人工列不外露）。
     fn column_layout(&self) -> &ColumnLayout;
     /// 原始约束下标 → 表格行；近零行 None。
@@ -252,6 +275,9 @@ impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
     fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
         (**self).nonbasic_columns()
     }
+    fn structural_reduced_costs(&self) -> Vec<f64> {
+        (**self).structural_reduced_costs()
+    }
     fn column_layout(&self) -> &ColumnLayout {
         (**self).column_layout()
     }
@@ -301,6 +327,9 @@ impl LpEngine for Simplex {
     }
     fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
         self.nonbasic_columns()
+    }
+    fn structural_reduced_costs(&self) -> Vec<f64> {
+        self.structural_reduced_costs()
     }
     fn column_layout(&self) -> &ColumnLayout {
         self.column_layout()
@@ -1352,6 +1381,33 @@ impl SparseSimplex {
     /// 列布局（结构列/松弛列含义）。
     pub fn column_layout(&self) -> &ColumnLayout {
         &self.layout
+    }
+
+    /// 全部结构列的 Phase-2 检验数（只读访问面；契约与公式见 trait 方法
+    /// [`LpEngine::structural_reduced_costs`] 文档：cb → y = Bᵀ⁻¹cb（BTRAN）
+    /// → rc_j = cost_of(j,2) − yᵀA_j 按列现算，与 price 同源）。
+    pub fn structural_reduced_costs(&self) -> Vec<f64> {
+        // cb = 基列 Phase-2 成本（人工列 phase 2 成本为 0，退化基中基本
+        // 人工列不贡献对偶）。
+        let cb: Vec<f64> = self
+            .basis
+            .iter()
+            .map(|&j| self.cost_of(j, 2))
+            .collect();
+        let y = self.btran_full(&cb);
+        let n = self.num_structural;
+        let mut out = Vec::with_capacity(n);
+        for j in 0..n {
+            let mut dot = 0.0;
+            for k in self.col_start[j]..self.col_start[j + 1] {
+                let yr = y[self.col_rows[k]];
+                if yr != 0.0 {
+                    dot += yr * self.col_vals[k];
+                }
+            }
+            out.push(self.cost_of(j, 2) - dot);
+        }
+        out
     }
 
     /// 第 `row` 行的稀疏表格行：(非零 (列, e_rowᵀB⁻¹A_j) 项 [结构+松弛段、
@@ -3357,6 +3413,9 @@ impl LpEngine for SparseSimplex {
     }
     fn nonbasic_columns(&self) -> Vec<NonbasicCol> {
         self.nonbasic_columns()
+    }
+    fn structural_reduced_costs(&self) -> Vec<f64> {
+        self.structural_reduced_costs()
     }
     fn column_layout(&self) -> &ColumnLayout {
         self.column_layout()

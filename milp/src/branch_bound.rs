@@ -25,7 +25,11 @@
 //! 与启发式，直接按 (a)/(b)/(c) 终局；根 Optimal ⇒ （可选）cut_loop_recorded
 //! ⇒ （可选）round_and_check + dive + sub-MIP（方向 1：根 LP 解中已取整数
 //! 值的整数变量固定、分数变量自由的受限子问题封顶嵌套 DFS，见
-//! [`crate::heuristics::sub_mip`]）+ MITM ⇒ DFS 主循环。割循环的终态分流：
+//! [`crate::heuristics::sub_mip`]）+ MITM ⇒（可选，方向 3）**根阶段
+//! reduced-cost 变量固定**（[`apply_root_rc_fixing`]：已有 incumbent 时按
+//! LP 对偶界把整数列固定在所贴界上——只收紧可行域、不改变最优值，数学
+//! 论证与阈值口径见该函数文档；本轮不做树内再应用）⇒ DFS 主循环。割循环
+//! 的终态分流：
 //! Infeasible 保留整解终局（有效割切空根 LP 是整数不可行的合法证明）；
 //! **IterationLimit 不作终态**——丢弃全部根割、重建无割 Simplex 恢复 Optimal
 //! 根态后继续启发式与分支（无割松弛更松的界不剪任何整数可行解；重建前迭代
@@ -206,6 +210,14 @@ pub struct BbOptions {
     /// 否则 MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
     /// 优先）。默认 true。
     pub branch_rule_auto: bool,
+    /// 根阶段 reduced-cost 变量固定（方向 3）：根 LP + 根割循环 + 根启发式
+    /// 完成且已有 incumbent 时，按 LP 对偶界把「抬离所贴界必使目标劣于
+    /// incumbent」的整数变量固定在该界上（数学论证见
+    /// [`apply_root_rc_fixing`]——只收紧可行域，**不改变最优值**；固定列
+    /// 被定价跳过，无需引擎配合）。生效阈值与整数目标收紧（z̄ = ⌈z_lp−ε⌉）
+    /// 见 [`rc_fix_threshold`]。计数入 [`BbStats::rc_fixed`]。默认 true；
+    /// 树内再应用（首个分支 incumbent 触发）为后续扩展。
+    pub root_rc_fixing: bool,
 }
 
 impl Default for BbOptions {
@@ -233,6 +245,7 @@ impl Default for BbOptions {
             branch_rule_auto: true,
             local_cuts: true,
             lp_engine: LpEngineKind::default(),
+            root_rc_fixing: true,
         }
     }
 }
@@ -303,6 +316,9 @@ pub struct BbStats {
     pub cuts: u64,
     /// 累计耗时毫秒。
     pub time_ms: u64,
+    /// 根阶段 reduced-cost 固定的整数变量数（方向 3；0 = 未触发 / 无
+    /// incumbent / 阈值非正 / 无合格列）。纯记账，不参与状态判定。
+    pub rc_fixed: u64,
 }
 
 /// 分支定界结果。
@@ -850,6 +866,26 @@ fn sequential_bb(
         }
     }
 
+    // —— 根阶段 reduced-cost 变量固定（方向 3；整轮一次）——
+    // 前置条件在本点全部成立：根 LP + 根割循环 + 根启发式已完成、末次
+    // resolve 已回 Optimal 根态（上方各终局分流保证）、incumbent（若非
+    // None）为根启发式供应。固定写入 bounds 早于 trail 建立 ⇒ 全树有效
+    // 且绝不被 unwind；无 incumbent（根启发式 miss）⇒ 跳过本轮（树内再
+    // 应用为后续扩展）。
+    if opts.root_rc_fixing {
+        if let Some((inc_obj, _)) = incumbent.as_ref() {
+            stats.rc_fixed = apply_root_rc_fixing(
+                problem,
+                &int_vars,
+                &mut bounds,
+                &*simplex,
+                sol.objective,
+                *inc_obj,
+                obj_integral,
+            ) as u64;
+        }
+    }
+
     // —— DFS 主循环状态 ——
     let mut stack: Vec<Pending> = Vec::new();
     let mut trail: Vec<TrailEntry> = Vec::new();
@@ -1264,6 +1300,194 @@ fn integer_node_eval(integral: bool, check_passed: bool) -> NodeEval {
     } else {
         NodeEval::Branch
     }
+}
+
+// ===========================================================================
+// 根阶段 reduced-cost 变量固定（方向 3；顺序/并行两路同口径的唯一实现）
+// ===========================================================================
+
+/// z̄ 取整的数值余量 ε 的量级（生效值 = ε_SCALE·(1+|z_lp|)）：与
+/// [`effective_prune_bound`] 的整数 cutoff ε = 1e-6·(1+|z|) 同一容差口径，
+/// 吸收根 LP 目标的表格级数值噪声（REFRESH_INTERVAL 重算纪律下工作容差
+/// 1e-9 量级，ε 高出 3 个数量级；适用域 |z| ≲ 1e4，低于整数网格 6 个
+/// 数量级——同 [`effective_prune_bound`] 的 ε 工程余量论证）。
+const RC_FIX_CEIL_EPS_SCALE: f64 = 1e-6;
+/// 生效阈值的保守噪声余量量级（生效值 = ε_SCALE·(1+|z_lp|)）：镜像默认
+/// 剪枝容差 prune_abs = 1e-9 的量级，吸收检验数现算的舍入噪声。**只把
+/// 固定条件收紧（固定得更少），绝不放宽数学论证**（数学红线）。
+const RC_FIX_NOISE_EPS_SCALE: f64 = 1e-9;
+
+/// 原始口径目标值 → 内部 min 口径（Maximize 已取负；offset 平移）。
+/// 差值与整数网格均不受 offset 影响（整数目标门控要求 offset 为整数值）。
+fn to_min_space(sense: Sense, obj_offset: f64, v: f64) -> f64 {
+    match sense {
+        Sense::Maximize => obj_offset - v,
+        Sense::Minimize => v - obj_offset,
+    }
+}
+
+/// 固定阈值构造（纯函数，min 内部口径；pub(crate) 供并行侧与单元测试）：
+/// - 无 incumbent（z_inc = None）或任一目标值非有限 ⇒ `None`（跳过本轮
+///   固定）；
+/// - 整数目标门控 obj_integral（[`objective_is_integral`]：全目标系数为
+///   整数值、目标变量全为 Binary/Integer、offset 为整数值）⇒ 有效下界
+///   z̄ = ⌈z_lp − ε⌉（ε = 1e-6·(1+|z_lp|)，取整余量见
+///   [`RC_FIX_CEIL_EPS_SCALE`]）；否则 z̄ = z_lp；
+/// - τ = z_inc − z̄ ≤ 0 ⇒ `None`（incumbent 已被证到（收紧后的）松弛界，
+///   主循环 (d) 剪枝将关闭全树，无可固定对象）；
+/// - 返回生效阈值 τ_eff = τ + 1e-9·(1+|z_lp|)（保守噪声余量，见
+///   [`RC_FIX_NOISE_EPS_SCALE`]）。
+pub(crate) fn rc_fix_threshold(
+    sense: Sense,
+    obj_offset: f64,
+    z_lp: f64,
+    z_inc: Option<f64>,
+    obj_integral: bool,
+) -> Option<f64> {
+    let z_inc = z_inc?;
+    if !z_lp.is_finite() || !z_inc.is_finite() {
+        return None;
+    }
+    let z_lp_m = to_min_space(sense, obj_offset, z_lp);
+    let z_inc_m = to_min_space(sense, obj_offset, z_inc);
+    let z_bar = if obj_integral {
+        let eps = RC_FIX_CEIL_EPS_SCALE * (1.0 + z_lp_m.abs());
+        (z_lp_m - eps).ceil()
+    } else {
+        z_lp_m
+    };
+    let tau = z_inc_m - z_bar;
+    // tau 在入口 is_finite 检查下不可能为 NaN（finite − finite）；显式
+    // 防御非有限值一并跳过。
+    if !tau.is_finite() || tau <= 0.0 {
+        return None;
+    }
+    Some(tau + RC_FIX_NOISE_EPS_SCALE * (1.0 + z_lp_m.abs()))
+}
+
+/// 非基贴界状态（结构列）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NonbasicSide {
+    /// 非基贴下界（x̄_j = lb_j）。
+    AtLower,
+    /// 非基贴上界（x̄_j = ub_j）。
+    AtUpper,
+}
+
+/// 根阶段 reduced-cost 变量固定（方向 3 的可靠内核；顺序/并行两路同口径
+/// 共用本实现，杜绝分叉）。
+///
+/// 【数学红线：固定后至少保留一个最优解——完整论证】
+/// 记号（全部在 LP 引擎的内部 min 口径；Maximize 已取负；行缩放不改
+/// 检验数，见 [`LpEngine::structural_reduced_costs`] 契约）：根 LP（含根
+/// 割行——根割为有效割，不切任何整数可行解，故任何整数可行解都满足含
+/// 割 LP 的约束）最优解 x̄、目标 z_lp；对偶 y = c_B·B⁻¹、检验数
+/// rc_j = c_j − yᵀA_j（含割行的完整表格口径）。对**任一**满足该 LP 的
+/// x（A x = b 成立、l ≤ x ≤ u），LP 对偶界展开恒等式
+///     obj(x) = z_lp + Σ_k rc_k·(x_k − x̄_k)
+/// 成立（cᵀx = (yᵀA + rcᵀ)x = yᵀb + rcᵀx 且 z_lp = yᵀb + rcᵀx̄）。
+/// 最优基上：基列 rc_k = 0；非基贴下界列 rc_k ≥ 0（内部 min 口径）而
+/// x_k ≥ lb_k = x̄_k；非基贴上界列 rc_k ≤ 0 而 x_k ≤ ub_k = x̄_k——故除
+/// 被考察列 j 外每一项 rc_k·(x_k − x̄_k) ≥ 0（整数可行解 x 必在 LP 的
+/// 界内）。于是对非基贴下界的 j 与 x_j > lb_j 的 x：
+///     obj(x) ≥ z_lp + rc_j·(x_j − lb_j) ≥ z_lp + rc_j·δ_min，
+/// 其中 x_j 为整数变量、x_j > lb_j ⇒ x_j ≥ ⌊lb_j⌋+1，故
+/// δ_min = 1 − frac(lb_j)（界值整时恰为 1）。固定条件
+/// rc_j·δ_min ≥ τ_eff 下：
+/// - 非整数目标（z̄ = z_lp，τ = z_inc − z_lp）：obj(x) ≥ z_lp + τ_eff
+///   > z_inc，与「obj(x) < z_inc（比 incumbent 严格更优）」矛盾；
+/// - 整数目标（z̄ = ⌈z_lp − ε⌉，ε > 0 保证 z̄ < z_lp + 1 严格）：任何
+///   整数可行解 obj 落在整数网格上且 obj ≥ z_lp ⇒ obj ≥ z̄。若
+///   obj(x) < z_inc 则 obj(x) ≤ z_inc − 1（网格），而
+///   obj(x) ≥ z_lp + rc_j·δ_min ≥ z_lp + τ_eff ≥ z_lp + τ
+///   = z_inc − z̄ + z_lp > z_inc − 1（z̄ < z_lp + 1），矛盾。
+///
+/// 贴上界镜像同构（rc_j ≤ −τ_eff、δ_min = ub_j − (⌈ub_j⌉−1)）。两种
+/// 口径均得：**任何比 incumbent 严格更优的整数可行解必满足固定后的界**；
+/// 固定只是把 lb_j/ub_j 收到 x̄_j 所贴的界值（原可行域的子集）⇒ 限制后
+/// 搜索的最优值与原问题恒同（若无更优解，incumbent 本身即最优，终态与
+/// 取值不受固定影响；若有，最优解仍在限制域内被完备搜索找到）。任何
+/// 情况下不以启发式/容差放宽上述条件——ε_noise 只把条件收紧（固定更
+/// 少），ε 只使 z̄ 不越过真实整数下界。
+///
+/// 为什么只固定整数变量：连续变量抬离界可任意小（δ_min → 0），rc·δ 无
+/// 正下界，δ_min 论证不成立；本轮只动整数列（后续扩展可考虑对连续列的
+/// 区间收紧，需另行论证）。基变量（rc = 0 恒不满足阈值）与自由（双侧
+/// 非贴界）列不动；无内部整数的列（⌊lb⌋+1 > ub 或 ⌈ub⌉−1 < lb，含已
+/// 固定列 lb=ub）不动（保守，不依赖空集语义）。
+///
+/// 时序与作用：根 LP + 根割循环 + 根启发式全部完成、末次 resolve 已回
+/// Optimal 根态、且已有 incumbent（S9 sub-MIP 启发式等根启发式供应）之后、
+/// DFS 主循环之前调用一次；固定以界收紧形式直接写入 `bounds`（早于 trail
+/// 建立 ⇒ 全树有效且绝不被 unwind；引擎对 lb=ub 的固定列本就被定价跳
+/// 过，无需引擎配合）。本轮不做树内再应用（首个分支 incumbent 触发的
+/// 树内再固定为后续扩展）。确定性：int_vars 升序扫描、逐列决策为纯
+/// 函数；无墙钟、无随机、无并列选择。
+pub(crate) fn apply_root_rc_fixing(
+    problem: &Problem,
+    int_vars: &[usize],
+    bounds: &mut Bounds,
+    engine: &dyn LpEngine,
+    z_lp: f64,
+    z_inc: f64,
+    obj_integral: bool,
+) -> usize {
+    let Some(tau_eff) =
+        rc_fix_threshold(problem.sense, problem.obj_offset, z_lp, Some(z_inc), obj_integral)
+    else {
+        return 0; // 无 incumbent / 非有限值 / τ ≤ 0 ⇒ 跳过
+    };
+    let rc = engine.structural_reduced_costs();
+    let n_struct = engine.column_layout().num_structural;
+    // 非基贴界状态表（0 = 基列/未知；1 = 非基贴下界；2 = 非基贴上界）。
+    // nonbasic_columns 含松弛列（col ≥ n_struct），在此甄别掉。
+    let mut side = vec![0u8; n_struct];
+    for col in &engine.nonbasic_columns() {
+        if col.col < n_struct {
+            side[col.col] = if col.at_upper { 2 } else { 1 };
+        }
+    }
+    let mut fixed = 0usize;
+    for &j in int_vars {
+        if j >= n_struct || j >= rc.len() {
+            continue; // 防御：下标越界不碰
+        }
+        let (lb, ub) = (bounds.lb[j], bounds.ub[j]);
+        if !lb.is_finite() || !ub.is_finite() {
+            continue; // 非基贴界值必有限；无穷界为防御性跳过
+        }
+        let state = match side[j] {
+            1 => NonbasicSide::AtLower,
+            2 => NonbasicSide::AtUpper,
+            _ => continue, // 基列 / 状态未知 ⇒ 不动
+        };
+        match state {
+            NonbasicSide::AtLower => {
+                // x̄_j = lb_j；最小整数抬离量 δ_min = (⌊lb⌋+1) − lb。
+                // lb/ub 已过 is_finite 检查 ⇒ next_int 有限，比较无 NaN。
+                let next_int = lb.floor() + 1.0;
+                if next_int > ub {
+                    continue; // 界内无更大整数（含已固定列）⇒ 保守跳过
+                }
+                if rc[j] * (next_int - lb) >= tau_eff {
+                    bounds.ub[j] = lb; // lb_j = ub_j = 下界值（只收紧 ub）
+                    fixed += 1;
+                }
+            }
+            NonbasicSide::AtUpper => {
+                // x̄_j = ub_j；最小整数抬离量 δ_min = ub − (⌈ub⌉−1)。
+                let prev_int = ub.ceil() - 1.0;
+                if prev_int < lb {
+                    continue; // 界内无更小整数（含已固定列）⇒ 保守跳过
+                }
+                if -rc[j] * (ub - prev_int) >= tau_eff {
+                    bounds.lb[j] = ub; // lb_j = ub_j = 上界值（只收紧 lb）
+                    fixed += 1;
+                }
+            }
+        }
+    }
+    fixed
 }
 
 /// (d) 有效剪枝界合成（pub(crate)：顺序/并行三调用点同口径的唯一实现，
@@ -2524,8 +2748,10 @@ mod tests {
         // 供应更强根 incumbent ⇒ 剪枝提前，2,106→1,725 节点 / 24,072→
         // 21,590 迭代（实测钉；目标恒 2331 不变。中间口径：深限 3 时
         // 1,928/23,050，深限 8 终档节点再降、迭代含 sub-MIP 嵌套 resolve。））
-        assert_eq!(off_auto.stats.nodes, 1725, "adaptive-on off-cut = 方向1终档 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 21590);
+        // （方向 3 根 reduced-cost 固定：根 incumbent 已达收紧界邻域 ⇒
+        // 非活跃整数列按对偶界固定，1,725→1,596 节点；目标恒 2331。）
+        assert_eq!(off_auto.stats.nodes, 1596, "adaptive-on off-cut = 方向3终档 raw 基线");
+        assert_eq!(off_auto.stats.lp_iterations, 18883);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
@@ -2562,6 +2788,7 @@ mod tests {
         assert_eq!(o.pc_reliability_probes, 8);
         assert!(!o.global_work_stack);
         assert!(o.work_stack_auto, "W1：多线程默认按类选栈（auto）");
+        assert!(o.root_rc_fixing, "方向 3：根 reduced-cost 固定默认开启");
     }
 
     // ===================== W1：小算例调度门 ======================
@@ -2620,10 +2847,11 @@ mod tests {
     }
 
     /// （W1）门命中 ⇒ threads=4 输出与 threads=1 **逐字节相同**（同一顺序
-    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 93 节点
-    ///（方向 1 后口径：根节点 sub-MIP 启发式供应更强根 incumbent ⇒ 剪枝
-    /// 提前，P3 口径 159 → 93，双跑逐字节实测；目标恒 523）< 512 探测预算
-    /// ⇒ 门命中。行为字段全比：status/objective/values/nodes/lp_iterations/
+    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 95 节点
+    ///（方向 1 后口径 93；方向 3 根 reduced-cost 固定后：固定列被定价跳过
+    /// 改变子节点退化基的主元路径 ⇒ 树形 93→95，目标恒 523 不变——固定只
+    /// 收紧可行域，节点数非单调是预期行为）< 512 探测预算 ⇒ 门命中。行为
+    /// 字段全比：status/objective/values/nodes/lp_iterations/
     /// cuts/bound/gap_terminated/auto_degraded。
     #[test]
     fn small_tree_gate_hit_returns_t1_identical_result() {
@@ -2655,7 +2883,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(t1.status, SolveStatus::Optimal);
-        assert_eq!(t1.stats.nodes, 93, "方向 1 后 t1 节点数（P3 口径 159 → 93）");
+        assert_eq!(t1.stats.nodes, 95, "方向 3 后 t1 节点数（方向 1 口径 93 → 95）");
         let t4 = branch_and_bound_controlled(
             &p,
             &BbOptions::default(),
@@ -2839,6 +3067,271 @@ mod tests {
             assert_eq!(r.status, SolveStatus::Optimal);
             assert_close(r.best_objective.unwrap(), 5.0);
         }
+    }
+
+    // ===================== 方向 3：根阶段 reduced-cost 固定 ======================
+
+    /// 固定触发载体（手工推导钉死）：max 10a + 3b s.t. a+b ≤ 1.5（全
+    /// Binary，整数目标）。根 LP 最优 a=1（非基贴上界）、b=0.5（基），
+    /// z_lp = 11.5；内部 min 检验数 rc(a) = −10 − (−3)·1 = −7（行对偶
+    /// y = c_b = −3）。整数最优 10（a=1,b=0）。dive 供应 incumbent 10 ⇒
+    /// 整数目标收紧 z̄ = ⌈−11.5 − ε⌉ = −11、τ = −10 − (−11) = 1，
+    /// |rc(a)|·δ_min = 7·1 ≥ τ_eff ⇒ a 固定在上界 1（b 为基列不动）。
+    /// 关根割：GMI 在本载体上会把 z_lp 压到 10（τ ≤ 0 不触发），固定
+    /// 路径的确定性分析需要无割根态。
+    fn rc_fix_fire_problem() -> Problem {
+        let mut p = Problem::new("rc-fix-fire", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 10.0), (1, 3.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.5)
+            .unwrap();
+        p
+    }
+
+    /// （方向 3 ①）开/关固定在已知最优算例上目标恒同：触发载体（无割，
+    /// rc_fixed on=1 / off=0）与 mknap-3x100（默认全开口径，bench .opt
+    /// 独立真值 2331）两档均 Optimal 且目标逐位一致——固定只收紧可行域，
+    /// 不改变最优值（数学红线）。
+    #[test]
+    fn root_rc_fixing_toggle_preserves_optimum() {
+        let p = rc_fix_fire_problem();
+        let on = branch_and_bound(&p, &BbOptions::default(), tol()).unwrap();
+        let off = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_rc_fixing: false,
+                ..BbOptions::default()
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(on.status, SolveStatus::Optimal);
+        assert_eq!(off.status, SolveStatus::Optimal);
+        assert_close(on.best_objective.unwrap(), 10.0);
+        assert_close(off.best_objective.unwrap(), 10.0);
+        assert_eq!(
+            on.best_values.unwrap(),
+            off.best_values.unwrap(),
+            "最优解取值恒同（并列最优时同破键序）"
+        );
+        // 触发载体（无割）上直接钉触发/关闭计数。
+        let base = BbOptions {
+            root_cuts: false,
+            ..BbOptions::default()
+        };
+        let fire_on = branch_and_bound(&p, &base, tol()).unwrap();
+        let fire_off = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_rc_fixing: false,
+                ..base
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(fire_on.stats.rc_fixed, 1, "无割根态恰固定 a 列");
+        assert_eq!(fire_off.stats.rc_fixed, 0);
+        assert_close(fire_on.best_objective.unwrap(), 10.0);
+        assert_close(fire_off.best_objective.unwrap(), 10.0);
+        // 大算例（默认口径：根割 + 全启发式 + 局部割全开）：目标恒 2331。
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let big_on = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        let big_off = branch_and_bound(
+            &problem,
+            &BbOptions {
+                root_rc_fixing: false,
+                ..BbOptions::default()
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(big_on.status, SolveStatus::Optimal);
+        assert_eq!(big_off.status, SolveStatus::Optimal);
+        assert_close(big_on.best_objective.unwrap(), 2331.0);
+        assert_close(big_off.best_objective.unwrap(), 2331.0);
+        // 默认口径（根割 + 全启发式）下机制在真实 bench 算例上确实触发
+        //（节点 1725 → 1596 的树收缩来源）。
+        assert!(
+            big_on.stats.rc_fixed > 0,
+            "mknap-3x100 默认口径应固定非活跃整数列（实际 {}）",
+            big_on.stats.rc_fixed
+        );
+        assert_eq!(big_off.stats.rc_fixed, 0);
+    }
+
+    /// （方向 3 ②）rc 在阈值之下的列必须不被固定（反例）：同一根基上，
+    /// incumbent = 10 ⇒ τ_eff ≈ 1 < 7 = |rc(a)|·δ_min ⇒ a 固定；incumbent
+    /// = 4（更差 ⇒ 缺口更大）⇒ τ_eff = 7 + 1e-9·12.5 > 7 ⇒ **同一列的
+    /// rc 不再过阈，不得固定**——固定条件随缺口收紧而单调收紧，绝不以
+    /// 「rc 显著非零」为由放宽。
+    #[test]
+    fn root_rc_fixing_respects_threshold_counterexample() {
+        let p = rc_fix_fire_problem();
+        let mut simplex = crate::simplex::Simplex::new(&p, tol()).unwrap();
+        let bounds = crate::simplex::Bounds::from_problem(&p);
+        let sol = simplex.solve(&bounds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert_close(sol.objective, 11.5);
+        let int_vars = p.integer_vars();
+        let obj_integral = objective_is_integral(&p);
+        assert!(obj_integral, "全 Binary + 整系数 + 零 offset ⇒ 门控命中");
+        // incumbent 10：τ_eff = 1 + 1e-9·(1+11.5)，|rc(a)|·1 = 7 ⇒ 固定。
+        let mut b1 = bounds.clone();
+        assert_eq!(
+            apply_root_rc_fixing(&p, &int_vars, &mut b1, &simplex, 11.5, 10.0, obj_integral),
+            1
+        );
+        assert_eq!(b1.lb[0], 1.0, "a 固定在上界值");
+        assert_eq!(b1.ub[0], 1.0);
+        // incumbent 4：τ_eff = 7 + 1.25e-8 > 7 = rc·δ ⇒ 同一列不得固定。
+        let mut b2 = bounds.clone();
+        assert_eq!(
+            apply_root_rc_fixing(&p, &int_vars, &mut b2, &simplex, 11.5, 4.0, obj_integral),
+            0,
+            "rc·δ = 7 < τ_eff = 7 + 1.25e-8：阈值之下必须不固定"
+        );
+        assert_eq!(b2.lb[0], 0.0);
+        assert_eq!(b2.ub[0], 1.0);
+        // 连续列不入固定面（本载体无连续列，由 ③/⑤ 的计数与 δ 论证覆盖）。
+    }
+
+    /// （方向 3 ③）目标整数性收紧的 ceil 边界（rc_fix_threshold 纯函数）：
+    /// - 门控 z̄ = ⌈z_lp − ε⌉（ε = 1e-6·(1+|z_lp|)）吸收**向上**噪声——
+    ///   z_lp = 10.0000001（真值 10 + 表格噪声）⇒ z̄ = 10（无 ε 会误取 11，
+    ///   阈值被过度收紧 3→2，论证风险）；
+    /// - 门控收紧阈值：z_lp = 9.5 ⇒ z̄ = 10，τ = z_inc − 10（非门控
+    ///   τ = z_inc − 9.5，恒更宽松）；
+    /// - τ ≤ 0 ⇒ None（incumbent 已被证到收紧界）；
+    /// - Max 镜像经 to_min 与 Min 同值。
+    #[test]
+    fn rc_fix_threshold_integral_ceil_boundaries() {
+        // 门控收紧：z̄ = ⌈9.5 − ε⌉ = 10 ⇒ τ = 0.5。
+        let t = rc_fix_threshold(Sense::Minimize, 0.0, 9.5, Some(10.5), true).unwrap();
+        assert!((t - 0.5).abs() < 1e-7, "τ ≈ 0.5（实际 {t}）");
+        // 非门控：z̄ = z_lp = 9.5 ⇒ τ = 1.0（收紧只对门控命中生效）。
+        let t0 = rc_fix_threshold(Sense::Minimize, 0.0, 9.5, Some(10.5), false).unwrap();
+        assert!((t0 - 1.0).abs() < 1e-7, "τ ≈ 1.0（实际 {t0}）");
+        // ceil 吸收向上噪声：真值 10 + 1e-7 噪声 ⇒ z̄ = 10（不是 11）⇒ τ = 3。
+        let tn = rc_fix_threshold(Sense::Minimize, 0.0, 10.0000001, Some(13.0), true).unwrap();
+        assert!(
+            (tn - 3.0).abs() < 1e-6,
+            "噪声被 ε 吸收：τ ≈ 3（实际 {tn}；若 z̄ 误取 11 则 τ = 2）"
+        );
+        // 恰好整数的 z_lp：z̄ = 10（不减不增）。
+        let ti = rc_fix_threshold(Sense::Minimize, 0.0, 10.0, Some(13.0), true).unwrap();
+        assert!((ti - 3.0).abs() < 1e-7, "整数 z_lp ⇒ τ = z_inc − z_lp（实际 {ti}）");
+        // τ = 0 ⇒ None（incumbent 被证到收紧界）。
+        assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, Some(10.0), true).is_none());
+        assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, Some(9.7), true).is_none());
+        // 非门控 τ = 0.2 > 0 仍可固定。
+        assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, Some(9.7), false).is_some());
+        // Max 镜像：内部 min 取负后与 Min 同构（z_lp_m = −11.5、z_inc_m = −10
+        // ⇔ Min 的 (−11.5, −10)）。
+        let tm = rc_fix_threshold(Sense::Maximize, 0.0, 11.5, Some(10.0), true).unwrap();
+        let tmin = rc_fix_threshold(Sense::Minimize, 0.0, -11.5, Some(-10.0), true).unwrap();
+        assert!((tm - tmin).abs() < 1e-12, "Max/Min 镜像同值（{tm} vs {tmin}）");
+        assert!((tm - 1.0).abs() < 1e-7, "镜像 τ ≈ 1（实际 {tm}）");
+        // 非整数 offset 不进门控但 min 换算仍平移不变（差值口径）。
+        let t_off = rc_fix_threshold(Sense::Maximize, 7.0, 11.5, Some(10.0), false).unwrap();
+        assert!((t_off - 1.5).abs() < 1e-7, "offset 在差值中消去（实际 {t_off}）");
+    }
+
+    /// （方向 3 ④）无 incumbent ⇒ 跳过本轮固定：纯函数 z_inc = None ⇒
+    /// None；端到端：关启发式（根阶段无 incumbent 来源）即便选项开启也
+    /// 零固定、零行为影响（搜索自身仍完备证到最优 10）。
+    #[test]
+    fn root_rc_fixing_skips_without_incumbent() {
+        assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, None, true).is_none());
+        assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, None, false).is_none());
+        let p = rc_fix_fire_problem();
+        // heuristics = false ⇒ 根阶段无 incumbent ⇒ rc_fixed = 0（选项开）。
+        let opts = BbOptions {
+            root_cuts: false,
+            heuristics: false,
+            root_rc_fixing: true,
+            ..BbOptions::default()
+        };
+        let r = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(r.status, SolveStatus::Optimal, "无 incumbent 路径自身完备");
+        assert_close(r.best_objective.unwrap(), 10.0);
+        assert_eq!(r.stats.rc_fixed, 0, "无 incumbent ⇒ 跳过固定");
+        // off 路径与「选项关」逐字节一致（跳过 = 不触碰任何状态）。
+        let r_off = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_rc_fixing: false,
+                ..opts
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(r.stats.nodes, r_off.stats.nodes);
+        assert_eq!(r.stats.lp_iterations, r_off.stats.lp_iterations);
+    }
+
+    /// （方向 3 ⑤）固定计数访问器与确定性：触发载体（无割）双跑全部行为
+    /// 字段逐字节相同（含 rc_fixed = 1）；stats 默认 rc_fixed = 0；选项
+    /// 默认开启。并行侧（threads=4）经调度门同一顺序代码路径同口径（小
+    /// 树载体门命中 ⇒ t4 与 t1 逐字节一致，见 W1 既有测试模式）。
+    #[test]
+    fn root_rc_fixing_count_and_determinism() {
+        assert_eq!(BbStats::default().rc_fixed, 0);
+        assert!(BbOptions::default().root_rc_fixing);
+        let p = rc_fix_fire_problem();
+        let opts = BbOptions {
+            root_cuts: false,
+            ..BbOptions::default()
+        };
+        let a = branch_and_bound(&p, &opts, tol()).unwrap();
+        let b = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(a.stats.rc_fixed, 1, "恰固定 a 一列（b 为基列不动）");
+        // 双跑逐字节（除计时字段 time_ms）。
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.best_objective, b.best_objective);
+        assert_eq!(a.best_values, b.best_values);
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.stats.cuts, b.stats.cuts);
+        assert_eq!(a.stats.rc_fixed, b.stats.rc_fixed);
+        assert_eq!(a.bound, b.bound);
+        assert_eq!(a.gap_terminated, b.gap_terminated);
+        // threads=4：小树门命中 ⇒ 与 t1 同代码路径，行为字段一致（含计数）。
+        let t4 = branch_and_bound_controlled(
+            &p,
+            &opts,
+            &SearchControl {
+                threads: 4,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t4.status, a.status);
+        assert_eq!(t4.best_objective, a.best_objective);
+        assert_eq!(t4.best_values, a.best_values);
+        assert_eq!(t4.stats.rc_fixed, a.stats.rc_fixed, "并行侧固定计数同口径");
+        // 修正（稀疏）引擎同一内核：显式 revised 走 SparseSimplex 的
+        // BTRAN 形式访问面，触发计数与目标与表格引擎一致（两引擎同源
+        // 语义的端到端锚）。
+        let rev = branch_and_bound(
+            &p,
+            &BbOptions {
+                lp_engine: LpEngineKind::Revised,
+                ..opts
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(rev.status, SolveStatus::Optimal);
+        assert_close(rev.best_objective.unwrap(), 10.0);
+        assert_eq!(rev.stats.rc_fixed, 1, "稀疏引擎访问面同源：恰固定 a 列");
     }
 
     /// 节点分类纯函数：(Unbounded, is_root=false) → FailUnbounded（整树终止

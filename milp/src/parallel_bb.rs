@@ -784,7 +784,10 @@ pub fn parallel_branch_and_bound(
     // Simplex（预割轮 / IterationLimit 回滚）同款重注入。
     let time_deadline = crate::branch_bound::bb_time_deadline(&start, opts);
     simplex.set_time_deadline(time_deadline);
-    let bounds = Bounds::from_problem(problem);
+    // 根阶段界（根 reduced-cost 固定直接写入；branch_children 的全部
+    // PoolNode 界快照自此携带固定界——worker 只在节点界上分支/resolve，
+    // 不再回到原始界，与顺序侧 trail 外固定同口径）。
+    let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
     let mut incumbent: Option<(f64, Vec<f64>)> = None;
     // 根阶段施加的割清单（terms, rhs）——worker 按序 add_row 重放。
@@ -959,6 +962,26 @@ pub fn parallel_branch_and_bound(
             sol = simplex.resolve(&bounds);
             if let Some(status) = root_terminal_status(sol.status) {
                 terminal = Some(status);
+            }
+        }
+
+        // —— 根阶段 reduced-cost 变量固定（方向 3；与顺序侧同实现同口径，
+        //    threads≥2 与 t1 一致）——
+        // 前置条件在本点全部成立：根 LP + 根割循环 + 根启发式完成、末次
+        // resolve 已回 Optimal 根态、incumbent（若非 None）为根启发式供应。
+        // 固定写入根 bounds ⇒ branch_children 的界快照携带固定界；无
+        // incumbent ⇒ 跳过本轮（树内再应用为后续扩展）。
+        if terminal.is_none() && opts.root_rc_fixing {
+            if let Some((inc_obj, _)) = incumbent.as_ref() {
+                stats.rc_fixed = crate::branch_bound::apply_root_rc_fixing(
+                    problem,
+                    &int_vars,
+                    &mut bounds,
+                    &simplex,
+                    sol.objective,
+                    *inc_obj,
+                    obj_integral,
+                ) as u64;
             }
         }
     }

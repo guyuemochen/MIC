@@ -1090,6 +1090,14 @@ impl Simplex {
         &self.layout
     }
 
+    /// 全部结构列的 Phase-2 检验数（只读访问面；契约与公式见
+    /// `simplex_sparse::LpEngine::structural_reduced_costs` 文档——本实现
+    /// 即 [`Self::rc_of`] 的批量导出：cost_of(j,2) − Σ_i cb_i·(B⁻¹A)_ij
+    /// 表格现算，与定价同源，只在 Optimal 态调用）。
+    pub fn structural_reduced_costs(&self) -> Vec<f64> {
+        (0..self.num_structural).map(|j| self.rc_of(j)).collect()
+    }
+
     /// 表格行数（含割行，不含被剔除的近零行）。
     pub fn num_rows(&self) -> usize {
         self.basis.len()
