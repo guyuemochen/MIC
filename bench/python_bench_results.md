@@ -4,20 +4,20 @@
 
 | 算例 | micpython | highs | scip | 目标一致 |
 |---|---|---|---|---|
-| knapsack-200 | 0.002/optimal | 0.03/optimal | 0.003/optimal | ✓ |
-| knapsack-500 | 0.02/optimal | 0.054/optimal | 0.009/optimal | ✓ |
-| knapsack-2000 | 0.011/optimal | 0.121/optimal | 0.158/optimal | ✓ |
-| knapsack-5000 | 0.026/optimal | 0.395/optimal | 0.042/optimal | △ |
-| mknap-3x100 | 0.082/optimal | 0.655/optimal | 0.219/optimal | ✓ |
-| mknap-5x300 | 13.655/optimal | 2.853/optimal | 2.091/optimal | ✓ |
-| setcover-100x150 | 0.282/optimal | 0.206/optimal | 0.248/optimal | ✓ |
-| setcover-300x600 | 70.348/optimal | 1.714/optimal | 1.698/optimal | ✓ |
-| milp-mixed-250i40c | 0.012/optimal | 0.46/optimal | 0.295/optimal | ✓ |
-| marketsplit-4x30 | 0.01/optimal | 7.01/optimal | 5.915/optimal | ✓ |
-| marketsplit-4x40 | 9.078/optimal | 60.007/limit | 59.817/status6 | ✓ |
-| assign-40x40 | 0.077/optimal | 0.023/optimal | 0.022/optimal | ✓ |
-| lp-wide-200x300 | 0.009/optimal | 0.026/optimal | 0.106/optimal | ✓ |
-| lp-sparse-4000x800 | 9.323/optimal | 0.784/optimal | 1.872/optimal | ✓ |
+| knapsack-200 | 0.002/optimal | 0.034/optimal | 0.012/optimal | ✓ |
+| knapsack-500 | 0.011/optimal | 0.054/optimal | 0.011/optimal | ✓ |
+| knapsack-2000 | 0.011/optimal | 0.128/optimal | 0.127/optimal | ✓ |
+| knapsack-5000 | 0.02/optimal | 0.361/optimal | 0.044/optimal | △ |
+| mknap-3x100 | 0.077/optimal | 0.624/optimal | 0.205/optimal | ✓ |
+| mknap-5x300 | 7.093/optimal | 2.954/optimal | 2.113/optimal | ✓ |
+| setcover-100x150 | 0.228/optimal | 0.212/optimal | 0.248/optimal | ✓ |
+| setcover-300x600 | 21.95/optimal | 1.707/optimal | 1.715/optimal | ✓ |
+| milp-mixed-250i40c | 0.006/optimal | 0.462/optimal | 0.284/optimal | ✓ |
+| marketsplit-4x30 | 0.01/optimal | 6.135/optimal | 5.281/optimal | ✓ |
+| marketsplit-4x40 | 8.488/optimal | 60.01/limit | 59.528/status6 | ✓ |
+| assign-40x40 | 0.08/optimal | 0.024/optimal | 0.021/optimal | ✓ |
+| lp-wide-200x300 | 0.008/optimal | 0.027/optimal | 0.124/optimal | ✓ |
+| lp-sparse-4000x800 | 5.291/optimal | 0.887/optimal | 1.912/optimal | ✓ |
 
 ## MISMATCH（目标不一致，需人工核查）
 

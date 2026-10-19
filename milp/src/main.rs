@@ -2,11 +2,13 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
-//!   逐行 `name = value`），**最后一行精确为** `objective = <format_objective(v)>`；
+//!   另出固定机制统计三行 `rc_fixed` / `rc_reapplies` / `rc_refixed`
+//!   与逐行 `name = value`），**最后一行精确为**
+//!   `objective = <format_objective(v)>`；
 //! - **Infeasible / Unbounded**：仅 `status = ...`（无 objective 行）；
 //! - **LimitReached**（时间/节点上限触发）：`status = limit_reached`，有
 //!   incumbent 时附 `best = <v>`（无 objective 行）；
@@ -40,7 +42,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -121,6 +123,11 @@ struct Config {
     /// 路径零墙钟读点 ⇒ 同参数双跑全部行为字段逐字节相同；仅支持
     /// threads=1（与 `--threads ≥ 2` 组合报错）。
     determinism: Determinism,
+    /// 根阶段 reduced-cost 固定 + 树内再应用（`--root-rc-fixing=on|off`，
+    /// S13-C）；默认 on（对齐 [`BbOptions::root_rc_fixing`] 库默认）：根固定
+    ///（S12）+ incumbent 严格改进时的树内再应用（S13-A）。off ⇒ 两级全关
+    ///（S12 之前的旧行为）。
+    root_rc_fixing: bool,
 }
 
 fn main() -> ExitCode {
@@ -190,6 +197,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut work_stack: Option<WorkStackCli> = None;
     let mut determinism: Option<Determinism> = None;
     let mut lp_engine: Option<milp::simplex_sparse::LpEngineKind> = None;
+    let mut root_rc_fixing: Option<bool> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -453,6 +461,31 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             lp_engine = Some(v);
+        } else if arg == "--root-rc-fixing" || arg.starts_with("--root-rc-fixing=") {
+            if root_rc_fixing.is_some() {
+                return Err(format!("`--root-rc-fixing` 重复出现（{USAGE}）"));
+            }
+            // 兼容 `--root-rc-fixing=on|off`（等号连写）与
+            // `--root-rc-fixing on|off`（空格）两种形式（同 --scaling）。
+            let value: String = if let Some(v) = arg.strip_prefix("--root-rc-fixing=") {
+                v.to_string()
+            } else {
+                let Some(v) = args.get(index + 1) else {
+                    return Err(format!("`--root-rc-fixing` 缺少参数 on|off（{USAGE}）"));
+                };
+                index += 1; // 额外消费 on/off token
+                v.clone()
+            };
+            let v = match value.as_str() {
+                "on" => true,
+                "off" => false,
+                other => {
+                    return Err(format!(
+                        "未知 --root-rc-fixing 值 `{other}`（期望 on|off，{USAGE}）"
+                    ))
+                }
+            };
+            root_rc_fixing = Some(v);
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -509,6 +542,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto（S4 类自适应：表格 ≥10^6 格走 revised，阈下 tableau）；
         // revised 仅 threads=1。
         lp_engine,
+        // S13-C：默认 on（对齐 BbOptions.root_rc_fixing 库默认）；off 关闭
+        // 根固定与树内再应用两级。
+        root_rc_fixing: root_rc_fixing.unwrap_or(true),
     })
 }
 
@@ -545,8 +581,9 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             global_work_stack: config.work_stack == WorkStackCli::Global,
             work_stack_auto: config.work_stack == WorkStackCli::Auto,
             lp_engine: config.lp_engine,
-            // 方向 3 根 reduced-cost 固定（库默认 true；CLI 不设旗标）。
-            root_rc_fixing: true,
+            // 方向 3 根 reduced-cost 固定 + S13-A 树内再应用（CLI
+            // `--root-rc-fixing=on|off`，S13-C；默认 on 对齐库默认）。
+            root_rc_fixing: config.root_rc_fixing,
         },
         use_presolve: true,
         use_scaling: config.scaling,
@@ -617,6 +654,13 @@ fn write_report<W: Write>(out: &mut W, report: &SolveReport, problem: &Problem, 
     if report.status.is_optimal() {
         let _ = writeln!(out, "nodes = {}", report.stats.nodes);
         if verbose {
+            // S13-C：固定机制可观测（--verbose 统计三行）——rc_fixed = 根
+            // 阶段固定数、rc_reapplies = 树内再应用次数、rc_refixed
+            // = 再应用累计固定数。全 0 也如实输出（观测契约稳定优先）。
+            let stats = &report.stats;
+            let _ = writeln!(out, "rc_fixed = {}", stats.rc_fixed);
+            let _ = writeln!(out, "rc_reapplies = {}", stats.rc_reapplies);
+            let _ = writeln!(out, "rc_refixed = {}", stats.rc_refixed);
             if let Some(values) = &report.values {
                 for (variable, value) in problem.vars.iter().zip(values.iter()) {
                     let _ = writeln!(out, "{} = {}", variable.name, format_objective(*value));
@@ -765,6 +809,7 @@ mod tests {
             work_stack: WorkStackCli::Auto,
             determinism: Determinism::Wall,
             lp_engine: milp::simplex_sparse::LpEngineKind::Auto,
+            root_rc_fixing: true,
         }
     }
 
@@ -1214,6 +1259,57 @@ mod tests {
         assert!(parse_args(&args(&["a.milp", "--determinism", "budget"])).is_ok());
     }
 
+    // —— root-rc-fixing 解析与映射（S13-C）——
+
+    /// `--root-rc-fixing`：默认 on（对齐 BbOptions.root_rc_fixing 库默认）；
+    /// on/off 两 token 合法（含 `=` 连写与空格）；未知 token / 缺参 / 重复
+    /// 出现报错；→ BbOptions.root_rc_fixing 映射正确（off 关闭根固定与
+    /// 树内再应用两级）。
+    #[test]
+    fn root_rc_fixing_parsing_and_mapping() {
+        // 默认 on。
+        assert!(parse_args(&args(&["a.milp"])).unwrap().root_rc_fixing);
+        // 两 token（空格与 `=` 连写两种形式；旗标先于路径的顺序）。
+        for (token, flag) in [("on", true), ("off", false)] {
+            assert_eq!(
+                parse_args(&args(&["a.milp", "--root-rc-fixing", token]))
+                    .unwrap()
+                    .root_rc_fixing,
+                flag,
+                "token {token}"
+            );
+            assert_eq!(
+                parse_args(&args(&[&format!("--root-rc-fixing={token}"), "a.milp"]))
+                    .unwrap()
+                    .root_rc_fixing,
+                flag,
+                "连写 token {token}"
+            );
+        }
+        // → BbOptions 映射直通。
+        for (flag_cli, flag_bb) in [(true, true), (false, false)] {
+            let config = Config {
+                root_rc_fixing: flag_cli,
+                ..config_with(None)
+            };
+            assert_eq!(solve_options_from(&config).bb.root_rc_fixing, flag_bb);
+        }
+        // 非法：未知 token（大小写敏感）/ 缺参 / 重复。
+        for bad in [
+            &["a.milp", "--root-rc-fixing", "maybe"][..],
+            &["a.milp", "--root-rc-fixing=ON"][..],
+            &["a.milp", "--root-rc-fixing"][..],
+            &["a.milp", "--root-rc-fixing", "on", "--root-rc-fixing", "off"][..],
+        ] {
+            assert!(
+                parse_args(&args(bad)).is_err(),
+                "参数 {bad:?} 应报错"
+            );
+        }
+        // 缺参时不得把后续 flag 误当 token。
+        assert!(parse_args(&args(&["a.milp", "--root-rc-fixing", "--verbose"])).is_err());
+    }
+
     // —— time_limit_secs → time_limit_ms 映射 ——
 
     /// 映射必须 saturating：u64::MAX 秒 → u64::MAX 毫秒（不 panic、不回绕）。
@@ -1264,7 +1360,8 @@ mod tests {
         assert_eq!(text.lines().last(), Some("objective = 17.000000"));
     }
 
-    /// Optimal + verbose：逐行 name = value 出现在 objective 行之前。
+    /// Optimal + verbose：固定机制统计三行（S13-C）与逐行 name = value 均
+    /// 出现在 objective 行之前；默认统计全 0 也如实输出。
     #[test]
     fn report_optimal_verbose_values() {
         let problem = two_var_problem();
@@ -1275,9 +1372,38 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "status = optimal");
         assert_eq!(lines[1], "nodes = 7");
-        assert_eq!(lines[2], "x1 = 1.000000");
-        assert_eq!(lines[3], "x2 = 2.250000");
+        assert_eq!(lines[2], "rc_fixed = 0");
+        assert_eq!(lines[3], "rc_reapplies = 0");
+        assert_eq!(lines[4], "rc_refixed = 0");
+        assert_eq!(lines[5], "x1 = 1.000000");
+        assert_eq!(lines[6], "x2 = 2.250000");
         assert_eq!(lines.last(), Some(&"objective = 5.500000"));
+    }
+
+    /// Optimal + verbose + 非零固定统计：三行逐字精确（S13-C 观测契约）。
+    #[test]
+    fn report_optimal_verbose_rc_fix_stats_lines() {
+        let problem = two_var_problem();
+        let mut r = report(SolveStatus::Optimal, Some(9.0), Some(vec![1.0, 3.0]), 11);
+        r.stats.rc_fixed = 2;
+        r.stats.rc_reapplies = 1;
+        r.stats.rc_refixed = 3;
+        let mut out = Vec::new();
+        write_report(&mut out, &r, &problem, true);
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "status = optimal");
+        assert_eq!(lines[1], "nodes = 11");
+        assert_eq!(lines[2], "rc_fixed = 2");
+        assert_eq!(lines[3], "rc_reapplies = 1");
+        assert_eq!(lines[4], "rc_refixed = 3");
+        // 非 verbose：三行统计不出现（stdout 契约逐字节稳定）。
+        let mut out = Vec::new();
+        write_report(&mut out, &r, &problem, false);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "status = optimal\nnodes = 11\nobjective = 9.000000\n"
+        );
     }
 
     /// 非最优终态：只有 status 行（Infeasible/Unbounded/无 incumbent 的

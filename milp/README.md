@@ -13,8 +13,9 @@
   释放）+
   深度优先分支定界（类自适应分支默认）+ 根节点 GMI/聚合 MIR 割（循环预算
   收紧 + 失败轮回滚）+ 取整/潜水/根节点 sub-MIP（RENS）/子集和 MITM
-  启发式 + 根阶段 reduced-cost 变量固定（对偶界驱动的整数列贴界固定，
-  保最优、S12 起默认开启）+ 数值缩放与保守预处理，可选多线程并行
+  启发式 + reduced-cost 变量固定（对偶界驱动的整数列贴界固定：根阶段
+  S12 + 树内 incumbent 改进再应用 S13，保最优、默认开启，CLI
+  `--root-rc-fixing` 总开关）+ 数值缩放与保守预处理，可选多线程并行
   （本地亲和或全局 DFS 工作栈）与 MIP gap 提前终止。
   `threads = 1` 时求解完全确定，同一算例同一结果（`threads ≥ 2` 见
   「并行架构与确定性」一节）。
@@ -46,7 +47,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -67,12 +68,15 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
 | `--determinism wall\|budget` | 确定性模式（W3）：`wall`（默认）= 现状（时限/自适应/降级按墙钟判定，长跑终态随机器状态漂移）；`budget` = 纯预算制——`--time-limit-secs` 换算为节点预算（6,000 节点/秒），全部墙钟判定改为等价节点数预算，决策路径零墙钟读点 ⇒ **同参数双跑全部行为字段逐字节相同**（仅 `--threads 1`，与 ≥2 组合报错；慢机上墙钟可超名义值——确定性优先） | `wall` | 非 `wall\|budget` token / 重复出现报错 |
 | `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）= 类自适应——表格规模 m×(n+m) ≥ 10^6 格 ⇒ revised，阈下留 tableau（小算例走旧路径防 codegen 扰动）；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
-| `--verbose` | Optimal 时逐行输出变量取值 | 关 | — |
+| `--root-rc-fixing on\|off` | reduced-cost 变量固定**两级总开关**（大规模轮 S12 根阶段固定 + S13 树内再应用同门控，映射 `BbOptions.root_rc_fixing`）：`on` = 根阶段按对偶界固定非基贴界整数列 + 树内 incumbent 严格改进时以更小 τ 对同一根基快照再固定（均保最优，见「深度优先分支定界」一节）；`off` = 两级全关（不捕获快照、不挂触发、取交零开销直通），复现 S12 之前的旧行为 | `on` | 非 `on\|off` token / 缺参 / 重复出现报错（等号/空格两式） |
+| `--verbose` | Optimal 时先输出固定机制统计三行（`rc_fixed` / `rc_reapplies` / `rc_refixed`，S13；全 0 也如实输出），再逐行输出变量取值 | 关 | — |
 
 ### 输出格式
 
 - **Optimal**：stdout 依次输出 `status = optimal`、`nodes = N`（处理的
-  分支定界节点数；数值取决于算例与实现）；`--verbose` 时再逐行输出
+  分支定界节点数；数值取决于算例与实现）；`--verbose` 时先输出固定机制
+  统计三行 `rc_fixed` / `rc_reapplies` / `rc_refixed`（根阶段固定数 /
+  树内再应用次数 / 再应用累计固定数，S13 起），再逐行输出
   `name = value` 的变量取值；**最后一行精确为** `objective = <数值>`。
   数值常规为 `{:.6}` 六位小数（如 `objective = 17.000000`）；当
   `0 < |v| < 1e-6` 或 `|v| ≥ 1e15` 时改用科学记数 `{:e}`（如 `1e-7`）。
@@ -174,8 +178,8 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   最优**（目标与 `on`/`off` 一致）。
 - **原 7 个验收算例**（节点数 ≤ 7）均低于节流/阈值 ⇒ `auto ≡ on`，CLI
   默认输出逐字节一致（由验收测试钉死）。
-- **hard-knapsack-12**：95 节点 / objective 523（S12 根阶段 reduced-cost
-  固定后的确定性基线——hard-knapsack-12 为**单行**背包，类检测行数下限
+- **hard-knapsack-12**：91 节点 / objective 523（S13 树内 reduced-cost
+  再固定后的确定性基线——hard-knapsack-12 为**单行**背包，类检测行数下限
   收到 2 后不再命中，默认回落 MostFractional；目标 523 恒为已知最优；
   演进史 235→184
   （根预割启发式轮使根 incumbent 453→511、剪枝提前）→159（默认规则
@@ -184,9 +188,12 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   pseudocost` 当时复现 196 旧径——该 196 为方向 1 前口径，未随 S9 重测）
   →93（S9 方向 1 根节点 sub-MIP 启发式：根 incumbent 511→520、剪枝
   提前；`--heuristic-mode off` 复现 159）→95（S12 根 rc 固定列被定价
-  跳过、改变子节点退化基的主元路径，树形 93→95；复现旧行 93 需库侧
-  `BbOptions.root_rc_fixing = false`，CLI 不暴露该开关）。一般而言中途
-  dive 若改进 incumbent 可使节点数**变少**（剪枝更早），`auto` 的
+  跳过、改变子节点退化基的主元路径）→91（S13 树内再固定：树内
+  incumbent 改进处以更小 τ 对同一根基快照补固定，再固定再次改变子
+  节点主元路径；实测 rc =（2, 1, 2））。两级固定同门控于
+  `--root-rc-fixing=off`（off ⇒ 93 = 方向 1 终态；95 为 S12 终态
+  「根固定开、再应用关」，因两级同门控不可经 CLI 单独复现）。一般而言
+  中途 dive 若改进 incumbent 可使节点数**变少**（剪枝更早），`auto` 的
   nodes/迭代数不承诺与 `on` 相同（目标与终态恒同）。
 
 ### 策略级自动降级（auto + --time-limit-secs）
@@ -252,7 +259,9 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
   **节点池**，经
   `std::thread::scope` 派生 N 个 worker 抢占式处理；worker 各持独立
   `Simplex` 实例，按序 `add_row` 重放根阶段记录的割清单，任意界跳转由
-  snap/Phase-1 重建处理。
+  snap/Phase-1 重建处理。树内再固定（S13）与顺序侧同口径：再应用状态
+  置于共享锁内（锁序恒 incumbent 写 → 再固定，无反向），worker 池弹出
+  节点后与界快照取交获得全局固定。
 - **工作栈模式（大规模轮 R6 接线，W1 起默认按类选栈）**：`--work-stack
   local` = 本地亲和 + 偷取；`--work-stack global` = 单一全局 DFS steal
   栈——`complete_node` 把子代压全局栈顶、worker 恒弹栈顶（LIFO），并行
@@ -485,24 +494,31 @@ lp-wide-1000x2000 8.84→7.56s（0.85×），目标极差 0.00；默认 auto 生
   limit_reached，只供应不改语义）；Infeasible/Unbounded 不提取，提取失败
   如实保持无 incumbent（如 setcover-300x600/400x800 的分数点取整违反覆盖
   约束）。
-- **根阶段 reduced-cost 变量固定（大规模轮 S12，方向 3）**：根 LP +
-  根割循环 + 根启发式全部完成且已有 incumbent 后、DFS 主循环之前，
-  按根 LP 对偶界把「抬离所贴界必使目标劣于 incumbent」的非基贴界整数
-  变量固定在该界上（`BbOptions.root_rc_fixing`，默认 true，CLI 不暴露
-  开关）。保最优论证（完整版见 `apply_root_rc_fixing` 文档注释与报告
-  S12 节）：最优基上 obj(x) = z_lp + Σ rc_k·(x_k−x̄_k) 逐项非负，整数列
+- **根阶段 reduced-cost 变量固定 + 树内再应用（大规模轮 S12/S13，方向 3）**：
+  根 LP + 根割循环 + 根启发式全部完成且已有 incumbent 后、DFS 主循环
+  之前，按根 LP 对偶界把「抬离所贴界必使目标劣于 incumbent」的非基
+  贴界整数变量固定在该界上（`BbOptions.root_rc_fixing`，默认 true；
+  CLI `--root-rc-fixing on|off` 两级总开关，S13）。保最优论证（完整版
+  见 `apply_root_rc_fixing` 与 `RcRefixState` 文档注释、报告 S12/S13
+  节）：最优基上 obj(x) = z_lp + Σ rc_k·(x_k−x̄_k) 逐项非负，整数列
   抬离量 δ ≥ δ_min = (⌊lb⌋+1)−lb，rc_j·δ_min ≥ 阈值 τ_eff（整数目标
   另经 z̄ = ⌈z_lp−ε⌉ 网格收紧）时任何严格更优整数解必仍贴界 ⇒ 固定只
   收紧可行域、**不改变最优值**；τ≤0 / 无 incumbent / 基列 / 自由列 /
-  连续列（δ_min→0 论证不成立）/ 界内无整数的列一律不动。固定写
+  连续列（δ_min→0 论证不成立）/ 界内无整数的列一律不动。根固定写
   bounds 早于 trail 建立 ⇒ 全树有效；固定列被两引擎定价原生跳过（每
   节点 LP 更小）。检验数经只读访问面 `LpEngine::structural_reduced_costs`
   取得（稠密 = rc_of 表格现算、稀疏 = BTRAN→CSC 列点积，与定价同源
   同式、含割行完整口径——`LpSolution.duals` 只含原始行、缺割行对偶，
-  故不可复用）；顺序与并行（threads≥2）同实现同口径，固定计数入
-  `BbStats.rc_fixed`。实测 setcover-300x600 同窗 11.72→7.51s（0.64×，
-  目标 144 恒同）、mknap-5x300 0.79×；树内再应用（首个分支 incumbent
-  触发）为后续扩展。
+  故不可复用）；顺序与并行（threads≥2）同实现同口径。**树内再应用
+  （S13）**：根固定点一次性缓存根基快照（`RootRcCache`：rc 向量、
+  贴界状态、z̄ 口径、全局基础界副本，此后不重解 LP），incumbent 每次
+  严格改进（τ 单调缩小 ⇒ 合格列集单调扩大）时对同一快照重跑同一
+  固定扫描（`rc_fix_scan`，再应用次数上限 6），新固定经追加日志在
+  节点展开时与界取交（只收紧幂等；空界子树按剪枝关闭——不含任何
+  严格更优解，保最优论证对任意有效 z_inc 逐字重放成立）。计数入
+  `BbStats.rc_fixed`（根）与 `rc_reapplies` / `rc_refixed`（树内，
+  `--verbose` 可观测）。实测 setcover-300x600 同窗 11.72→7.51s（S12，
+  0.64×，目标 144 恒同）、mknap-5x300 S13 再叠加 0.65×。
 - 分支变量规则默认**类自适应**（大规模轮 R3，`BbOptions::branch_rule_auto`
   默认 true）：`detect_pseudocost_favorable`（全变量 Binary ∧ 全部约束为
   正系数 Le 行 ∧ 行数 ∈ [2,64]——覆盖多维背包类；P3 收紧行数下限 2，
@@ -727,7 +743,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 95 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定改变退化基主元路径后 93→95，`--heuristic-mode off` 复现 159；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 91 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定后 93→95、S13 树内再固定后 95→91，`--heuristic-mode off` 复现 159、`--root-rc-fixing=off` 复现 93；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 
@@ -769,7 +785,7 @@ conda run --no-capture-output -n mic-bench python -u bench/python_bench.py
 ```text
 milp/
 ├── src/
-│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode/branch-rule/scaling/mitm/work-stack/determinism）
+│   ├── main.rs          # CLI 入口（WP5 + 受控搜索参数：threads/log-secs/mipgap/heuristic-mode/branch-rule/scaling/mitm/work-stack/determinism/lp-engine/root-rc-fixing）
 │   ├── error.rs         # MilpError 与 Result 别名（WP1）
 │   ├── model.rs         # 建模 + 集中容差（WP1）
 │   ├── instance.rs      # .milp 解析/序列化（WP1）
@@ -779,7 +795,7 @@ milp/
 │   ├── cuts.rs          # 根节点 GMI/聚合 MIR 割（WP3，大规模轮 R2 扩展）
 │   ├── heuristics.rs    # 取整/潜水/根节点 sub-MIP 启发式 + 子集和 MITM（WP3，大规模轮 R5/S9）
 │   ├── scaling.rs       # 行列迭代几何均值数值缩放（大规模轮 R4）
-│   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口 + 类自适应分支默认 + 根阶段 reduced-cost 固定（WP4，大规模轮 R3/S12）
+│   ├── branch_bound.rs  # 深度优先分支定界 + 受控入口 + 类自适应分支默认 + reduced-cost 固定（根 S12 + 树内再应用 S13）（WP4，大规模轮 R3/S12/S13）
 │   ├── solver.rs        # 统一编排（含缩放接线）、受控求解入口与安全网终检（WP4）
 │   ├── search_ctrl.rs   # 搜索控制层：进度快照/gap 口径/自适应控制器（纯逻辑零锁）
 │   └── parallel_bb.rs   # 并行分支定界引擎（节点池/incumbent/双 Condvar/粘滞 stop/全局工作栈）

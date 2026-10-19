@@ -74,7 +74,10 @@ use std::sync::{Condvar, Mutex, MutexGuard, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::branch_bound::{bound_no_better, is_integral, probe_reliability, BbOptions, BbStats, BranchRule, NodeRule};
+use crate::branch_bound::{
+    bound_no_better, capture_root_rc_cache, incumbent_improved, is_integral, probe_reliability,
+    BbOptions, BbStats, BranchRule, NodeRule, RcRefixState,
+};
 use crate::cuts::{self, CutOptions};
 use crate::error::{MilpError, Result};
 use crate::heuristics::{self, Incumbent};
@@ -318,6 +321,12 @@ struct Shared {
     degrade_budget_secs: Option<f64>,
     /// 求解起点（降级判定的耗时基准）。
     start: Instant,
+    /// S13-A 树内再应用 RCN 固定状态（根线程装配快照；None = 旗标关 /
+    /// 根终局未捕获 ⇒ 全部触点零行为）。锁序纪律（模块「任一时刻至多持
+    /// 一把锁」的例外，方向恒定不嵌套环）：incumbent 写锁 → rc_refix
+    /// （try_update_incumbent 内）；或独占获取（池弹出取交 / 计数读取 /
+    /// 根线程 spawn 前触发），绝不持 rc_refix 反向获取其余锁 ⇒ 无死锁。
+    rc_refix: Mutex<Option<RcRefixState>>,
     error: Mutex<Option<MilpError>>,
 }
 
@@ -328,6 +337,7 @@ impl Shared {
         degrade_policy: DegradePolicy,
         degrade_budget_secs: Option<f64>,
         start: Instant,
+        rc_refix: Option<RcRefixState>,
     ) -> Self {
         Shared {
             pool: Mutex::new(PoolState {
@@ -353,6 +363,7 @@ impl Shared {
             degrade_cfg: degrade_policy,
             degrade_budget_secs,
             start,
+            rc_refix: Mutex::new(rc_refix),
             error: Mutex::new(None),
         }
     }
@@ -393,6 +404,29 @@ impl Shared {
                 self.abort();
                 poisoned.into_inner()
             })
+    }
+
+    /// S13-A 再应用状态锁（中毒 into_inner 恢复 + 置 stop，同其余锁口径）。
+    fn lock_rc_refix(&self) -> MutexGuard<'_, Option<RcRefixState>> {
+        self.rc_refix
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                self.abort();
+                poisoned.into_inner()
+            })
+    }
+
+    /// S13-A 再应用计数读取（None = 未装配 ⇒ 终局统计保持 0）。
+    fn rc_refix_counts(&self) -> Option<(u64, u64)> {
+        self.lock_rc_refix().as_ref().map(|s| s.counts())
+    }
+
+    /// S13-A 再应用计数写入终局统计（早退/最终装配的共用收口）。
+    fn fold_rc_refix_counts(&self, stats: &mut BbStats) {
+        if let Some((reapplies, refixed)) = self.rc_refix_counts() {
+            stats.rc_reapplies = reapplies;
+            stats.rc_refixed = refixed;
+        }
     }
 
     fn record_error(&self, error: MilpError) {
@@ -466,6 +500,18 @@ impl Shared {
             self.last_improve_node.store(node_no, Ordering::SeqCst);
             self.last_improve_millis
                 .store((elapsed_secs * 1000.0) as u64, Ordering::SeqCst);
+            // S13-A：成为新全局 incumbent（写锁内严格更优胜者）⇒ 树内再
+            // 应用（与顺序侧 branch_or_close 后触发同口径；τ 取刚写入的
+            // 全局 incumbent 值。旗标关 / 根终局未装配 ⇒ None 直通零开销）。
+            // 【乱序无害性】写锁在 lock_rc_refix 之前释放 ⇒ 两个并发改进
+            // 可能以相反顺序触发再应用（旧 τ 晚于新 τ 执行）：晚到的旧 τ
+            // 扫描产出的合格列集合 ⊆ 已按更小 τ 固定的集合（阈值单调性），
+            // 且 base 副本中已固定列 lb=ub 天然跳过 ⇒ 新固定 0、不产生任何
+            // 不安全固定（每轮独立按 S12 论证自洽）；最坏后果是空耗
+            // RC_REFIX_MAX_REAPPLIES 预算中的一席（perf，非正确性）。
+            if let Some(state) = self.lock_rc_refix().as_mut() {
+                state.on_improvement(inc.objective);
+            }
             true
         } else {
             false
@@ -793,6 +839,10 @@ pub fn parallel_branch_and_bound(
     // 根阶段施加的割清单（terms, rhs）——worker 按序 add_row 重放。
     let mut recorded_cuts: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
     let mut pure_lp = false;
+    // S13-A 树内再应用状态（else 分支根阶段末装配；纯 LP 捷径保持 None）。
+    let mut rc_refix_state: Option<RcRefixState> = None;
+    // 根固定时刻的 incumbent 值（S13-A 首次再应用的改进对照锚点）。
+    let mut z_inc_at_root_fix: Option<f64> = None;
 
     // —— 根 LP（计 1 节点）——
     let mut sol = simplex.solve(&bounds);
@@ -970,7 +1020,7 @@ pub fn parallel_branch_and_bound(
         // 前置条件在本点全部成立：根 LP + 根割循环 + 根启发式完成、末次
         // resolve 已回 Optimal 根态、incumbent（若非 None）为根启发式供应。
         // 固定写入根 bounds ⇒ branch_children 的界快照携带固定界；无
-        // incumbent ⇒ 跳过本轮（树内再应用为后续扩展）。
+        // incumbent ⇒ 跳过本轮（树内首个 incumbent 改进时经 S13-A 补触发）。
         if terminal.is_none() && opts.root_rc_fixing {
             if let Some((inc_obj, _)) = incumbent.as_ref() {
                 stats.rc_fixed = crate::branch_bound::apply_root_rc_fixing(
@@ -984,6 +1034,26 @@ pub fn parallel_branch_and_bound(
                 ) as u64;
             }
         }
+
+        // —— S13-A：缓存根基 rc 快照（树内再应用输入；与顺序侧同口径同刻：
+        // 根 LP + 根割 + 根启发式 + 根固定全部完成、引擎在含割根 LP 最优基
+        // 上；base 副本含根固定 ⇒ 再应用跳过已固定列，计数不重）——
+        // 根终局（terminal = Some）/ 旗标关 ⇒ None（worker 侧零行为）。
+        rc_refix_state = if terminal.is_none() && opts.root_rc_fixing {
+            Some(RcRefixState::new(capture_root_rc_cache(
+                problem,
+                &int_vars,
+                &bounds,
+                &simplex,
+                sol.objective,
+                obj_integral,
+            )))
+        } else {
+            None
+        };
+        // 根固定时刻的 incumbent 值（S13-A 首次再应用的改进对照锚点；None =
+        // 根固定未运行（无 incumbent）——恰使下方「首个 incumbent」判定成立）。
+        z_inc_at_root_fix = incumbent.as_ref().map(|(o, _)| *o);
     }
 
     // —— 首行进度无条件发射点：根阶段结束的唯一汇合点（R6）——
@@ -1092,11 +1162,23 @@ pub fn parallel_branch_and_bound(
             None
         },
         start,
+        rc_refix_state,
     );
     // R6-retry 全局 DFS 工作栈：模式写入口池（worker 的子代路由由
     // complete_node 读该标志，notify 参数由 opts 侧同源给出）。
     shared.lock_pool().work_global = opts.global_work_stack;
     shared.write_incumbent(incumbent.clone());
+    // —— S13-A：根节点 (e) 判定相对根固定时刻的 incumbent 改进 ⇒ 首次
+    //     树内再应用（与顺序侧「根 branch_or_close 后触发」同口径；worker
+    //     侧改进由 try_update_incumbent 内同径触发，锁序见 Shared 字段注）——
+    {
+        let cur = incumbent.as_ref().map(|(o, _)| *o);
+        if incumbent_improved(sense, z_inc_at_root_fix, cur) {
+            if let Some(state) = shared.lock_rc_refix().as_mut() {
+                state.on_improvement(cur.expect("improved ⇒ cur = Some"));
+            }
+        }
+    }
     shared.reserved.store(1, Ordering::SeqCst);
     shared.performed.store(1, Ordering::SeqCst);
     // 自适应 stall 锚点对齐顺序路径（AdaptiveState::new 的
@@ -1131,6 +1213,7 @@ pub fn parallel_branch_and_bound(
     if matches!(shared.stop_code(), STOP_GAP | STOP_DEGRADE) {
         stats.lp_iterations = base_iters.saturating_add(simplex.iterations());
         stats.time_ms = wall_ms(&start);
+        shared.fold_rc_refix_counts(&mut stats); // S13-A：再应用计数入终局统计
         let (best_objective, best_values) = match incumbent {
             Some((obj, values)) => (Some(obj), Some(values)),
             None => (None, None),
@@ -1159,6 +1242,7 @@ pub fn parallel_branch_and_bound(
     if shared.lock_pool().all_empty() {
         stats.lp_iterations = base_iters.saturating_add(simplex.iterations());
         stats.time_ms = wall_ms(&start);
+        shared.fold_rc_refix_counts(&mut stats); // S13-A：再应用计数入终局统计
         let (best_objective, best_values) = match incumbent {
             Some((obj, values)) => (Some(obj), Some(values)),
             None => (None, None),
@@ -1246,6 +1330,7 @@ pub fn parallel_branch_and_bound(
         .saturating_add(simplex.iterations())
         .saturating_add(worker_iters);
     stats.time_ms = wall_ms(&start);
+    shared.fold_rc_refix_counts(&mut stats); // S13-A：再应用计数入终局统计
     let (best_objective, best_values) = {
         let guard = shared
             .incumbent
@@ -1368,6 +1453,22 @@ fn worker_run(
                 return simplex.iterations();
             }
         };
+        // —— S13-A：弹出节点的界快照与全局固定在展开时取交（与顺序侧
+        //     pop 后取交同口径）：追加日志非空时逐条收紧（幂等 ⇒ 不重）；
+        //     取交后空界 ⇒ 直接关闭节点——不 reserve、不 resolve、不计
+        //     performed，与下方 est 弹出剪枝同口径（该子树不含「严格更优
+        //     解必落入」的固定域 ⇒ 不漏）。rc_refix 锁独占获取（池锁已在
+        //     acquire_node 内释放），无嵌套。 ——
+        {
+            let guard = shared.lock_rc_refix();
+            if let Some(state) = guard.as_ref() {
+                if state.has_fixes() && !state.intersect(&mut node.bounds) {
+                    drop(guard);
+                    shared.complete_node(w, Vec::new(), sense, mipgap, false);
+                    continue;
+                }
+            }
+        }
         // —— est 弹出剪枝（仅整数目标启用，与顺序侧 pop 后跳过同口径）：
         //    父节点 LP 目标 est 已不优于当前 incumbent 的有效剪枝界 ⇒ 该
         //    子树不可能再出严格更优解，直接丢弃。位于 reserve fetch_add
@@ -2259,7 +2360,7 @@ mod tests {
     /// （漏任一容器会提前 done 丢树）。
     #[test]
     fn complete_node_pushes_children_to_owner_front_and_done_requires_all_empty() {
-        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now(), None);
         // 种子入窃取池，w=0 取得（active/inflight 锁内记账）。
         shared.lock_pool().steal.push(test_node(9.0, 0));
         let mut rng = 1u64;
@@ -2310,7 +2411,7 @@ mod tests {
     fn steal_atomicity_stress_node_conservation() {
         const THREADS: usize = 4;
         const MAX_DEPTH: u32 = 7;
-        let shared = Shared::new(THREADS, DegradePolicy::default(), None, Instant::now());
+        let shared = Shared::new(THREADS, DegradePolicy::default(), None, Instant::now(), None);
         // 种子节点（id=0, depth=0）入窃取池。
         shared.lock_pool().steal.push(test_node(0.0, 0));
         let processed: Arc<StdMutex<Vec<u64>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -2364,7 +2465,7 @@ mod tests {
     /// victim 队尾（最老），owner 的最新子代留在队首不动。
     #[test]
     fn wait_timeout_steals_victim_local_push_without_notify() {
-        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now(), None);
         // w=0 在处理（active=1）⇒ w=1 取不到节点时进入 wait_timeout。
         {
             let mut pool = shared.lock_pool();
@@ -2403,7 +2504,7 @@ mod tests {
     /// 取得节点（不依赖 wait_timeout 超时兜底）。
     #[test]
     fn steal_pool_push_notifies_waiters_immediately() {
-        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now(), None);
         {
             let mut pool = shared.lock_pool();
             pool.active = 1;
@@ -2855,7 +2956,7 @@ mod tests {
     /// 侧晚一个节点触发，两路径的控制器决策序列分叉。
     #[test]
     fn parallel_stall_anchor_init_matches_sequential() {
-        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now());
+        let shared = Shared::new(2, DegradePolicy::default(), None, Instant::now(), None);
         assert_eq!(shared.last_improve_node.load(Ordering::SeqCst), 0);
         // 模拟根阶段末尾的共享状态写入（incumbent 存在、节点锚点不动）。
         shared.write_incumbent(Some((21.5, vec![2.0, 1.0])));

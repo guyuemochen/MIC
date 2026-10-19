@@ -28,7 +28,8 @@
 //! [`crate::heuristics::sub_mip`]）+ MITM ⇒（可选，方向 3）**根阶段
 //! reduced-cost 变量固定**（[`apply_root_rc_fixing`]：已有 incumbent 时按
 //! LP 对偶界把整数列固定在所贴界上——只收紧可行域、不改变最优值，数学
-//! 论证与阈值口径见该函数文档；本轮不做树内再应用）⇒ DFS 主循环。割循环
+//! 论证与阈值口径见该函数文档；S13-A 树内 incumbent 严格改进时以更小 τ
+//! 对同一根基快照再应用，见 [`RcRefixState`]）⇒ DFS 主循环。割循环
 //! 的终态分流：
 //! Infeasible 保留整解终局（有效割切空根 LP 是整数不可行的合法证明）；
 //! **IterationLimit 不作终态**——丢弃全部根割、重建无割 Simplex 恢复 Optimal
@@ -215,8 +216,10 @@ pub struct BbOptions {
     /// incumbent」的整数变量固定在该界上（数学论证见
     /// [`apply_root_rc_fixing`]——只收紧可行域，**不改变最优值**；固定列
     /// 被定价跳过，无需引擎配合）。生效阈值与整数目标收紧（z̄ = ⌈z_lp−ε⌉）
-    /// 见 [`rc_fix_threshold`]。计数入 [`BbStats::rc_fixed`]。默认 true；
-    /// 树内再应用（首个分支 incumbent 触发）为后续扩展。
+    /// 见 [`rc_fix_threshold`]。计数入 [`BbStats::rc_fixed`]。默认 true。
+    /// S13-A 树内再应用（incumbent 严格改进时以更小 τ 重跑固定规则，
+    /// [`RcRefixState`]）与本旗标同门控：off ⇒ 两级全关。CLI
+    /// `--root-rc-fixing on|off`（S13-C）。
     pub root_rc_fixing: bool,
 }
 
@@ -319,6 +322,13 @@ pub struct BbStats {
     /// 根阶段 reduced-cost 固定的整数变量数（方向 3；0 = 未触发 / 无
     /// incumbent / 阈值非正 / 无合格列）。纯记账，不参与状态判定。
     pub rc_fixed: u64,
+    /// 树内再应用 RCN 固定的执行次数（S13-A；每个 incumbent 严格改进事件
+    /// 至多消耗一次——含执行后新固定 0 列的情形）。上限
+    /// [`RC_REFIX_MAX_REAPPLIES`]。纯记账，不参与状态判定。
+    pub rc_reapplies: u64,
+    /// 树内再应用累计新固定的整数变量数（S13-A；不含根阶段 [`Self::rc_fixed`]。
+    /// 列一旦固定即 lb=ub，后续轮次天然跳过 ⇒ 计数不重）。纯记账。
+    pub rc_refixed: u64,
 }
 
 /// 分支定界结果。
@@ -870,8 +880,8 @@ fn sequential_bb(
     // 前置条件在本点全部成立：根 LP + 根割循环 + 根启发式已完成、末次
     // resolve 已回 Optimal 根态（上方各终局分流保证）、incumbent（若非
     // None）为根启发式供应。固定写入 bounds 早于 trail 建立 ⇒ 全树有效
-    // 且绝不被 unwind；无 incumbent（根启发式 miss）⇒ 跳过本轮（树内再
-    // 应用为后续扩展）。
+    // 且绝不被 unwind；无 incumbent（根启发式 miss）⇒ 跳过本轮（树内
+    // 首个 incumbent 改进时经 S13-A 再应用补触发）。
     if opts.root_rc_fixing {
         if let Some((inc_obj, _)) = incumbent.as_ref() {
             stats.rc_fixed = apply_root_rc_fixing(
@@ -885,6 +895,22 @@ fn sequential_bb(
             ) as u64;
         }
     }
+
+    // —— S13-A：树内再应用 RCN 固定状态（根 rc 快照缓存，不重解 LP）——
+    // 与上方根固定同一触发点捕获：rc/side 同刻同源（引擎恰在含割根 LP 的
+    // 最优基上）；base 副本含根固定 ⇒ 再应用天然跳过已固定列（计数不重）。
+    // 旗标关 ⇒ None：不捕获、不触发、展开取交零开销直通（off 路径与启用
+    // S13-A 之前的行为一致）。
+    let mut rc_refix = opts.root_rc_fixing.then(|| {
+        RcRefixState::new(capture_root_rc_cache(
+            problem,
+            &int_vars,
+            &bounds,
+            &*simplex,
+            sol.objective,
+            obj_integral,
+        ))
+    });
 
     // —— DFS 主循环状态 ——
     let mut stack: Vec<Pending> = Vec::new();
@@ -912,6 +938,7 @@ fn sequential_bb(
     let local_cuts_on = opts.local_cuts && detect_pseudocost_favorable(problem);
 
     // 根节点按 (d)/(e)/(f) 判定（无界等已终局，此处的 Unbounded 恒为根语义）。
+    let inc_before_root = incumbent.as_ref().map(|(o, _)| *o);
     branch_or_close(
         problem,
         &int_vars,
@@ -930,6 +957,16 @@ fn sequential_bb(
         &mut pc,
         adaptive.as_mut(),
         0,
+    );
+    // S13-A：根节点判定产生的 incumbent 严格改进（如根 LP 恰整数、根
+    // 启发式 miss 后的树内补充）⇒ 首次树内再应用（更小 τ 对同一根基
+    // 快照重跑固定规则；预算与计数见 RcRefixState）。
+    rc_refix_on_improvement(
+        rc_refix.as_mut(),
+        &mut stats,
+        sense,
+        inc_before_root,
+        incumbent.as_ref().map(|(o, _)| *o),
     );
 
     // 根阶段完成（根启发式刚运行过）：控制器节流锚点 = 根节点数（=1）。
@@ -1049,8 +1086,26 @@ fn sequential_bb(
         }
         // 回退到父路径界状态后施加本分支界；空界/无收缩 ⇒ (f) 剪枝（不 resolve）。
         unwind(&mut trail, &mut bounds, p.unwind_to);
+        // —— S13-A：已入栈节点的界快照在展开时与全局固定取交 ——
+        // **顺序必须是 tighten_child 之后**：unwind 恢复的是压栈时刻的基础界
+        //（固定只存覆盖层、绝不在 unwind 可达的 trail 里），tighten 在与压栈
+        // 完全同态的界上做收缩判定——若把取交放在 tighten 之前，分支界被
+        // 固定蕴含的待展开节点（上行 bound ≤ 固定值 / 下行 bound ≥ 固定值）
+        // 会命中 tighten_child 的「无收缩」防御分支而被静默丢弃，而其子树
+        // ∩ 固定域非空、恰含「严格更优解必落入」的区域 ⇒ 丢最优（复核
+        // 阻断项）。取交放在 tighten 之后：非空 ⇒ 节点域 = 路径 ∩ 分支 ∩
+        // 固定，照常 resolve（分支界被蕴含 ⇒ 取交结果即固定域侧界）；
+        // 空 ⇒ 该子树与固定域交空 ⇒ 全部严格更优解不在其中，按 (f) 剪枝
+        // 关闭是合法剪枝（不 resolve、不计节点）。幂等（不重）；每轮弹出
+        // 都重施加覆盖层 ⇒ unwind 恢复旧值不丢固定（不漏）。与并行侧同口径
+        //（PoolNode 快照在创建时已含分支界，弹出后仅做同一取交）。
         if !tighten_child(&mut bounds, &mut trail, p.var, p.tighten_lb, p.bound) {
             continue;
+        }
+        if let Some(state) = rc_refix.as_ref() {
+            if state.has_fixes() && !state.intersect(&mut bounds) {
+                continue;
+            }
         }
         let mut sol = simplex.resolve(&bounds);
         stats.nodes += 1;
@@ -1159,6 +1214,7 @@ fn sequential_bb(
         }
 
         // (d)/(e)/(f) 与分支压栈。
+        let inc_before = incumbent.as_ref().map(|(o, _)| *o);
         branch_or_close(
             problem,
             &int_vars,
@@ -1177,6 +1233,15 @@ fn sequential_bb(
             &mut pc,
             adaptive.as_mut(),
             p.depth,
+        );
+        // S13-A：本节点判定（(e) 记录或自适应 dive 命中）产生的 incumbent
+        // 严格改进 ⇒ 树内再应用（与根节点判定后的触发同口径）。
+        rc_refix_on_improvement(
+            rc_refix.as_mut(),
+            &mut stats,
+            sense,
+            inc_before,
+            incumbent.as_ref().map(|(o, _)| *o),
         );
     }
 
@@ -1365,15 +1430,6 @@ pub(crate) fn rc_fix_threshold(
     Some(tau + RC_FIX_NOISE_EPS_SCALE * (1.0 + z_lp_m.abs()))
 }
 
-/// 非基贴界状态（结构列）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NonbasicSide {
-    /// 非基贴下界（x̄_j = lb_j）。
-    AtLower,
-    /// 非基贴上界（x̄_j = ub_j）。
-    AtUpper,
-}
-
 /// 根阶段 reduced-cost 变量固定（方向 3 的可靠内核；顺序/并行两路同口径
 /// 共用本实现，杜绝分叉）。
 ///
@@ -1420,9 +1476,10 @@ enum NonbasicSide {
 /// Optimal 根态、且已有 incumbent（S9 sub-MIP 启发式等根启发式供应）之后、
 /// DFS 主循环之前调用一次；固定以界收紧形式直接写入 `bounds`（早于 trail
 /// 建立 ⇒ 全树有效且绝不被 unwind；引擎对 lb=ub 的固定列本就被定价跳
-/// 过，无需引擎配合）。本轮不做树内再应用（首个分支 incumbent 触发的
-/// 树内再固定为后续扩展）。确定性：int_vars 升序扫描、逐列决策为纯
-/// 函数；无墙钟、无随机、无并列选择。
+/// 过，无需引擎配合）。S13-A 树内再应用（incumbent 严格改进触发，经
+/// [`RcRefixState`] 消费同一时刻捕获的根快照）与本函数共享扫描核心
+/// [`rc_fix_scan`]，杜绝两套固定规则分叉。确定性：int_vars 升序扫描、
+/// 逐列决策为纯函数；无墙钟、无随机、无并列选择。
 pub(crate) fn apply_root_rc_fixing(
     problem: &Problem,
     int_vars: &[usize],
@@ -1437,17 +1494,66 @@ pub(crate) fn apply_root_rc_fixing(
     else {
         return 0; // 无 incumbent / 非有限值 / τ ≤ 0 ⇒ 跳过
     };
+    let (rc, side, n_struct) = rc_dual_snapshot(engine);
+    let entries = rc_fix_scan(int_vars, &rc, &side, n_struct, bounds, tau_eff);
+    // 写入活界（根阶段 = 全树基础界；列间判定互相独立——各自只读本列界值
+    // ⇒ 先扫描后写入与逐列边扫边写结果恒同）。
+    for e in &entries {
+        rc_fix_apply(bounds, e);
+    }
+    entries.len()
+}
+
+/// 引擎当前最优基的对偶快照三元组（rc 向量 / 非基贴界状态表 / 结构列数）。
+/// 非基贴界状态表：0 = 基列/未知；1 = 非基贴下界；2 = 非基贴上界。
+/// nonbasic_columns 含松弛列（col ≥ n_struct），在此甄别掉。
+fn rc_dual_snapshot(engine: &dyn LpEngine) -> (Vec<f64>, Vec<u8>, usize) {
     let rc = engine.structural_reduced_costs();
     let n_struct = engine.column_layout().num_structural;
-    // 非基贴界状态表（0 = 基列/未知；1 = 非基贴下界；2 = 非基贴上界）。
-    // nonbasic_columns 含松弛列（col ≥ n_struct），在此甄别掉。
     let mut side = vec![0u8; n_struct];
     for col in &engine.nonbasic_columns() {
         if col.col < n_struct {
             side[col.col] = if col.at_upper { 2 } else { 1 };
         }
     }
-    let mut fixed = 0usize;
+    (rc, side, n_struct)
+}
+
+/// 一次 RCN 固定动作（S13-A 追加日志条目；根阶段与树内再应用共用）：
+/// `tighten_lb = false` ⇒ `ub[var] ← value`（列非基贴下界，固定在下界值）；
+/// `true` ⇒ `lb[var] ← value`（列非基贴上界，固定在上界值）。value 恒为
+/// 根阶段所贴界值（固定语义：固定后该列 lb = ub）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RcFixEntry {
+    var: usize,
+    tighten_lb: bool,
+    value: f64,
+}
+
+/// 单条固定动作写入界（只收紧一侧到所贴界值 ⇒ lb=ub 固定；调用方保证
+/// value 在该列当前区间内——扫描核心的「界内整数」甄别已排除空界）。
+fn rc_fix_apply(bounds: &mut Bounds, e: &RcFixEntry) {
+    if e.tighten_lb {
+        bounds.lb[e.var] = e.value;
+    } else {
+        bounds.ub[e.var] = e.value;
+    }
+}
+
+/// 固定扫描核心（S12 根阶段与 S13-A 树内再应用共享的唯一实现）：对每个
+/// 整数列按 [`apply_root_rc_fixing`] 文档的数学论证做贴界侧判定，返回本轮
+/// 合格的固定条目——**纯读 `bounds`**（列的 δ_min 与「界内有无整数」甄别
+/// 以传入界为准），写入目标（根阶段活界 / 再应用的全局基础界副本）由
+/// 调用方决定。确定性：int_vars 升序、逐列纯函数、无并列选择。
+fn rc_fix_scan(
+    int_vars: &[usize],
+    rc: &[f64],
+    side: &[u8],
+    n_struct: usize,
+    bounds: &Bounds,
+    tau_eff: f64,
+) -> Vec<RcFixEntry> {
+    let mut entries = Vec::new();
     for &j in int_vars {
         if j >= n_struct || j >= rc.len() {
             continue; // 防御：下标越界不碰
@@ -1456,38 +1562,241 @@ pub(crate) fn apply_root_rc_fixing(
         if !lb.is_finite() || !ub.is_finite() {
             continue; // 非基贴界值必有限；无穷界为防御性跳过
         }
-        let state = match side[j] {
-            1 => NonbasicSide::AtLower,
-            2 => NonbasicSide::AtUpper,
+        let at_lower = match side[j] {
+            1 => true,  // 非基贴下界
+            2 => false, // 非基贴上界
             _ => continue, // 基列 / 状态未知 ⇒ 不动
         };
-        match state {
-            NonbasicSide::AtLower => {
-                // x̄_j = lb_j；最小整数抬离量 δ_min = (⌊lb⌋+1) − lb。
-                // lb/ub 已过 is_finite 检查 ⇒ next_int 有限，比较无 NaN。
-                let next_int = lb.floor() + 1.0;
-                if next_int > ub {
-                    continue; // 界内无更大整数（含已固定列）⇒ 保守跳过
-                }
-                if rc[j] * (next_int - lb) >= tau_eff {
-                    bounds.ub[j] = lb; // lb_j = ub_j = 下界值（只收紧 ub）
-                    fixed += 1;
-                }
+        if at_lower {
+            // x̄_j = lb_j；最小整数抬离量 δ_min = (⌊lb⌋+1) − lb。
+            // lb/ub 已过 is_finite 检查 ⇒ next_int 有限，比较无 NaN。
+            let next_int = lb.floor() + 1.0;
+            if next_int > ub {
+                continue; // 界内无更大整数（含已固定列）⇒ 保守跳过
             }
-            NonbasicSide::AtUpper => {
-                // x̄_j = ub_j；最小整数抬离量 δ_min = ub − (⌈ub⌉−1)。
-                let prev_int = ub.ceil() - 1.0;
-                if prev_int < lb {
-                    continue; // 界内无更小整数（含已固定列）⇒ 保守跳过
-                }
-                if -rc[j] * (ub - prev_int) >= tau_eff {
-                    bounds.lb[j] = ub; // lb_j = ub_j = 上界值（只收紧 lb）
-                    fixed += 1;
-                }
+            if rc[j] * (next_int - lb) >= tau_eff {
+                entries.push(RcFixEntry {
+                    var: j,
+                    tighten_lb: false,
+                    value: lb,
+                });
+            }
+        } else {
+            // x̄_j = ub_j；最小整数抬离量 δ_min = ub − (⌈ub⌉−1)。
+            let prev_int = ub.ceil() - 1.0;
+            if prev_int < lb {
+                continue; // 界内无更小整数（含已固定列）⇒ 保守跳过
+            }
+            if -rc[j] * (ub - prev_int) >= tau_eff {
+                entries.push(RcFixEntry {
+                    var: j,
+                    tighten_lb: true,
+                    value: ub,
+                });
             }
         }
     }
-    fixed
+    entries
+}
+
+/// 树内再应用次数上限（S13-A）：incumbent 严格改进的次数在大树上有限，
+/// 且随 τ = z_inc − z̄ 缩小、合格列集合快速饱和（已固定列后续轮次天然
+/// 跳过，每轮新固定数单调不增、末轮通常为 0）——超出若干次后纯付
+/// O(n_int) 扫描开销而无树收缩收益。取 6 为「覆盖改进序列早期高收益段」
+/// 的保守预算；具名 const 供消融调整。
+pub(crate) const RC_REFIX_MAX_REAPPLIES: u64 = 6;
+
+/// 根基 LP 对偶快照（S13-A 树内再应用的缓存输入）：根阶段末（根 LP +
+/// 根割循环 + 根启发式 + 根固定完成点）一次性捕获，此后**不重解 LP**——
+/// 再应用全部消费本快照（rc 向量、非基贴界状态、z̄ 口径）与单调推进的
+/// 全局基础界副本。
+pub(crate) struct RootRcCache {
+    sense: Sense,
+    obj_offset: f64,
+    obj_integral: bool,
+    int_vars: Vec<usize>,
+    /// 根 LP 目标（原始口径；z̄ 由 [`rc_fix_threshold`] 现算）。
+    z_lp: f64,
+    /// 结构列检验数（含根割行的完整表格口径）。
+    rc: Vec<f64>,
+    /// 非基贴界状态表（0 = 基列/未知；1 = 贴下界；2 = 贴上界）。
+    side: Vec<u8>,
+    n_struct: usize,
+    /// 全局基础界副本（含根固定；树内再固定在此副本上单调推进——δ_min
+    /// 甄别与「已固定列不再重复固定」的唯一口径。活搜索界只经追加日志
+    /// 取交获得固定，绝不回写搜索侧状态到本副本）。
+    base: Bounds,
+}
+
+/// 捕获根基快照（调用点 = 根阶段 reduced-cost 固定点：引擎恰在含割根 LP
+/// 的最优基上，rc/side 与 [`apply_root_rc_fixing`] 同刻同源；传入 `bounds`
+/// 为含根固定后的全树基础界 ⇒ 再应用天然跳过根固定列，计数不重）。
+pub(crate) fn capture_root_rc_cache(
+    problem: &Problem,
+    int_vars: &[usize],
+    bounds: &Bounds,
+    engine: &dyn LpEngine,
+    z_lp: f64,
+    obj_integral: bool,
+) -> RootRcCache {
+    let (rc, side, n_struct) = rc_dual_snapshot(engine);
+    RootRcCache {
+        sense: problem.sense,
+        obj_offset: problem.obj_offset,
+        obj_integral,
+        int_vars: int_vars.to_vec(),
+        z_lp,
+        rc,
+        side,
+        n_struct,
+        base: bounds.clone(),
+    }
+}
+
+/// S13-A 树内再应用状态（顺序/并行两路同口径共用；并行侧置入 [`crate::
+/// parallel_bb::Shared`] 锁内，触发点见各接线注释）。
+///
+/// 【有效性论证——S12 论证的增量沿用】对**同一**根基 rc 向量、贴界状态与
+/// z̄（快照缓存，不重解 LP）：incumbent 严格改进 ⇒ 新 τ' = z_inc' − z̄ <
+/// 旧 τ（min 内部口径下单调缩小），阈值条件 rc_j·δ_min ≥ τ' 更易满足 ⇒
+/// 合格列集合相对旧 τ **单调扩大**——τ 变小只会多固定列、已合格的列保持
+/// 合格；而每个**新**固定列的保最优论证与 S12 逐字重放（LP 对偶界恒等式
+/// obj(x) = z_lp + Σ rc_k·(x_k − x̄_k) 对任何 LP 可行解恒成立，与 incumbent
+/// 是谁无关；把论证中的 z_inc 换成 z_inc' 后「obj(x) ≥ z_lp + τ' > z_inc'」
+/// 与「obj(x) < z_inc'」的矛盾推导一字不改）⇒ **任何比新 incumbent 严格
+/// 更优的整数可行解必满足全部固定界**（新旧的并集）。故固定集合只随
+/// incumbent 改进单调收紧、限制后搜索的最优值与原问题恒同（数学红线）。
+///
+/// 作用域：全局界收紧只经 [`Self::intersect`] 影响**未探索**子树（顺序侧
+/// 在节点弹出展开时、并行侧在池弹出取节点时与界快照取交）；已固定列被
+/// 后续轮次的扫描天然跳过（base 副本 lb=ub ⇒ 界内无整数）⇒ 不重。
+///
+/// 【方向性警示（防后人按规格原文「改错」）】部分外部规格文本写「τ 变小
+/// 只会少固定」——方向**反了**：τ 变小 ⇒ 阈值条件 rc·δ ≥ τ 更易满足 ⇒
+/// 合格列集合单调扩大、只会**多**固定（本注释与代码为正确方向）。安全性
+/// 不来自「固定得少」，而来自上面逐字重放的 S12 论证对任意有效 z_inc 均成立。
+pub(crate) struct RcRefixState {
+    cache: RootRcCache,
+    /// 追加式固定日志（顺序侧展开取交 / 并行侧池弹出取交的唯一载体）。
+    log: Vec<RcFixEntry>,
+    /// 再应用执行次数（含执行后新固定 0 列；上限 [`RC_REFIX_MAX_REAPPLIES`]）。
+    reapplies: u64,
+    /// 再应用累计新固定列数（不含根阶段计数；见字段文档「不重」论证）。
+    refixed: u64,
+}
+
+impl RcRefixState {
+    /// 由根基快照构建（捕获后根阶段状态不再变更）。
+    pub(crate) fn new(cache: RootRcCache) -> Self {
+        RcRefixState {
+            cache,
+            log: Vec::new(),
+            reapplies: 0,
+            refixed: 0,
+        }
+    }
+
+    /// incumbent 严格改进事件上推进一次再应用：预算内以 τ = z_inc − z̄ 对
+    /// 同一根基快照重跑固定规则（[`rc_fix_scan`]，与 S12 根阶段同一实现），
+    /// 新固定写入全局基础界副本并追加日志。返回本轮新固定列数（预算耗尽 /
+    /// τ ≤ 0 / 非有限值 ⇒ 0）。纯快照扫描：不读墙钟、不碰随机数、int_vars
+    /// 升序 ⇒ threads=1 下对给定改进事件序列完全确定。
+    pub(crate) fn on_improvement(&mut self, z_inc: f64) -> usize {
+        if self.reapplies >= RC_REFIX_MAX_REAPPLIES {
+            return 0; // 预算封顶（改进次数有限且收益递减，见常量注释）
+        }
+        self.reapplies += 1;
+        let Some(tau_eff) = rc_fix_threshold(
+            self.cache.sense,
+            self.cache.obj_offset,
+            self.cache.z_lp,
+            Some(z_inc),
+            self.cache.obj_integral,
+        ) else {
+            return 0; // τ ≤ 0（incumbent 已被证到收紧界）/ 非有限值 ⇒ 本轮空转
+        };
+        let entries = rc_fix_scan(
+            &self.cache.int_vars,
+            &self.cache.rc,
+            &self.cache.side,
+            self.cache.n_struct,
+            &self.cache.base,
+            tau_eff,
+        );
+        for e in &entries {
+            rc_fix_apply(&mut self.cache.base, e);
+            self.log.push(*e);
+        }
+        self.refixed += entries.len() as u64;
+        entries.len()
+    }
+
+    /// 已入栈节点的界快照与全局固定在**展开时取交**（顺序侧节点弹出后、
+    /// 并行侧池弹出后调用）：逐条收紧（`Bounds::tighten_lb/ub` 的只收紧
+    /// 语义 ⇒ 幂等，重复应用不叠加深收紧——**不重**）；任一列区间取交后
+    /// 为空 ⇒ 返回 false，调用方按 (f) 剪枝关闭该子树（不 resolve、不计
+    /// 节点——该子树不含任何「严格更优解必落入」的固定域，**不漏**）。
+    pub(crate) fn intersect(&self, bounds: &mut Bounds) -> bool {
+        for e in &self.log {
+            let ok = if e.tighten_lb {
+                bounds.tighten_lb(e.var, e.value)
+            } else {
+                bounds.tighten_ub(e.var, e.value)
+            };
+            if !ok {
+                return false; // 取交空界：子树关闭
+            }
+        }
+        true
+    }
+
+    /// 是否已有任何固定条目（无则调用方可零开销直通，不碰节点界）。
+    pub(crate) fn has_fixes(&self) -> bool {
+        !self.log.is_empty()
+    }
+
+    /// (再应用次数, 累计固定数)——统计外显口径（[`BbStats`] 同名字段）。
+    pub(crate) fn counts(&self) -> (u64, u64) {
+        (self.reapplies, self.refixed)
+    }
+}
+
+/// incumbent 严格改进判定（S13-A 触发口径；pub(crate) 供并行侧共用）：
+/// 按原始 sense 方向严格更优；`None → Some`（首个 incumbent）也算改进——
+/// 根启发式 miss 时树内首个解必须触发再应用（τ 从不可用变为可用）。
+pub(crate) fn incumbent_improved(sense: Sense, before: Option<f64>, after: Option<f64>) -> bool {
+    match (before, after) {
+        (Some(a), Some(b)) => match sense {
+            Sense::Maximize => b > a,
+            Sense::Minimize => b < a,
+        },
+        (None, Some(_)) => true,
+        _ => false,
+    }
+}
+
+/// S13-A 触发判定与推进（顺序侧在每处 [`branch_or_close`] 之后调用；纯
+/// 记账 + 快照扫描，不触碰搜索状态）。旗标关 ⇒ `rc_refix = None` 直通。
+fn rc_refix_on_improvement(
+    rc_refix: Option<&mut RcRefixState>,
+    stats: &mut BbStats,
+    sense: Sense,
+    before: Option<f64>,
+    after: Option<f64>,
+) {
+    let Some(state) = rc_refix else {
+        return;
+    };
+    if !incumbent_improved(sense, before, after) {
+        return;
+    }
+    let Some(z_inc) = after else {
+        return; // 防御：improved ⇒ after 必 Some
+    };
+    state.on_improvement(z_inc);
+    let (reapplies, refixed) = state.counts();
+    stats.rc_reapplies = reapplies;
+    stats.rc_refixed = refixed;
 }
 
 /// (d) 有效剪枝界合成（pub(crate)：顺序/并行三调用点同口径的唯一实现，
@@ -2750,8 +3059,14 @@ mod tests {
         // 1,928/23,050，深限 8 终档节点再降、迭代含 sub-MIP 嵌套 resolve。））
         // （方向 3 根 reduced-cost 固定：根 incumbent 已达收紧界邻域 ⇒
         // 非活跃整数列按对偶界固定，1,725→1,596 节点；目标恒 2331。）
-        assert_eq!(off_auto.stats.nodes, 1596, "adaptive-on off-cut = 方向3终档 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 18883);
+        // （S13-A 树内再应用：incumbent 改进处以更小 τ 对同一根基快照补
+        // 固定（本口径 rc = 42 根固定 / 1 次再应用 / 12 新固定列）——再固定
+        // 改变子节点退化基的主元路径 ⇒ 树形 1,596→1,620 节点、迭代
+        // 18,883→17,258（节点数非单调、迭代数下降，均属预期：固定只收紧
+        // 可行域，树形非单调；目标恒 2331。净性能定档由 S13-B 的 A/B 矩阵
+        // 另行裁决，本测试只钉确定性与目标恒同。））
+        assert_eq!(off_auto.stats.nodes, 1620, "S13-A 树内再应用后的 raw 基线");
+        assert_eq!(off_auto.stats.lp_iterations, 17258);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
@@ -2847,10 +3162,11 @@ mod tests {
     }
 
     /// （W1）门命中 ⇒ threads=4 输出与 threads=1 **逐字节相同**（同一顺序
-    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 95 节点
-    ///（方向 1 后口径 93；方向 3 根 reduced-cost 固定后：固定列被定价跳过
-    /// 改变子节点退化基的主元路径 ⇒ 树形 93→95，目标恒 523 不变——固定只
-    /// 收紧可行域，节点数非单调是预期行为）< 512 探测预算 ⇒ 门命中。行为
+    /// 代码路径；仅 time_ms 计时字段不同）：hard-knapsack-12 t1 = 91 节点
+    ///（方向 1 后口径 93；方向 3 根固定后 95；S13-A 树内再应用后：incumbent
+    /// 改进处的再固定改变子节点退化基的主元路径 ⇒ 树形 95→91，目标恒 523
+    /// 不变——固定只收紧可行域，节点数非单调是预期行为）< 512 探测预算 ⇒
+    /// 门命中。行为
     /// 字段全比：status/objective/values/nodes/lp_iterations/
     /// cuts/bound/gap_terminated/auto_degraded。
     #[test]
@@ -2883,7 +3199,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(t1.status, SolveStatus::Optimal);
-        assert_eq!(t1.stats.nodes, 95, "方向 3 后 t1 节点数（方向 1 口径 93 → 95）");
+        assert_eq!(t1.stats.nodes, 91, "S13-A 树内再应用后 t1 节点数（方向 3 口径 95 → 91）");
         let t4 = branch_and_bound_controlled(
             &p,
             &BbOptions::default(),
@@ -3242,9 +3558,11 @@ mod tests {
         assert!((t_off - 1.5).abs() < 1e-7, "offset 在差值中消去（实际 {t_off}）");
     }
 
-    /// （方向 3 ④）无 incumbent ⇒ 跳过本轮固定：纯函数 z_inc = None ⇒
-    /// None；端到端：关启发式（根阶段无 incumbent 来源）即便选项开启也
-    /// 零固定、零行为影响（搜索自身仍完备证到最优 10）。
+    /// （方向 3 ④）无 incumbent ⇒ 跳过**根阶段**固定：纯函数 z_inc = None ⇒
+    /// None；端到端：关启发式（根阶段无 incumbent 来源）即便选项开启也零
+    /// **根**固定（rc_fixed = 0；S13-A 起树内首个整数解仍会触发一次再应用，
+    /// 不再是整轮零行为——up 子树取交后不可行，迭代数与 off 不同属预期，
+    /// 节点数/目标/解恒同）。搜索自身仍完备证到最优 10。
     #[test]
     fn root_rc_fixing_skips_without_incumbent() {
         assert!(rc_fix_threshold(Sense::Minimize, 0.0, 9.5, None, true).is_none());
@@ -3260,8 +3578,10 @@ mod tests {
         let r = branch_and_bound(&p, &opts, tol()).unwrap();
         assert_eq!(r.status, SolveStatus::Optimal, "无 incumbent 路径自身完备");
         assert_close(r.best_objective.unwrap(), 10.0);
-        assert_eq!(r.stats.rc_fixed, 0, "无 incumbent ⇒ 跳过固定");
-        // off 路径与「选项关」逐字节一致（跳过 = 不触碰任何状态）。
+        assert_eq!(r.stats.rc_fixed, 0, "无根 incumbent ⇒ 跳过根固定");
+        // off：两级全关。节点数与目标/解恒同；迭代数差异（on 的 up 子树
+        // 取交后不可行，主元更少）属 S13-A 预期行为，不再作 on/off 逐字节
+        // 断言——迭代数逐字节一致改在「同配置双跑」确定性口径下钉。
         let r_off = branch_and_bound(
             &p,
             &BbOptions {
@@ -3272,7 +3592,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.stats.nodes, r_off.stats.nodes);
-        assert_eq!(r.stats.lp_iterations, r_off.stats.lp_iterations);
+        assert_close(r_off.best_objective.unwrap(), 10.0);
+        let r2 = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(r.stats.lp_iterations, r2.stats.lp_iterations, "同配置双跑逐字节（确定性）");
     }
 
     /// （方向 3 ⑤）固定计数访问器与确定性：触发载体（无割）双跑全部行为
@@ -3332,6 +3654,279 @@ mod tests {
         assert_eq!(rev.status, SolveStatus::Optimal);
         assert_close(rev.best_objective.unwrap(), 10.0);
         assert_eq!(rev.stats.rc_fixed, 1, "稀疏引擎访问面同源：恰固定 a 列");
+    }
+
+    // ===================== S13-A：树内再应用 RCN 固定 ======================
+
+    /// 由触发载体构建已求解的根引擎与再应用状态（单测共用；无割根态）。
+    fn rc_refix_state_for_fire_problem() -> RcRefixState {
+        let p = rc_fix_fire_problem();
+        let mut simplex = crate::simplex::Simplex::new(&p, tol()).unwrap();
+        let bounds = crate::simplex::Bounds::from_problem(&p);
+        let sol = simplex.solve(&bounds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        RcRefixState::new(capture_root_rc_cache(
+            &p,
+            &p.integer_vars(),
+            &bounds,
+            &simplex,
+            sol.objective,
+            objective_is_integral(&p),
+        ))
+    }
+
+    /// （S13-A ①）触发与计数单调：首个树内 incumbent（关启发式 ⇒ 根阶段
+    /// 无 incumbent）触发一次再应用，τ = 1 ⇒ 恰固定 a 列；目标恒 10、解恒
+    /// [1,0]；双跑逐字节确定（threads=1 改进事件序列确定）；旗标 off ⇒
+    /// 三计数全 0 且目标/解恒同（off 路径 = S13-A 之前的旧行为）。
+    #[test]
+    fn rc_refix_triggers_on_first_tree_incumbent() {
+        let p = rc_fix_fire_problem();
+        let opts = BbOptions {
+            root_cuts: false,
+            heuristics: false,
+            ..BbOptions::default()
+        };
+        let on = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(on.status, SolveStatus::Optimal);
+        assert_close(on.best_objective.unwrap(), 10.0);
+        assert_eq!(on.best_values.unwrap(), vec![1.0, 0.0]);
+        assert_eq!(on.stats.rc_fixed, 0, "无根 incumbent ⇒ 根固定未触发");
+        assert_eq!(on.stats.rc_reapplies, 1, "首个树内 incumbent 恰触发一次再应用");
+        assert_eq!(on.stats.rc_refixed, 1, "τ = 1 < 7 = |rc(a)|·δ ⇒ a 固定");
+        // 双跑确定性（除计时字段 time_ms 外全部行为字段逐字节相同）。
+        let on2 = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(on.stats.nodes, on2.stats.nodes);
+        assert_eq!(on.stats.lp_iterations, on2.stats.lp_iterations);
+        assert_eq!(on.stats.rc_reapplies, on2.stats.rc_reapplies);
+        assert_eq!(on.stats.rc_refixed, on2.stats.rc_refixed);
+        // off：两级全关 ⇒ 计数全 0、目标与解恒同（旧行为不变）。
+        let off = branch_and_bound(
+            &p,
+            &BbOptions {
+                root_rc_fixing: false,
+                ..opts
+            },
+            tol(),
+        )
+        .unwrap();
+        assert_eq!(off.status, SolveStatus::Optimal);
+        assert_close(off.best_objective.unwrap(), 10.0);
+        assert_eq!(off.best_values.unwrap(), vec![1.0, 0.0]);
+        assert_eq!(off.stats.rc_fixed, 0);
+        assert_eq!(off.stats.rc_reapplies, 0);
+        assert_eq!(off.stats.rc_refixed, 0);
+    }
+
+    /// （S13-A ②）预算封顶与累计单调（单元级直测 [`RcRefixState`]）：
+    /// 改进序列（Max 下目标递减）逐次触发——首次固定 a、此后 a 已固定
+    ///（base 副本 lb=ub ⇒ 扫描天然跳过）每轮新固定 0；执行次数在
+    /// [`RC_REFIX_MAX_REAPPLIES`] 处封顶，之后的触发零返回且计数不变；
+    /// 累计固定数单调不减。
+    #[test]
+    fn rc_refix_budget_cap_and_monotone_counts() {
+        let mut state = rc_refix_state_for_fire_problem();
+        assert!(!state.has_fixes(), "初始无固定条目");
+        assert_eq!(state.counts(), (0, 0));
+        assert_eq!(BbStats::default().rc_reapplies, 0);
+        assert_eq!(BbStats::default().rc_refixed, 0);
+        let z_incs = [10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0];
+        let mut cumulative = 0usize;
+        for (i, &z) in z_incs.iter().enumerate() {
+            let n = state.on_improvement(z);
+            assert!(n > 0 || i != 0, "首次触发必须固定 a（τ = 1 < 7）");
+            cumulative += n;
+            let (reapplies, refixed) = state.counts();
+            assert_eq!(refixed as usize, cumulative, "累计固定数单调不减");
+            assert_eq!(
+                reapplies,
+                (i as u64 + 1).min(RC_REFIX_MAX_REAPPLIES),
+                "执行次数在预算内推进、到 6 封顶"
+            );
+        }
+        assert_eq!(state.counts(), (RC_REFIX_MAX_REAPPLIES, 1));
+        // 封顶后再触发：零返回且计数不动。
+        assert_eq!(state.on_improvement(2.0), 0);
+        assert_eq!(state.counts(), (RC_REFIX_MAX_REAPPLIES, 1));
+    }
+
+    /// （S13-A ③）展开取交不漏不重（单元级直测 [`RcRefixState::intersect`]）：
+    /// 固定 a=1（贴上界）后——基准界取交 ⇒ lb[a] ← 1、ub 不动；**重复取交
+    /// 幂等**（固定值语义，min/max 不叠加 ⇒ 不重）；冲突子树（分支 ub[a]=0）
+    /// 取交空界 ⇒ false（调用方按 (f) 剪枝关闭，该子树无严格更优解 ⇒ 不漏）；
+    /// 未涉及列（b，基变量）不受影响。
+    #[test]
+    fn rc_refix_intersect_no_miss_no_double() {
+        let p = rc_fix_fire_problem();
+        let mut state = rc_refix_state_for_fire_problem();
+        assert_eq!(state.on_improvement(10.0), 1);
+        assert!(state.has_fixes());
+        // 基准界取交。
+        let mut b1 = crate::simplex::Bounds::from_problem(&p);
+        assert!(state.intersect(&mut b1));
+        assert_eq!(b1.lb[0], 1.0, "a 固定在上界值 1");
+        assert_eq!(b1.ub[0], 1.0);
+        // 幂等（不重）：重复取交界值不变。
+        assert!(state.intersect(&mut b1));
+        assert_eq!(b1.lb[0], 1.0);
+        assert_eq!(b1.ub[0], 1.0);
+        assert_eq!(b1.lb[1], 0.0, "基变量列 b 不受影响");
+        assert_eq!(b1.ub[1], 1.0);
+        // 冲突子树（分支 ub[a] = 0）取交空界 ⇒ false（不漏：调用方剪枝）。
+        let mut b2 = crate::simplex::Bounds::from_problem(&p);
+        b2.ub[0] = 0.0;
+        assert!(!state.intersect(&mut b2), "固定 a=1 与分支 a≤0 冲突 ⇒ 子树关闭");
+        // 无固定条目时 has_fixes = false（主循环零开销直通口径）。
+        let empty = rc_refix_state_for_fire_problem();
+        assert!(!empty.has_fixes());
+    }
+
+    /// （S13-A ⑦·复核阻断项回归钉）展开取交必须排在 tighten_child **之后**：
+    /// 分支界被全局固定蕴含的待展开节点（上行 bound ≤ 固定值 / 下行
+    /// bound ≥ 固定值）在「先取交后 tighten」的顺序下会命中 tighten_child
+    /// 的「无收缩」防御分支而被静默丢弃——其子树 ∩ 固定域**非空**、恰含
+    /// 「严格更优解必落入」的区域 ⇒ 丢最优（且与并行侧——快照创建时已含
+    /// 分支界、弹出后仅取交——口径分叉）。正确顺序下该节点照常展开：
+    /// tighten 在 unwind 恢复的压栈同态界上必然成功，取交把界收到固定域
+    /// 侧。以 pop 点的同款调用序列（基准界 → tighten_child → intersect）
+    /// 直接钉死，并钉死反序的缺陷形态防止回退。
+    #[test]
+    fn rc_refix_intersect_order_after_tighten_subsumption() {
+        let p = rc_fix_fire_problem();
+        let mut state = rc_refix_state_for_fire_problem();
+        assert_eq!(state.on_improvement(10.0), 1); // 固定 a：lb[a] ← 1（贴上界）
+        // 场景：固定落地时，列 a 的上行子节点（bound = 1，恰被固定值蕴含）
+        // 仍在栈中待展开。
+        // 正确顺序（代码现序）：tighten 在未取交的基准界上成功 ⇒ 取交非空
+        // ⇒ 节点照常处理（a 收到 [1,1]）。
+        let mut bounds = crate::simplex::Bounds::from_problem(&p);
+        let mut trail: Vec<TrailEntry> = Vec::new();
+        assert!(
+            tighten_child(&mut bounds, &mut trail, 0, true, 1.0),
+            "压栈同态界上上行分支必然收缩"
+        );
+        assert!(state.intersect(&mut bounds), "取交非空 ⇒ 节点照常展开");
+        assert_eq!(bounds.lb[0], 1.0);
+        assert_eq!(bounds.ub[0], 1.0);
+        // 反序（复核阻断项的缺陷形态）：先取交再 tighten ⇒ 无收缩防御分支
+        // 吞掉该节点——此断言钉死反序行为，防止回退到该顺序。
+        let mut bad = crate::simplex::Bounds::from_problem(&p);
+        let mut bad_trail: Vec<TrailEntry> = Vec::new();
+        assert!(state.intersect(&mut bad));
+        assert!(
+            !tighten_child(&mut bad, &mut bad_trail, 0, true, 1.0),
+            "反序下上行 bound=1 被固定 lb=1 蕴含 ⇒ 无收缩 ⇒ 节点被静默丢弃（缺陷形态）"
+        );
+        // 镜像：下行分支与固定冲突（bound=0 < 固定值 1）在正确顺序下由
+        // 取交判空关闭——合法剪枝（该子树 ∩ 固定域 = ∅，无严格更优解）。
+        let mut down = crate::simplex::Bounds::from_problem(&p);
+        let mut down_trail: Vec<TrailEntry> = Vec::new();
+        assert!(tighten_child(&mut down, &mut down_trail, 0, false, 0.0));
+        assert!(!state.intersect(&mut down), "下行 a≤0 与固定 a=1 交空 ⇒ 合法关闭");
+    }
+
+    /// （S13-A ④）并行侧同口径：threads=4 下同一载体（关割关启发式）首改进
+    /// 经 try_update_incumbent 内同径触发一次再应用、固定 a 列，计数同步入
+    /// 终局统计；终局目标/解与 t1 一致（nodes 不钉——并行 README 口径：
+    /// 跨运行可变）。
+    #[test]
+    fn rc_refix_parallel_parity() {
+        let p = rc_fix_fire_problem();
+        let opts = BbOptions {
+            root_cuts: false,
+            heuristics: false,
+            ..BbOptions::default()
+        };
+        let t4 = branch_and_bound_controlled(
+            &p,
+            &opts,
+            &SearchControl {
+                threads: 4,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t4.status, SolveStatus::Optimal);
+        assert_close(t4.best_objective.unwrap(), 10.0);
+        assert_eq!(t4.best_values.unwrap(), vec![1.0, 0.0]);
+        assert_eq!(t4.stats.rc_fixed, 0);
+        assert_eq!(t4.stats.rc_reapplies, 1, "worker (e) 改进同径触发一次");
+        assert_eq!(t4.stats.rc_refixed, 1);
+    }
+
+    /// （S13-A ⑤）真实载体恒同：mknap-3x100 默认口径（根割 + 全启发式 +
+    /// 局部割 + 根固定 + 树内再应用全开）Optimal 2331——与 S12 off 档同一
+    /// 真值（bench .opt 独立 DP 对账），再固定只收缩无更优解子树、最优值
+    /// 不变（数学红线）；再应用在真实改进序列上确实触发；双跑行为字段
+    /// 逐字节确定。
+    #[test]
+    fn rc_refix_preserves_optimum_real_carrier() {
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path))
+            .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        let on = branch_and_bound(&problem, &BbOptions::default(), Tolerances::default()).unwrap();
+        assert_eq!(on.status, SolveStatus::Optimal);
+        assert_close(on.best_objective.unwrap(), 2331.0);
+        assert!(
+            on.stats.rc_reapplies >= 1,
+            "mknap-3x100 真实改进序列应触发树内再应用（实际 {}）",
+            on.stats.rc_reapplies
+        );
+        assert!(on.stats.rc_refixed >= on.stats.rc_reapplies.min(1));
+        // 双跑确定性（threads=1：改进事件序列与扫描均为纯函数）。
+        let on2 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        assert_eq!(on.stats.nodes, on2.stats.nodes);
+        assert_eq!(on.stats.rc_fixed, on2.stats.rc_fixed);
+        assert_eq!(on.stats.rc_reapplies, on2.stats.rc_reapplies);
+        assert_eq!(on.stats.rc_refixed, on2.stats.rc_refixed);
+        assert_close(on2.best_objective.unwrap(), 2331.0);
+    }
+
+    /// （S13-A ⑥）根节点改进的触发点覆盖：关启发式 + 根 LP 恰整数 ⇒ 根
+    /// (e) 记录首个 incumbent——顺序侧经「根 branch_or_close 后」钩子、
+    /// 并行侧经「根闭合直返前的预 spawn 触发点」推进再应用（本载体
+    /// z_inc = z̄ ⇒ τ = 0 ⇒ 执行 1 次、新固定 0 列——空转路径的计数与
+    /// 根闭合直返的统计收口被覆盖）；t1/t4 计数同口径、目标恒 1。
+    #[test]
+    fn rc_refix_root_node_improvement_path_t1_t4() {
+        let mut p = Problem::new("rc-root-int", Sense::Maximize);
+        p.add_var("a", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 1.0)
+            .unwrap();
+        let opts = BbOptions {
+            root_cuts: false,
+            heuristics: false,
+            ..BbOptions::default()
+        };
+        let t1 = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(t1.status, SolveStatus::Optimal);
+        assert_close(t1.best_objective.unwrap(), 1.0);
+        assert_eq!(t1.stats.nodes, 1, "根闭合单节点");
+        assert_eq!(t1.stats.rc_fixed, 0);
+        assert_eq!(t1.stats.rc_reapplies, 1, "根 (e) 首个 incumbent 触发一次");
+        assert_eq!(t1.stats.rc_refixed, 0, "τ = 0 ⇒ 阈值 None ⇒ 空转");
+        let t4 = branch_and_bound_controlled(
+            &p,
+            &opts,
+            &SearchControl {
+                threads: 4,
+                ..SearchControl::default()
+            },
+            tol(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(t4.status, SolveStatus::Optimal);
+        assert_close(t4.best_objective.unwrap(), 1.0);
+        assert_eq!(t4.stats.nodes, 1);
+        assert_eq!(t4.stats.rc_reapplies, t1.stats.rc_reapplies, "预 spawn 触发点同口径");
+        assert_eq!(t4.stats.rc_refixed, t1.stats.rc_refixed);
     }
 
     /// 节点分类纯函数：(Unbounded, is_root=false) → FailUnbounded（整树终止

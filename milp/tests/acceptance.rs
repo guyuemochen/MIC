@@ -867,13 +867,18 @@ fn acceptance_cli_heuristic_on_identical() {
     // 定价跳过改变子节点退化基主元路径 ⇒ 树形 93→95（CLI 双跑逐字节
     // 实测；目标恒 523。复现旧行 93：库侧 BbOptions.root_rc_fixing =
     // false，CLI 不暴露该开关。））
+    // （S13-A 树内再应用 RCN 固定：树内 incumbent 改进处以更小 τ 对同一
+    // 根基快照补固定，再固定改变子节点主元路径 ⇒ 树形 95→91（CLI 双跑
+    // 逐字节实测；目标恒 523。--root-rc-fixing=off 关闭两级固定复现 93
+    //（= 方向 1 终态）；95 为 S12 终态（根固定开、再应用关），两级同门控
+    // 后不可经 CLI 单独复现。））
     assert_eq!(
         stdout,
         "status = optimal
-nodes = 95
+nodes = 91
 objective = 523.000000
 ",
-        "hard-knapsack-12 --heuristic-mode on 输出（方向 3 后确定性基线）"
+        "hard-knapsack-12 --heuristic-mode on 输出（S13-A 后确定性基线）"
     );
 }
 

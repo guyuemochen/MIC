@@ -1,4 +1,4 @@
-# milp 大规模优化轮交付报告（R1–R9 + P1–P3 + W1–W7 + S1–S12）
+# milp 大规模优化轮交付报告（R1–R9 + P1–P3 + W1–W7 + S1–S13）
 
 > 分支 `feat/gurobi-large-scale`（`git diff main...HEAD` = 10 提交：bench 扩充
 > `334e352` + 算法轮 `fc9f5ee..cac558e`，其间 `54271e4` 为本报告首版与终局
@@ -16,11 +16,12 @@
 > 见 §8；S6（Devex 定价替代 Dantzig，`84038ea`）与 S7（分离边界数值
 > 卫生闸：割清洁化 + 密度闸 + violation 复核，`3e89ec3`）续见 §8；其
 > 后 S8（混合定价负结果回退）、S9（根节点 sub-MIP 启发式）、S10（对偶
-> resolve 负结果回退）、S11（对偶 resolve 重试保留）与 S12（根阶段
-> reduced-cost 变量固定）见 §8 各节。
+> resolve 负结果回退）、S11（对偶 resolve 重试保留）、S12（根阶段
+> reduced-cost 变量固定，`817f088`）与 S13（树内 reduced-cost 再固定 +
+> CLI 可观测，工作区待提交）见 §8 各节。
 >
 > **总裁决：R1–R8 八轮保留，R9 回退（空集——无代码改动，见 R9 节）；
-> P1–P3 与 W1–W7 全部保留（见 §6/§7）；S1–S12 中除 S8、S10 负结果
+> P1–P3 与 W1–W7 全部保留（见 §6/§7）；S1–S13 中除 S8、S10 负结果
 > 回退留档外全部保留（见 §8）。**
 >
 > **数据口径声明**：各轮收益数字均为实现者/裁决在**同机同窗交错 A/B 的中位数**
@@ -1103,7 +1104,7 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 
 ---
 
-## 8. 稀疏核心与批量接口（S1–S12，`d1b581f..5d0cc01` + S8/S10 负结果留档 + S12 工作区待提交，2026-10-14/15–19）
+## 8. 稀疏核心与批量接口（S1–S13，`d1b581f..817f088` + S8/S10 负结果留档 + S13 工作区待提交，2026-10-14/15–19）
 
 > 基线 `165f31a`（bench python 对比脚手架）之后五轮：S1 批量 addVars +
 > quicksum 修复（FFI/micpython 侧）、S2 稀疏修正单纯形核心 standalone、
@@ -1118,8 +1119,9 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 > 基毒割根因修复，`3e89ec3`）见 S7 节。S9（根节点 sub-MIP 启发式，
 > S8 节后差距分析的方向 1，`a7e057a` + 验收钉值收尾 `b6efc25`）见
 > S9 节。S10（resolve 对偶单纯形化首轮，负结果留档 `2b9f8d0`）、S11
-> （其复盘修复重试，`5d0cc01`）与 S12（根阶段 reduced-cost 变量固定，
-> 方向 3 的可靠内核，工作区待提交）见各自节。
+> （其复盘修复重试，`5d0cc01`）、S12（根阶段 reduced-cost 变量固定，
+> 方向 3 的可靠内核，`817f088`）与 S13（树内 reduced-cost 再固定 +
+> CLI 可观测，S12 遗留①兑现，工作区待提交）见各自节。
 >
 > **旗标/默认值变化（本轮文档同步）**：新增 CLI `--lp-engine
 > auto|tableau|revised`（S3 接线、S4 默认翻 **auto**——表格规模 m×(n+m)
@@ -1132,8 +1134,12 @@ W6 局部割轮 Infeasible/防御回退分支不推进 `next_local_cut_node`（�
 > `--heuristic-mode` 门控（off 档根启发式整块不跑，默认 auto 不变；
 > off 档输出与改动前逐字节一致），见 S9 节。S12 亦无新 CLI 旗标——
 > 根阶段 reduced-cost 固定走库层 `BbOptions.root_rc_fixing`（默认
-> true，CLI 不暴露开关；复现旧行为需库侧置 false），默认开启，见
-> S12 节。
+> true），默认开启，见 S12 节。S13 新增 CLI `--root-rc-fixing
+> on|off`（默认 on）——两级总开关（S12 根固定 + S13-A 树内再应用同
+> 门控，映射 `BbOptions::root_rc_fixing`，off 复现 S12 之前行为）；
+> `--verbose` Optimal 输出另增固定机制统计三行（`rc_fixed` /
+> `rc_reapplies` / `rc_refixed`），非 verbose 输出逐字节不变，见
+> S13 节。
 
 ### S1（d1b581f）批量 addVars：FFI 批量符号 + micpython addVars 改走批量
 
@@ -1881,7 +1887,7 @@ deadline 且主循环跑满 64 主元间隔；该路径为 3 行条件读钟 + �
 在任务开始前已是修改态（git status 快照为证），本轮未触碰；
 simplex.rs / cuts.rs 零改动。
 
-### S12（工作区待提交，提交哈希以入库为准）根阶段 reduced-cost 变量固定 —— 方向 3 的可靠内核：对偶界驱动的整数列贴界固定
+### S12（817f088）根阶段 reduced-cost 变量固定 —— 方向 3 的可靠内核：对偶界驱动的整数列贴界固定
 
 **动机（HiGHS「77.7% 非活跃列重启」的数学内核；S9/S11 之后瓶颈轴重定位）**：
 S9 节留档的 HiGHS 证据（`milp/target/hsc_log.txt`）里，除 sub-MIP
@@ -2032,7 +2038,214 @@ gap 6.25% vs 9.34%、节点 432 vs 244——每节点 LP 更小（固定列被�
 总裁决行、§8 引言轮次哈希与旗标段——顺带补齐 S9/S11 入库哈希与 S7
 过期状态）+ 根 README milp 行能力列表与 docs 目录描述 + milp/README
 （能力边界、并行根阶段流程、B&B 小节根固定条目、hard-knapsack-12
-基线 93→95 演进史、仓库布局 branch_bound.rs 行）。
+基线 93→95 演进史、仓库布局 branch_bound.rs 行）。遗留①已于 **S13
+兑现**（见 S13 节——incumbent 严格改进驱动的同一根基再扫描 + 取交
+作用域），②③ 维持后续。
+
+### S13（工作区待提交，提交哈希以入库为准）树内 reduced-cost 再固定 + CLI 可观测 —— S12 遗留①兑现：incumbent 改进驱动的同一根基再扫描
+
+**动机（三支汇流）**：① **S12 遗留①（树内再应用）**——S12 的固定只在
+根阶段做一次，此后 incumbent 每次严格改进都使 τ = z_inc − z̄ 单调
+缩小、可固定列集单调扩大，这部分收紧潜力 S12 按「插入点注释已留位」
+留作后续；② **S12 落地时留档的口径缺口（「分支首解 incumbent」）**
+——分支首解只能出现在主循环内，触发它即树内再应用，S12 因此按
+「根启发式 incumbent、无则跳过」落地、分支首解触发版以注释记录为
+后续扩展，本轮以「incumbent 严格改进事件驱动」统一兑现（根节点
+改进与树内首改进同口径）；③ **S11/S12 后引擎定档证据积累**——S11
+翻档未执行（setcover-300x600 同窗 1.48× < 2.22× 翻档线），本轮 A/B
+顺带在 setcover 四尺度（60x100 / 100x150 / 300x600 / 400x800）上
+双引擎同窗采证（定档表见本节后段），为引擎 auto 档定档（S13-B）积累
+同窗证据。
+
+**改动摘要（本节落笔时 `git diff --numstat` 实测：milp 四文件
++903/−76——`branch_bound.rs` 654/59、`main.rs` 134/8、
+`parallel_bb.rs` 108/7、`tests/acceptance.rs` 7/2；bench/ 两件为任务
+开始前已存在的修改，本轮实现未触碰）**：
+
+- **S13-A 树内再应用（`branch_bound.rs` 为主，`parallel_bb.rs` 同口径
+  镜像）**：① S12 的固定扫描抽为共享核心 `rc_fix_scan`
+  （`branch_bound.rs:1548`）——`apply_root_rc_fixing`
+  （`branch_bound.rs:1483`）行为不变（S12 测试原样通过），树内再应用
+  消费同一扫描，杜绝两套固定规则分叉。② 新增 `RootRcCache`
+  （`branch_bound.rs:1613`；捕获点 `capture_root_rc_cache`，
+  `branch_bound.rs:1634`）：根阶段 reduced-cost 固定点（根 LP + 根割
+  + 根启发式 + 根固定全部完成、引擎恰在含割根 LP 最优基上）一次性
+  缓存 rc 向量、非基贴界状态表、z_lp 与 sense/offset/整数目标门控，
+  另持一份含根固定的全局基础界副本 base——此后树内再应用全部消费
+  该快照，**绝不重解 LP**。③ 新增 `RcRefixState`
+  （`branch_bound.rs:1678`）：`on_improvement`
+  （`branch_bound.rs:1704`）在 incumbent 严格改进事件上以
+  τ = z_inc_new − z̄ 对同一根基重跑同一扫描，新固定写入 base 副本并
+  追加日志；`intersect`（`branch_bound.rs:1739`）把追加式固定日志与
+  节点界取交。预算 `RC_REFIX_MAX_REAPPLIES` = 6（具名 const，
+  `branch_bound.rs:1607`）。④ 顺序侧接线：根 `branch_or_close` 与
+  主循环 `branch_or_close` 之后各挂触发钩子（`branch_bound.rs:964`、
+  `:1239`；统一入口 `rc_refix_on_improvement`，`branch_bound.rs:1780`）
+  ；取交在主循环节点弹出后 **unwind 恢复基础界 → `tighten_child`
+  施加分支界之后**（`branch_bound.rs:1101-1106`）——次序论证见该处
+  注释：若取交先于 tighten，分支界已被固定蕴含的待展开节点会命中
+  tighten_child 的「无收缩」防御分支被静默丢弃而**丢最优**（复核
+  阻断项，测试 `rc_refix_intersect_order_after_tighten_subsumption`
+  钉死正反两向）；取交后空界 ⇒ 该子树与固定域交空、按 (f) 剪枝关闭
+  （不 resolve、不计节点，与 est 剪枝弹出同口径）；固定只存覆盖层、
+  绝不在 unwind 可达的 trail 里，每轮弹出重施加 ⇒ unwind 不丢固定。
+  ⑤ 并行侧同口径：`Shared` 持 `Mutex<Option<RcRefixState>>`
+  （`parallel_bb.rs:329`；锁序恒 incumbent 写 → rc_refix，绝不反向
+  ⇒ 无死锁）；`try_update_incumbent` 胜者触发
+  （`parallel_bb.rs:506-512`）；根节点改进经预 spawn 触发点
+  （`parallel_bb.rs:1177`）；worker 池弹出取节点后与 PoolNode 自带
+  完整界快照取交（`parallel_bb.rs:1460` 一带，空界 ⇒ complete_node
+  空子代关闭）；三处终局收口折入统计（`parallel_bb.rs:1216/1245/
+  1333`）。⑥ 计数：`BbStats` 新增 `rc_reapplies` / `rc_refixed`
+  （`branch_bound.rs:328/331`，纯记账不参与状态判定）。
+- **S13-C CLI 旗标与可观测（`main.rs`）**：`--root-rc-fixing on|off`
+  （等号/空格两式，解析 `main.rs:464`；缺参/未知 token/重复报错）——
+  **两级总开关**（S12 根固定 + S13-A 再应用同门控，`BbOptions::
+  root_rc_fixing` 文档 `branch_bound.rs:217-221`），默认 on 映射
+  `BbOptions.root_rc_fixing`（`main.rs:547`）；off ⇒ 不捕获快照、
+  不挂触发、取交零开销直通（实测与 S12 之前行为一致：hard-knapsack-12
+  off = 93 节点 = 方向 1 终态；S12 终态 95 因两级同门控不可经 CLI
+  单独复现，acceptance 注释如实写明）。`--verbose` Optimal 输出新增
+  固定机制统计三行 `rc_fixed` / `rc_reapplies` / `rc_refixed`
+  （`main.rs:657-663`，位于变量取值之前、objective 仍为末行；全 0
+  也如实输出——观测契约稳定优先；非 verbose 输出逐字节不变）；USAGE
+  （`main.rs:45`）与模块文档同步。
+
+**保最优沿用论证（完整版写在 `RcRefixState` 文档注释，
+`branch_bound.rs:1656-1677`）**：对**同一**根基 rc 向量、贴界状态与
+z̄（快照缓存、不重解 LP）——LP 对偶界恒等式 obj(x) = z_lp +
+Σ rc_k·(x_k−x̄_k) 对任何 LP 可行解恒成立、与 incumbent 是谁无关；
+incumbent 严格改进 ⇒ τ′ 单调缩小 ⇒ 阈值条件 rc_j·δ_min ≥ τ′ 更易
+满足 ⇒ 合格列集合**单调扩大**（τ 变小只会多固定列、已合格列保持
+合格）；每个新固定列把 S12 论证中的 z_inc 换成 z_inc′ 后矛盾推导
+一字不改 ⇒ 任何比新 incumbent 严格更优的整数可行解必满足全部固定界
+（新旧并集），最优值恒同。δ_min 甄别一律以快照 base 副本为口径
+（与 x̄ 同刻的界），已固定列（lb=ub）天然跳过 ⇒ 计数不重；全局收紧
+只经 `intersect` 一个口影响**未探索**子树（`Bounds::tighten_lb/ub`
+只收紧语义 ⇒ 幂等不重；空界剪枝 ⇒ 不漏）。threads=1 走顺序路径：
+改进事件序列确定、扫描为纯函数（int_vars 升序、无墙钟、无随机）⇒
+完全确定（双跑测试钉死）。预算语义：每个严格改进事件至多消耗一次
+执行（含 τ ≤ 0 空转——空转也如实计数 `rc_reapplies`、新固定 0）；
+上限 6 的依据（改进次数有限且 τ 缩小后合格列快速饱和、末轮通常 0
+新固定，超出纯付 O(n_int) 扫描开销）写在常量注释。
+
+**测试（新增 branch_bound 7 个 `#[test]` + main 2 个；任务书口径
+6+2，代码含取交次序防御钉 1 个）**：`branch_bound.rs`——① 触发
+（`rc_refix_triggers_on_first_tree_incumbent`，`:3683`：手工推导
+载体关启发式 ⇒ 树内首改进恰触发一次、固定 a 列、目标/解恒同、双跑
+逐字节、off 三计数全 0）；② 预算封顶与累计单调（`:3727`，单元级
+8 连击、6 封顶）；③ 取交不漏不重（`:3759`，幂等 + 冲突子树关闭 +
+基列不动）+ 次序防御钉（`:3794`，取交必须在 tighten_child 之后——
+蕴含节点的「无收缩」丢弃形态钉死防回退）；④ t4 并行同口径
+（`:3833`）；⑤ mknap-3x100 真实载体（`:3865`，Optimal 2331、
+rc =（42, 1, 12）、双跑确定）；⑥ 根节点改进路径 t1/t4（`:3896`，
+含 τ=0 空转计数与根闭合直返收口）。`main.rs`——旗标解析/映射全表
+（`:1269`，两式 token 全表 + 缺参/未知/重复报错 + off 映射）与
+verbose 三行契约（`:1385`，零值与非零值两档）。
+
+**受影响基线重钉（4 处，S13-A 归因注释均写明，objective 断言全部
+不动）**：`local_cuts_fire`（`branch_bound.rs:3002`）off_auto 口径
+1596→1620 节点、18883→17258 迭代；`small_tree_gate` t1 口径 95→91；
+acceptance CLI hard-knapsack-12 95→91（`:878`）；`root_rc_fixing_
+skips_without_incumbent` 的「on/off 迭代数逐字节一致」断言改为
+「同配置双跑逐字节 + 节点数/目标恒同」（S13-A 起无根 incumbent 时
+树内首改进会触发再固定、up 子树 LP 走不可行路径，3 vs 4 主元属
+预期；根阶段零固定断言 rc_fixed=0 保留）。
+
+**A/B 实测（同窗交错、threads=1，基线 = S12 入库版（`817f088`）
+二进制；裁决比值 = min(新)/min(基线)，按未取整值计算）**：
+
+| 算例 | 配置 | 各次秒 | min | 节点 | 目标 |
+| --- | --- | --- | --- | --- | --- |
+| setcover-60x100 | 基线·revised | 0.088 / 0.069 / 0.047 | 0.05 | 1 | 243 |
+| setcover-60x100 | 新·revised | 0.058 / 0.036 / 0.036 | 0.04 | 1 | 243 |
+| setcover-60x100 | 新·tableau | 0.042 / 0.038 / 0.051 | 0.04 | 1 | 243 |
+| setcover-100x150 | 基线·revised | 0.489 / 0.503 / 0.625 | 0.49 | 17 | 276 |
+| setcover-100x150 | 新·revised | 0.479 / 0.49 / 0.519 | 0.48 | 17 | 276 |
+| setcover-100x150 | 新·tableau | 0.272 / 0.275 / 0.262 | 0.26 | 9 | 276 |
+| setcover-300x600 | 基线·revised | 7.614 / 7.711 / 7.923 | 7.61 | 224 | 144 |
+| setcover-300x600 | 新·revised | 7.759 / 7.713 / 7.462 | 7.46 | 218 | 144 |
+| setcover-300x600 | 基线·tableau | 19.467 / 19.831 / 61.536 | 19.47 | 577 | 144 |
+| setcover-300x600 | 新·tableau | 19.813 / 19.737 / 59.13 | 19.74 | 577 | 144 |
+| setcover-400x800 | 基线·revised | 31.18 / 39.326 / 41.162 | 31.18 | 269 | 113 |
+| setcover-400x800 | 新·revised | 29.479 / 44.392 / 36.641 | 29.48 | 269 | 113 |
+| setcover-400x800 | 新·tableau | 42.584 / 56.006 / 40.127 | 40.13 | 279 | 113 |
+| mknap-5x300 | 基线·revised | 11.763 / 14.262 / 13.088 | 11.76 | 135487 | 4762 |
+| mknap-5x300 | 新·revised | 7.633 / 8.448 / 13.033 | 7.63 | 128524 | 4762 |
+| knapsack-5000 | 基线·revised | 0.419 / 0.232 / 0.225 | 0.23 | 165 | 88526 |
+| knapsack-5000 | 新·revised | 0.247 / 0.208 / 0.184 | 0.18 | 165 | 88526 |
+| marketsplit-4x40 | 基线·auto | 10.805 / 12.137 / 10.045 | 10.04 | 854952 | 19 |
+| marketsplit-4x40 | 新·auto | 10.34 / 9.269 / 9.94 | 9.27 | 854952 | 19 |
+| lp-sparse-4000x800 | 基线·revised | 5.651 / 5.616 / 5.455 | 5.46 | 1 | 5893.705757 |
+| lp-sparse-4000x800 | 新·revised | 5.472 / 5.455 / 5.617 | 5.46 | 1 | 5893.705757 |
+
+裁决：mknap-5x300 **0.65×**（7.63/11.76，节点 135487→128524 即
+−5.1%——收益主体在每节点成本/迭代面）；knapsack-5000 0.82×（节点
+165 两侧恒同，纯每节点成本面）；setcover-60x100 0.77×（节点 1 两侧
+恒同；毫秒级算例区间重叠 [0.047, 0.088] vs [0.036, 0.058]，方向性
+参考）；setcover-100x150 0.98×（节点 17 恒同）；setcover-300x600
+0.98×（节点 224→218）；setcover-400x800 0.95×（节点 269 恒同）；
+marketsplit-4x40 0.92×（节点 854952 两侧逐字节相同——行为零扰动，
+比值属窗口噪声带）；lp-sparse-4000x800 恒等 1.00（纯 LP 类，节点 1）。
+**目标恒同对账：全表最优目标极差全部 0.00**（243 / 276 / 144 /
+113 / 4762 / 88526 / 19 / 5893.705757）。
+
+**setcover 四尺度引擎定档采证（新·tableau vs 新·revised 同窗数据；
+S13-B 素材，本轮定档未调整）**：
+
+| 算例（表格规模） | tab/rev（min 比） | 三次区间秒（tableau vs revised） | 判读 |
+| --- | --- | --- | --- |
+| setcover-60x100（约 25k 格） | 1.06 | [0.038, 0.051] vs [0.036, 0.058] | 区间重叠，噪声带 |
+| setcover-100x150（约 37.5k 格） | 0.55 | [0.262, 0.275] vs [0.479, 0.519] | 区间不相交，tableau 显著更快 |
+| setcover-300x600（约 270k 格） | 2.65 | [19.74, 59.13] vs [7.46, 7.76] | 区间不相交，revised 显著更快 |
+| setcover-400x800（约 480k 格） | 1.36 | [40.13, 56.01] vs [29.48, 44.39] | 区间交叠，revised 占优不稳 |
+
+判读：setcover 类引擎优劣在尺度轴上**非单调**（100x150 tableau 快
+约 1.8×、300x600 revised 快 2.65×、400x800 revised 占优 1.36× 但
+区间交叠）——不能用单阈值规则简单翻档；四算例当前全在 auto 档
+10^6 格阈下走 tableau。auto 档定档（300x600 类是否下调阈值改走
+revised、100x150 是否守 tableau）按本轮裁决**未调整**（证据未过线
+或门禁未过——100x150/400x800 方向相反或交叠，300x600 单点过 2×
+线但非单调规则不足以定档），完整 A/B 矩阵与门禁为 S13-B 职责。
+
+**测试与门禁**：实现者会话实测（任务书记录口径）：`cargo test
+--manifest-path milp/Cargo.toml --quiet`（debug 全套）lib **328 通过
+/ 4 忽略**（既有 `#[ignore]`）、bin 25 通过、acceptance 13 通过 /
+2 忽略（既有）、warm_cold_parity 1 通过；按仓库惯例补跑
+`cargo test --manifest-path milp/Cargo.toml --release --quiet --test
+acceptance` **13 通过 / 2 忽略**。CLI 实测 hard-knapsack-12
+`--heuristic-mode on`：nodes 91、rc =（2, 1, 2）（rc_fixed=2 /
+rc_reapplies=1 / rc_refixed=2）；`--root-rc-fixing=off`：nodes 93
+（= 方向 1 终态）、三计数全 0。milp-ffi release 构建 OK（ABI 未动，
+符号面零变化）。文档收尾会话（本节落笔时）为纯文档改动，未复跑
+编译面与测试套件（门禁均为实现者会话口径）。
+
+**结论与遗留**：S13-A/C **保留**——mknap-5x300 0.65×、knapsack-5000
+0.82×、setcover 类 0.77–0.98× 无回退，对照类（marketsplit/lp）行为
+逐字节不变；默认开启、顺序/并行同口径、保最优论证完备（S12 逐字
+重放）、off 档与 S12 之前行为一致。遗留：① **S13-B（引擎 auto 档
+定档采证）**——四尺度证据已入本节，定档决策（含 300x600 类下调
+revised 阈值的评估）留专门轮次按同窗 A/B 矩阵与门禁执行；②
+mknap-3x100 树形非单调观察（off_auto 口径再应用使节点 1596→1620
+即 +24、迭代 18883→17258 即 −8.6%；默认全开口径 nodes=1544、rc=
+（42, 1, 12））留 S13-B 净性能裁决——再固定改变子节点退化基主元
+路径、树形非单调与 S12 落地时 93→95 同性质，测试注释已写明只钉
+确定性与目标恒同；③ **S14 主角：clique/cover 割族**（S9/S11/S12
+一脉的方向 4）——根阶段组合割补强对偶界，与本轮固定天然互补
+（更紧的 z_lp 直接放大可固定列集）；④ S12 遗留②（连续列区间
+收紧）维持后续。
+
+**实现者上报四点（如实转录）**：① **护栏边缘偏离**——
+`milp/tests/acceptance.rs` 的 CLI 钉值重钉（hard-knapsack-12 95→91
++ 注释）不在护栏点名的三个源文件（branch_bound/parallel_bb/main）
+内，但 ask 指名的检查含 tests/、默认 on 的行为变化必须重钉才能
+通过；如判定越界可回退该文件并将该测试标 xfail/ignore 待裁决。
+② mknap-3x100 性能观察（节点 +24 / 迭代 −8.6%）留 S13-B 裁决（即
+遗留②）。③ 旧断言语义调整——`root_rc_fixing_skips_without_
+incumbent` 见上文重钉段。④ 未跑项——planner crate 未跑（本轮零
+改动、与 milp 不共享代码）；S13-B 未动；bench/python_bench_results.*
+两文件的改动是任务开始前已存在的（初始 git status 快照为证），
+本轮实现未触碰 bench/ 与 docs/（文档收尾除外）。
 
 ### 8.6 lp-engine 双引擎架构（S2–S4、S6 落地后的形态）
 
