@@ -75,9 +75,11 @@
 //! 连续列经其有限界参与折叠、不做整性假设。
 //!
 //! [`cut_loop_recorded`] 每轮割批的确定性合并序（WP6 起，R2-retry 增聚合
-//! MIR）：**c-MIR → GMI → 聚合 MIR → 隐含界割 → 覆盖割（提升）**，统一截断
-//! `max_cuts_per_round`，全部照走 `add_row` + [`CutRecord`] 记账（worker
-//! 按序重放契约不变）。
+//! MIR，S14 增模 2 族）：**c-MIR → GMI → 聚合 MIR → 模 2/{0,½} → 隐含界割
+//! → 覆盖割（提升）**，统一截断 `max_cuts_per_round`，全部照走 `add_row`
+//! + [`CutRecord`] 记账（worker 按序重放契约不变）。S14-第一步起施加按
+//! 小批增量纪律（每 [`CUT_APPLY_CHUNK`] 条一批，收敛一批提交一批，超限只
+//! 回退最后一批，见 [`cut_loop_recorded`] 文档）。
 //!
 //! # 表格行聚合 MIR（R2-retry，仅根节点；O3 留档方案的可实现形态）
 //!
@@ -93,6 +95,21 @@
 //! 公式——**连续/松弛列 π≠0 保留**。有效性经 50 种子随机小模型穷举验证
 //! （302 条割零误切）；默认参数窗口即非零产出（mknap-3x100 8 条、
 //! mknap-5x300 25 条、setcover-100x150 386 条/轮，viol 至 0.98）。
+//!
+//! # 模 2/{0,½} 组合割（S14-第二步，仅根节点）
+//!
+//! S14 诊断：setcover-300x600 上 73 条强候选被密度闸拒（nnz 586-591/600、
+//! viol med 1.0）——表格信息存在但割近稠密；对标 SCIP zerohalf 单族
+//! （20 条割界 134.43→136.10）落地 [`zerohalf_cuts`]：Le 视图原始行按模 2
+//! 整数算术合并（y ∈ {0,1} 非负组合）、同列系数奇偶相消（偶列在 GMI
+//! 整数公式下 π=0；符号相反可精确相消至零列）、合并行支撑 = 所选行支撑
+//! 并集——**密度控制内生于构造**而非后处理截断（截断路线已证伪：尾部是
+//! 实质系数，0/100 存活）。半尺度 ÷2 后对偏差行套与 GMI 相同的混合整数
+//! 公式（连续/松弛列照走 [`continuous_pi`] 连续公式）；全列偶情形与
+//! Chvátal-Gomory 模 2 特例（λ = y/2 ≥ 0、λᵀA ∈ Zⁿ ⇒ λᵀAx ≤ ⌊λᵀb⌋）等价，
+//! 完整有效性论证与构造细节见 [`zerohalf_cuts`] 文档，50 种子穷举 fuzz 见
+//! tests::zerohalf_fuzz_validity。产出照走 sanitize 单点闸（判据与 nnz
+//! 上限一字不动）——过闸是验收。
 //!
 //! # 序贯 up-lifting 的预算与正确性（WP6）
 //!
@@ -167,6 +184,17 @@ const CUT_DENSITY_NNZ_FLOOR: usize = 200;
 /// 密度闸 nnz 上限的相对系数：上限 = max(下限, ⌈n × 此值⌉)，n 为结构
 /// 列数。取值依据见 [`sanitize_cut`]。
 const CUT_DENSITY_NNZ_FRAC: f64 = 0.1;
+
+/// 小批施加的批大小（S14-第一步）：每轮过闸割批（≤ max_cuts_per_round，
+/// 割集合与施加序不变）按此大小切分为连续小批，逐批 add_row 记账后做一次
+/// 预算内 resolve——**收敛一批提交一批**；某小批 resolve 触发迭代上限时
+/// 只回退该小批（而非整轮全弃），此前已收敛提交的小批保留。取 10（S14
+/// 诊断窗口 8-10 的上沿；窗口内实测选档：8 在 setcover-100x150（tableau
+/// 引擎）上把根割集扰动到启发式 dive 后的记账性 resolve 退化爬行超 10k
+/// 迭代上限 ⇒ 整树 limit_reached 无解终态（基线 optimal/9 节点）；10 于
+/// 同算例恢复 optimal 且 sc300/mknap 无恙。中间 resolve 次数放大约
+/// ⌈40/10⌉=4 倍/轮，10 在回滚粒度与暖启动 resolve 成本间取衡）。
+const CUT_APPLY_CHUNK: usize = 10;
 
 /// 结构变量空间的一条割（op 恒为 Le）。
 #[derive(Debug, Clone)]
@@ -1305,6 +1333,37 @@ const AGG_MIR_MAX_TRIES: usize = 64;
 /// ×3.4）；配额对齐既有 GMI 批的自然产出量级（mknap 5-10 条/轮）。
 const AGG_MIR_MAX_PER_ROUND: usize = 8;
 
+/// 模 2/{0,½} 组合割（S14-第二步）：每轮施加条数配额（与聚合 MIR 配额
+/// 同 rationale：防高产算例挤占 max_cuts_per_round 截断额度、放大后续
+/// resolve 成本；对齐既有批的自然产出量级）。
+const ZHALF_MAX_PER_ROUND: usize = 8;
+
+/// 模 2/{0,½} 组合割：贪心行合并的深度上限（每条割由 ≤ 此行数的 Le 视图
+/// 行合并；深度即合并行支撑并集的规模上界来源之一——密度内生于构造）。
+const ZHALF_MAX_DEPTH: usize = 6;
+
+/// 模 2/{0,½} 组合割：行走种子数上限。种子按行 LP 松弛量 σ̄ 升序取最紧
+/// 的行（紧行是分数性所在；并列取行下标小者，确定性）。
+const ZHALF_MAX_WALKS: usize = 96;
+
+/// 模 2/{0,½} 组合割的**触发条件**（S14 修复轮）：割循环入口防御性
+/// resolve 的引擎迭代数 `entry_iters` ≥ 此分数 × 小批 resolve 预算
+/// max(3000, 12×(m+n)) 时，模 2 族全程不产出（恢复无该族的基线行为）。
+///
+/// 【依据（实测，bench 全算例 revised 引擎）】加行后的暖启动对偶修复代价
+/// 不低于入口代价（退化 setcover 上放大：sc300 入口 10331 迭代、加 6 条
+/// 模 2 割后 21884 ≈ 2.1×）；入口已逼近预算 ⇒ 任何非空小批的 resolve 大概率
+/// 超限——徒付「爬到预算上限 + 回滚冷重建」的尝试成本（sc300 实测 5.6s：
+/// 爬行 3.3s + 冷重建 2.3s）而零割入账。比值分离度：健康算例 ≤ 0.31
+/// （sc100x150 0.310、mknap 0.03、knapsack 0.08、assign 0.06、其余更小），
+/// 爬行算例 ≥ 0.96（sc300 0.957、sc400 1.386）——取 0.75 落在空档正中，
+/// 两侧余量 ≥ 2 倍。判据只依赖迭代计数与维度（引擎遥测、运行时按实际
+/// 引擎测得，revised/tableau 同一公式），不按算例名/规模分支（与
+/// sanitize 纪律同精神）。另注：该闸只约束本（新）族——若其它族使批
+/// 非空而遭遇同一爬行，那是既有（基线同在）行为，不由本闸承担。
+const ZHALF_ENTRY_BUDGET_FRAC_NUM: u64 = 3;
+const ZHALF_ENTRY_BUDGET_FRAC_DEN: u64 = 4;
+
 /// 表格行聚合 MIR 分离（R2-retry 落地形态：「表格行 ⊕ 原始行」聚合 GMI）。
 ///
 /// O3 方案的两个字面构造经证伪后按可实现形态落地（详见模块文档
@@ -1608,6 +1667,410 @@ fn aggregated_mir_cuts(
     out
 }
 
+/// 模 2/{0,½} 组合割分离（S14-第二步，仅根节点；「原始行 ⊕ 原始行」模 2 聚合）。
+///
+/// 【动机（S14 诊断）】setcover-300x600 上既有 GMI/聚合 MIR 强候选 73 条被
+/// 密度闸拒（nnz 586-591/600、viol med 1.0——表格信息存在但割近稠密，缺
+/// 稀疏化构造；后处理截断路线已证伪：尾部是实质系数，0/100 存活）；SCIP
+/// zerohalf 单族 20 条割把该类算例根界 134.43 抬到 136.10 ⇒ 模 2 组合构造
+/// 的稀疏割有独立价值。本族以 [`aggregated_mir_cuts`] 的骨架（行合并 +
+/// GMI 公式尾段 + fuzz 穷举验证）为底，把合并算术从「μ 消松弛列的实数
+/// 合并」换成「Le 视图行的模 2 整数合并」——**生成即稀疏**：合并行支撑 =
+/// 所选原始行支撑的并集（每行 nnz 数十量级），而非 B⁻¹ 表格行的近全支撑；
+/// 同列系数成对相消（奇偶归零：偶列在 GMI 整数公式下 f_j = 0 ⇒ π_j = 0
+/// 不产生 π 项；符号相反的系数可精确相消至 t_j = 0 整列消失）。密度控制
+/// 内生于构造（行数 ≤ [`ZHALF_MAX_DEPTH`]、支撑 = 行支撑并集），不做任何
+/// 后处理截断；产出照走 [`sanitize_cut`] 单点闸（判据一字不改、nnz 上限
+/// 不动）——过闸是验收而非生成手段。
+///
+/// 【与 R2-retry 骨架的偏差：锚归一的替换】聚合 MIR 对合并行按锚列系数
+/// 除法归一（重建单位锚）；模 2 族合并的是原始行（无表格锚列），且任意
+/// 除法会破坏半整格（ĉ_j = t_j/2 的 frac 恒 ∈ {0, 1/2} 是奇偶消列的根基，
+/// 除以非 ±1/±2 的锚后失效）——本族的「归一」是**精确半尺度 ÷2**
+///（整数 → 半整数，二进制精确表示），这是模 2 结构得以保持的唯一尺度。
+///
+/// 【构造】
+/// 1. **行池**：原始约束的 Le 视图（Le/Eq 原样；Ge 取负——`−a·x ≤ −b` 与
+///    `a·x ≥ b` 同解，仍是对全体可行点的有效不等式）。资格：rhs 有限；
+///    系数全部有限且 |a| < [`MAX_COVER_WEIGHT`]；整数类型列上系数全部为
+///    整数值（[`is_integral_bound`] 吸附判定——模 2 算术精确性前提，整数
+///    累计在 |t| ≤ 9×10⁹ ≪ 2⁵³ 内逐位精确）；至少含 1 个整数类型列。
+/// 2. **合并**：y ∈ {0,1}（行至多取一次；y ≥ 0 ⇒ 合并是有效不等式的非负
+///    组合）：t_j = Σ_i y_i·a_ij（整数列上恒精确整数）、β = Σ_i y_i·b_i、
+///    松弛 σ = β − Σ_j t_j·x_j = Σ_i y_i·σ_i ≥ 0（各行松弛的非负组合）。
+///    **半尺度恒等式**（对全体可行点成立）：Σ_j (t_j/2)·x_j + (1/2)·σ = β/2。
+/// 3. **偏差代换**：每结构列取定侧 = 距 x̄ 较近的界（并列取 lb，确定性；
+///    d_j = x_j − lb_j 或 ub_j − x_j 对箱内任意点 ≥ 0，有效性不依赖侧选
+///    择）；整数类型列且所选界为整数值时（与 GMI 同一纪律），整数可行点
+///    处 d_j ∈ Z_+。恒等式化为 Σ_j ĉ_j·d_j + (1/2)·σ = N/2，其中
+///    ĉ_j = ±t_j/2（整数列上半整数）、N = β − Σ_side t_j·bnd_j。
+/// 4. **割**：GMI 混合整数公式（与 [`gomory_cuts_inner`] 尾段同款）：f0 =
+///    frac(N/2) ∈ [away, 1−away] 才可用；整界整数列 π_j =
+///    min(f_j/f0, (1−f_j)/(1−f0))，f_j = frac(ĉ_j) ∈ {0, 1/2}——**t_j 偶
+///    ⇒ f_j = 0 ⇒ π_j = 0（模 2 相消，列不产生 π 项）**、t_j 奇 ⇒ π_j =
+///    min(0.5/f0, 0.5/(1−f0))；非整界整数列/连续列/松弛列 σ（系数恒
+///    1/2）按 [`continuous_pi`] 连续公式 π = max(ĉ/f0, −ĉ/(1−f0)) ≥ 0。
+///    割 Σ π_j·d_j + π_σ·σ ≥ 1 经 σ 回代（σ = β − Σ t·x）化为 x 空间 Le 行
+///    （c_j = π_σ·t_j ∓ π_j、rhs = π_σ·β − 1 − Σ π_j·bnd_j），过
+///    [`assemble_gated_cut`] 数值门（violation 按 x̄ 精确计算；π < tol.zero
+///    的近零项丢弃纪律与既有 GMI 一致——丢正 π 项属「更强」方向的数值
+///    可忽略量，R7 方向勘误口径，见 [`gomory_cuts_inner`]）。
+///
+/// 【有效性论证（红线：割只收紧 LP 松弛，绝不切任何整数可行点）】
+/// (a) **合并有效性**：y ≥ 0 的 Le 有效不等式非负组合仍对全体可行点（含
+///     全部整数可行点）有效；σ = Σ y_i·σ_i ≥ 0 恒成立。
+/// (b) **GMI 引理适用**：恒等式 Σ ĉ_j d_j + (1/2)σ = N/2 中 d_j ≥ 0、
+///     σ ≥ 0，整界整数列 d_j ∈ Z_+（对整数可行点）⇒ 混合整数 GMI 割
+///     Σ π_j d_j + π_σ σ ≥ 1 对全部整数可行点有效——本 crate 的 GMI 与
+///     聚合 MIR 走同一引理（推导见模块文档）。
+/// (c) **Chvátal-Gomory 模 2 特例对照（标准结果）**：当合并行全列偶
+///     （t ∈ 2Z^n，即经典 {0,½} 可行性条件 λᵀA ∈ Zⁿ）且支撑全为整界
+///     整数列时，取 λ = y/2 ≥ 0、λᵀA = t/2 ∈ Zⁿ：对任意整数可行 x 有
+///     Σ (t_j/2)·x_j ≤ β/2 且左边为整数 ⇒ Σ (t_j/2)·x_j ≤ ⌊β/2⌋
+///     ——非负整权组合后按整性取整，只收紧不切整数可行点，这正是 SCIP
+///     zerohalf 族的割。本实现的 GMI 半尺度形态在该情形与之等价（差
+///     正常数倍；奇洞算例 a+b≥1、b+c≥1、c+a≥1 上两者同产 a+b+c ≥ 2，
+///     见 tests::zerohalf_odd_hole_production）。奇列（经典构造须以界行
+///     补偶的列）由混合公式直接处理：π_j·d_j 项 + σ 回代项 π_σ·t_j·x_j
+///     的组合不弱于「界行零化该列」（零化 = 把 π_j·d_j 按该列界幅整体
+///     移入右端，是只弱化方向的松弛）。
+/// (d) **fuzz 穷举验证**：50 种子随机小模型（[`aggregated_mir_fuzz_validity`]
+///     同款管线）逐割穷举全部整数可行点，零误切
+///     （tests::zerohalf_fuzz_validity）。
+///
+/// 【搜索（确定性）】种子 = 行池按（σ̄ 升序, 行下标升序）前
+/// [`ZHALF_MAX_WALKS`] 行（紧行是分数性所在）；每种子做深度 ≤
+/// [`ZHALF_MAX_DEPTH`] 的贪心行走：每步在未选行中并入使代理分最小者
+/// （并列取行下标小者）。代理分 = 奇支撑列的 d̄ 之和 + 连续/非整界列
+/// |t_j|·d̄ 之和 + 已选行 σ̄ 之和——f0 = 1/2（全整数据情形的恒定值）时
+/// violation = 1 − 代理分**精确成立**（此时 π_奇 = π_σ = 1），一般情形为
+/// 保守近似（精确复核在 assemble 的 violation 门）。允许代理分暂劣的
+/// 并入（奇偶修复常需先变劣再相消）。每步尝试出割（f0 窗口 + 代理
+/// violation ≥ min_violation 过门后精确组装）；合并行数 ≥ 2 才出割
+/// （单行模 2 形态由 c-MIR 族覆盖）；输出按 (terms, rhs) 精确去重，
+/// 每轮配额 [`ZHALF_MAX_PER_ROUND`]。
+///
+/// 【触发条件（S14 修复轮）】本函数自身无闸；接线方 [`cut_loop_recorded`]
+/// 在割循环入口按 [`ZHALF_ENTRY_BUDGET_FRAC_NUM`] 判定入口迭代数是否
+/// 逼近小批预算（爬行态 LP：加行后暖修复大概率超限，非空小批只买徒劳的
+/// 「爬到上限 + 冷重建」尝试）——是则全程不调用本函数（恢复无本族的
+/// 基线行为）。判据依据与实测分离度见该常量文档。
+fn zerohalf_cuts(
+    problem: &Problem,
+    bounds: &Bounds,
+    x_bar: &[f64],
+    opts: CutOptions,
+    tol: &Tolerances,
+) -> Vec<Cut> {
+    let n = problem.vars.len();
+    if bounds.lb.len() != n || bounds.ub.len() != n || x_bar.len() != n {
+        return Vec::new();
+    }
+    // 整数类型列标记；偏差侧 = 距 x̄ 较近的界（并列取 lb）。d̄ 为 x̄ 到所选
+    // 侧界的距离（分离代理分用；x̄ 在箱内 ⇒ d̄ ≥ 0）。
+    let mut is_int = vec![false; n];
+    for (j, v) in problem.vars.iter().enumerate() {
+        is_int[j] = matches!(v.var_type, VarType::Integer | VarType::Binary);
+    }
+    let mut side_ub = vec![false; n];
+    let mut side_bound = vec![0.0f64; n];
+    let mut d_bar = vec![0.0f64; n];
+    for j in 0..n {
+        let (lb, ub) = (bounds.lb[j], bounds.ub[j]);
+        side_ub[j] = ub.is_finite() && ub - x_bar[j] < x_bar[j] - lb;
+        side_bound[j] = if side_ub[j] { ub } else { lb };
+        d_bar[j] = if side_ub[j] {
+            ub - x_bar[j]
+        } else {
+            x_bar[j] - lb
+        };
+    }
+    if (0..n).any(|j| !side_bound[j].is_finite() || !d_bar[j].is_finite() || d_bar[j] < 0.0) {
+        return Vec::new(); // 界与 x̄ 不一致（防御；正常接线路径不可达）
+    }
+    // 整界整数列（GMI 整数公式可用；模 2 奇偶在此类列上才有消列意义）。
+    let int_exact: Vec<bool> = (0..n)
+        .map(|j| is_int[j] && (side_bound[j] - side_bound[j].round()).abs() <= tol.zero)
+        .collect();
+
+    // —— 行池（Le 视图，见函数文档第 1 步）——
+    struct PoolRow {
+        idx: usize,
+        sign: f64,
+        slack_bar: f64,
+    }
+    let mut pool: Vec<PoolRow> = Vec::new();
+    for (idx, con) in problem.constraints.iter().enumerate() {
+        if !con.rhs.is_finite() {
+            continue;
+        }
+        let sign = match con.op {
+            RelOp::Le | RelOp::Eq => 1.0,
+            RelOp::Ge => -1.0,
+        };
+        let mut has_int = false;
+        let mut qualify = true;
+        for &(j, a) in &con.expr.terms {
+            if !a.is_finite() || a.abs() >= MAX_COVER_WEIGHT || !x_bar[j].is_finite() {
+                qualify = false;
+                break;
+            }
+            if is_int[j] {
+                if !is_integral_bound(a) {
+                    qualify = false; // 整数列上非整系数：奇偶算术不精确，弃行
+                    break;
+                }
+                has_int = true;
+            }
+        }
+        if !qualify || !has_int {
+            continue;
+        }
+        let lhs_bar: f64 = con.expr.terms.iter().map(|&(j, a)| a * x_bar[j]).sum();
+        let slack_bar = (sign * (con.rhs - lhs_bar)).max(0.0);
+        pool.push(PoolRow { idx, sign, slack_bar });
+    }
+    if pool.len() < 2 {
+        return Vec::new(); // 模 2 组合至少要两条行（单行形态由 c-MIR 族覆盖）
+    }
+    // 种子序：（σ̄ 升序, 行下标升序）——紧行优先（分数性所在），并列破键
+    // 取下标小者（确定性红线）。
+    let mut seed_order: Vec<usize> = (0..pool.len()).collect();
+    seed_order.sort_by(|&a, &b| {
+        pool[a]
+            .slack_bar
+            .total_cmp(&pool[b].slack_bar)
+            .then_with(|| pool[a].idx.cmp(&pool[b].idx))
+    });
+
+    // —— 行走状态（跨种子复用缓冲；touched/seen 支持按行走 O(nnz) 重置）——
+    struct WalkState<'a> {
+        problem: &'a Problem,
+        pool: &'a [PoolRow],
+        int_exact: &'a [bool],
+        side_ub: &'a [bool],
+        side_bound: &'a [f64],
+        d_bar: &'a [f64],
+        /// 合并行系数（整数列上恒整数值，f64 整数区精确）。
+        t: Vec<f64>,
+        /// 本行走触及过的列（含相消归零后又复现的列）。
+        touched: Vec<usize>,
+        seen: Vec<bool>,
+        /// β = Σ y_i·b_i（Le 视图右端和）。
+        beta: f64,
+        /// N = β − Σ_side t_j·bnd_j（恒等式右端 ×2）。
+        nu: f64,
+        /// 代理分之三部分，见函数文档【搜索】节。
+        odd_mass: f64,
+        cont_mass: f64,
+        slack_mass: f64,
+        chosen: Vec<usize>,
+        in_chosen: Vec<bool>,
+    }
+    impl WalkState<'_> {
+        /// 并入一条池行（增量维护 t/β/N/代理分/已选集）。
+        fn add_row(&mut self, pos: usize) {
+            let row = &self.problem.constraints[self.pool[pos].idx];
+            let sign = self.pool[pos].sign;
+            let rhs_part = sign * row.rhs;
+            self.beta += rhs_part;
+            self.nu += rhs_part; // N = β − Σ_side t·bnd：β 部分与项部分分别累计
+            self.slack_mass += self.pool[pos].slack_bar;
+            self.chosen.push(pos);
+            self.in_chosen[pos] = true;
+            for &(j, a) in &row.expr.terms {
+                let delta = sign * a;
+                let old = self.t[j];
+                if !self.seen[j] {
+                    self.seen[j] = true;
+                    self.touched.push(j);
+                }
+                let new = old + delta;
+                if self.int_exact[j] {
+                    // 整数累计精确 ⇒ rem_euclid(2) 即奇偶判定（精确）。
+                    let was_odd = old.rem_euclid(2.0) == 1.0;
+                    let now_odd = new.rem_euclid(2.0) == 1.0;
+                    if now_odd != was_odd {
+                        self.odd_mass += if now_odd {
+                            self.d_bar[j]
+                        } else {
+                            -self.d_bar[j]
+                        };
+                    }
+                } else {
+                    // 连续/非整界列：f0=1/2 时代理 π = |t|（连续公式 ×|ĉ|=|t|/2）。
+                    self.cont_mass += (new.abs() - old.abs()) * self.d_bar[j];
+                }
+                self.nu -= delta * self.side_bound[j];
+                self.t[j] = new;
+            }
+        }
+
+        /// 假想并入 pos 后的代理分（不改动状态）。
+        fn trial_score(&self, pos: usize) -> f64 {
+            let mut score = self.odd_mass + self.cont_mass + self.slack_mass;
+            score += self.pool[pos].slack_bar;
+            let row = &self.problem.constraints[self.pool[pos].idx];
+            let sign = self.pool[pos].sign;
+            for &(j, a) in &row.expr.terms {
+                let old = self.t[j];
+                let new = old + sign * a;
+                if self.int_exact[j] {
+                    let was_odd = old.rem_euclid(2.0) == 1.0;
+                    let now_odd = new.rem_euclid(2.0) == 1.0;
+                    if now_odd != was_odd {
+                        score += if now_odd {
+                            self.d_bar[j]
+                        } else {
+                            -self.d_bar[j]
+                        };
+                    }
+                } else {
+                    score += (new.abs() - old.abs()) * self.d_bar[j];
+                }
+            }
+            score
+        }
+
+        /// 当前状态出割尝试（f0 窗口 + 代理 violation 门 + 精确组装）。
+        fn try_emit(
+            &self,
+            n: usize,
+            bounds: &Bounds,
+            x_bar: &[f64],
+            opts: CutOptions,
+            tol: &Tolerances,
+        ) -> Option<Cut> {
+            let half_rhs = self.nu / 2.0;
+            let f0 = half_rhs - half_rhs.floor();
+            if !(f0 >= opts.away && f0 <= 1.0 - opts.away) {
+                return None; // N/2 整值（如全偶 β 整）无分数性，无割
+            }
+            // 代理 violation 门（f0 = 1/2 时精确；否则保守近似，精确复核在
+            // assemble_gated_cut 的 violation 门）。
+            if 1.0 - (self.odd_mass + self.cont_mass + self.slack_mass) < opts.min_violation {
+                return None;
+            }
+            let pi_sigma = continuous_pi(0.5, f0);
+            if !pi_sigma.is_finite() || pi_sigma <= 0.0 {
+                return None; // 防御：系数 1/2 的连续公式恒正，不可达
+            }
+            let mut cols = self.touched.clone();
+            cols.sort_unstable();
+            let mut coef = vec![0.0f64; n];
+            // Le 形式：Σ (π_σ·t_j − s_j·π_j)·x_j ≤ π_σ·β − 1 − Σ π_j·bnd_j。
+            let mut rhs = pi_sigma * self.beta - 1.0;
+            for &j in &cols {
+                let tj = self.t[j];
+                if tj == 0.0 {
+                    continue; // 相消归零列：π 项与 σ 回代项均为 0，整列消失
+                }
+                let ch = if self.side_ub[j] { -tj / 2.0 } else { tj / 2.0 };
+                let pi = if self.int_exact[j] {
+                    // 半整系数 ⇒ f_j ∈ {0, 1/2}：偶列 π = 0（模 2 消列）。
+                    let fj = ch - ch.floor();
+                    if fj <= f0 {
+                        fj / f0
+                    } else {
+                        (1.0 - fj) / (1.0 - f0)
+                    }
+                } else {
+                    continuous_pi(ch, f0)
+                };
+                coef[j] += pi_sigma * tj;
+                // π ≤ 0 无贡献；π < tol.zero 近零项丢弃（数值可忽略；方向
+                // 勘误口径与 gomory_cuts_inner 一致——丢正 π 项属更强方向）。
+                if pi.is_finite() && pi >= tol.zero {
+                    coef[j] += if self.side_ub[j] { pi } else { -pi };
+                    // rhs = π_σ·β − 1 − Σ_lb π·bnd + Σ_ub π·bnd（由
+                    // Σ π_j d_j + π_σ σ ≥ 1 移项：lb 侧 d = x − lb、ub 侧
+                    // d = ub − x 的常数项符号相反）。
+                    rhs += if self.side_ub[j] {
+                        pi * self.side_bound[j]
+                    } else {
+                        -pi * self.side_bound[j]
+                    };
+                }
+            }
+            assemble_gated_cut(&coef, rhs, bounds, x_bar, opts, tol)
+        }
+    }
+    let mut st = WalkState {
+        problem,
+        pool: &pool,
+        int_exact: &int_exact,
+        side_ub: &side_ub,
+        side_bound: &side_bound,
+        d_bar: &d_bar,
+        t: vec![0.0; n],
+        touched: Vec::new(),
+        seen: vec![false; n],
+        beta: 0.0,
+        nu: 0.0,
+        odd_mass: 0.0,
+        cont_mass: 0.0,
+        slack_mass: 0.0,
+        chosen: Vec::new(),
+        in_chosen: vec![false; pool.len()],
+    };
+
+    let mut out: Vec<Cut> = Vec::new();
+    let mut seen_keys: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
+    'walks: for &seed in seed_order.iter().take(ZHALF_MAX_WALKS) {
+        // 行走状态重置（O(触及列数)）。
+        for &j in &st.touched {
+            st.t[j] = 0.0;
+            st.seen[j] = false;
+        }
+        st.touched.clear();
+        st.beta = 0.0;
+        st.nu = 0.0;
+        st.odd_mass = 0.0;
+        st.cont_mass = 0.0;
+        st.slack_mass = 0.0;
+        st.chosen.clear();
+        for b in st.in_chosen.iter_mut() {
+            *b = false;
+        }
+        st.add_row(seed);
+        for depth in 1..=ZHALF_MAX_DEPTH {
+            if st.chosen.len() >= 2 {
+                if let Some(cut) = st.try_emit(n, bounds, x_bar, opts, tol) {
+                    let key = (cut.terms.clone(), cut.rhs);
+                    if !seen_keys.iter().any(|k| k == &key) {
+                        seen_keys.push(key);
+                        out.push(cut);
+                        if out.len() >= ZHALF_MAX_PER_ROUND {
+                            break 'walks; // 每轮配额
+                        }
+                    }
+                }
+            }
+            if depth == ZHALF_MAX_DEPTH {
+                break;
+            }
+            // 贪心并入：代理分最小者（并列取池位置小者 = 行下标序，确定）。
+            let mut best: Option<(f64, usize)> = None;
+            for pos in 0..pool.len() {
+                if st.in_chosen[pos] {
+                    continue;
+                }
+                let score = st.trial_score(pos);
+                if best.map_or(true, |(bs, _)| {
+                    score.total_cmp(&bs) == std::cmp::Ordering::Less
+                }) {
+                    best = Some((score, pos));
+                }
+            }
+            match best {
+                Some((_, pos)) => st.add_row(pos),
+                None => break, // 池耗尽（chosen == pool）
+            }
+        }
+    }
+    out
+}
+
 /// 隐含界割（WP6，仅根节点）：整数类型变量计数恰为 1 的行导出 y 的隐含界。
 ///
 /// 行的逻辑蕴涵 + 方向取整（纯变量界形式，见模块文档反例说明）。把行写成
@@ -1821,16 +2284,25 @@ pub fn cut_loop<E: LpEngine>(
 /// `max_cuts_per_round` 截断、Infeasible ⇒ 如实作为终态返回（整数不可行
 /// 问题的合法证明路径，见 [`cut_loop`] 文档）。
 ///
-/// 每轮割批的确定性合并序（WP6 起，R2-retry 增聚合 MIR 批）：**c-MIR 批
-/// （[`mir_row_cuts`]，行序）→ GMI 批 → 聚合 MIR 批（[`aggregated_mir_cuts`]，
-/// 「表格行 ⊕ 原始行」聚合 GMI，R2-retry）→ 隐含界批
-/// （[`implied_bound_cuts`]）→ 覆盖割批（[`cover_cuts_with_lifting`]，
-/// 行序；提升预算 [`LiftBudget`] 跨轮共享、全程 3×10^7 状态操作，耗尽即
-/// 关闭提升）**，先统一过分离边界数值卫生闸 [`sanitize_cut`]（小系数
-/// 清洁化（只弱化）+ 密度闸 + violation 复核，见模块文档），再截断
-/// `max_cuts_per_round`——ledger/recorded 记账的即过闸后的行。x̄ 经
-/// [`rebuild_x_bar`] 重建（每轮一次，割批共用）。全部割行照走 `add_row`
-/// + [`CutRecord`] 记账，worker 按序重放契约不变。
+/// 每轮割批的确定性合并序（WP6 起，R2-retry 增聚合 MIR，S14 增模 2 族）：
+/// **c-MIR 批（[`mir_row_cuts`]，行序）→ GMI 批 → 聚合 MIR 批
+/// （[`aggregated_mir_cuts`]，「表格行 ⊕ 原始行」聚合 GMI，R2-retry）→
+/// 模 2/{0,½} 批（[`zerohalf_cuts`]，「原始行 ⊕ 原始行」模 2 聚合，
+/// S14-第二步；触发条件见 [`ZHALF_ENTRY_BUDGET_FRAC_NUM`]——入口迭代数
+/// 逼近小批预算的爬行态 LP 上全程不产出）→ 隐含界批（[`implied_bound_cuts`]）→ 覆盖割批
+/// （[`cover_cuts_with_lifting`]，行序；提升预算 [`LiftBudget`] 跨轮共享、
+/// 全程 3×10^7 状态操作，耗尽即关闭提升）**，先统一过分离边界数值卫生闸
+/// [`sanitize_cut`]（小系数清洁化（只弱化）+ 密度闸 + violation 复核，见
+/// 模块文档），再截断 `max_cuts_per_round`——ledger/recorded 记账的即
+/// 过闸后的行。x̄ 经 [`rebuild_x_bar`] 重建（每轮一次，割批共用）。
+///
+/// 【S14-第一步：小批增量施加纪律】每轮过闸割批（割集合与施加序确定且
+/// 与既往一致）按 [`CUT_APPLY_CHUNK`]（10，取值依据见该常量文档）切分为
+/// 连续小批，逐批 `add_row` 记账 + 预算内 resolve——**收敛一批提交一批**；
+/// 某小批 resolve 触发迭代上限只回退该小批（旧行为弃整轮 ≤40 条），回滚
+/// 后的 committed 集仍是『已 resolve 收敛过的前缀』（与既有整轮回滚语义
+/// 同构，详见函数体内注释）。全部割行照走 `add_row` + [`CutRecord`]
+/// 记账（施加序 = 记账序 = recorded 序），worker 按序重放契约不变。
 pub fn cut_loop_recorded<E: LpEngine>(
     s: &mut E,
     bounds: &Bounds,
@@ -1850,7 +2322,20 @@ pub fn cut_loop_recorded<E: LpEngine>(
     if status != LpStatus::Optimal {
         return Ok((0, status, recorded));
     }
-    for _round in 0..opts.max_rounds {
+    // 模 2/{0,½} 族触发条件（S14 修复轮，见 ZHALF_ENTRY_BUDGET_FRAC 文档）：
+    // 入口引擎迭代数 ≥ 0.75×小批预算 ⇒ 加行后的暖修复大概率超限，任何非空
+    // 小批只买「爬到上限 + 冷重建」的徒劳尝试（sc300 实测 5.6s/零割入账）
+    // ——本（新）族全程不产出，恢复无该族的基线行为。判据只依赖迭代计数
+    // 与维度，不按算例名/规模分支；只约束本族，其它族的既有行为不变。
+    // 整数比较（×4 防截断），确定性。
+    let zh_m0 = s.num_rows();
+    let zh_n0 = problem.vars.len();
+    let zh_budget = 3_000u64.max(12u64.saturating_mul((zh_m0 + zh_n0) as u64));
+    let zh_allowed = s
+        .iterations()
+        .saturating_mul(ZHALF_ENTRY_BUDGET_FRAC_DEN)
+        < zh_budget.saturating_mul(ZHALF_ENTRY_BUDGET_FRAC_NUM);
+    'rounds: for _round in 0..opts.max_rounds {
         let x_bar = rebuild_x_bar(s, bounds, problem.vars.len());
         // 确定性合并序：c-MIR → GMI → 隐含界 → 覆盖（提升），统一截断。
         let mut batch = match &x_bar {
@@ -1879,6 +2364,9 @@ pub fn cut_loop_recorded<E: LpEngine>(
                 opts,
                 tol,
             ));
+            if zh_allowed {
+                batch.extend(zerohalf_cuts(problem, bounds, x_bar, opts, tol));
+            }
             batch.extend(implied_bound_cuts(problem, bounds, x_bar, opts, tol));
             batch.extend(cover_cuts_with_lifting(
                 problem,
@@ -1904,70 +2392,93 @@ pub fn cut_loop_recorded<E: LpEngine>(
         if batch.is_empty() {
             break;
         }
-        let applied_before = applied;
-        let ledger_before = ledger.len();
-        let recorded_before = recorded.len();
-        for cut in batch {
-            let index = s.add_row(&cut.terms, RelOp::Le, cut.rhs)?;
-            ledger.push(CutRecord {
-                terms: cut.terms.clone(),
-                rhs: cut.rhs,
-                index,
-            });
-            recorded.push(cut);
-            applied = applied.saturating_add(1);
-        }
-        // R8（③）：割循环 resolve 收紧预算——暖启动（对偶修复快路径）下
-        // 收敛轮实测 ~1.5k 迭代，退化爬行轮放任到默认上限会白烧（setcover
-        // 算例第 5 轮 10000 迭代打满后整树回退丢全部割）。预算 = 已提交割
-        // 行数感知的收紧式 max(3000, 12×(m+n))；超限走下方回滚而非终态
-        // 传播。Infeasible 终局照旧第一时间如实返回；若某问题的 Phase-1
-        // 本身需要超过收紧预算的迭代，走下方回滚后树搜索继续——真实不可行
-        // 只会被延迟发现，不会被伪造或吞掉（hint 在回滚 resolve 前已复位）。
-        let m_now = s.num_rows();
-        let n_now = problem.vars.len();
-        s.set_iter_limit_hint(Some(
-            3_000u64.max(12u64.saturating_mul((m_now + n_now) as u64)),
-        ));
-        status = s.resolve(bounds).status;
-        s.set_iter_limit_hint(None);
-        if status == LpStatus::Infeasible {
-            // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
-            // 整数可行解，而该集合为空时任意割皆有效——割后根 LP 不可行
-            // 是『整数不可行』的合法证明路径，正确终局是 Infeasible（终检
-            // 由 Phase-1 不可行性给出），不是数值错误。原『理论不可能』
-            // 断言只对『存在整数可行解』的问题成立。
-            return Ok((applied, LpStatus::Infeasible, recorded));
-        }
-        if status == LpStatus::IterationLimit {
-            // R8（③）回滚语义：本轮增量割使 resolve 超收紧预算——弃本轮
-            // 增量割，重建冷 Simplex + 重放**已提交**割 + resolve，恢复到
-            // 本轮前的 Optimal 根态后正常收尾（status = Optimal）。既有割
-            // 的根界保留（树搜索受益），不再以 limit_reached 无解终态传播。
-            // 回滚后状态与上一轮末逐字节一致（确定性冷重建路径 + 同割集），
-            // 终态必为 Optimal；防御性保留非 Optimal 映射（不冒充）。
-            // W2 注：回滚只对**迭代上限**触发——墙钟超限返回独立的
-            // LpStatus::TimeLimit，走下方 `!= Optimal` 出口如实传播（整树
-            // 诚实 LimitReached，不做「再解一次整段根 LP」的回滚重放，那
-            // 会把超限点拖过 deadline）；重建 Simplex 透传原 deadline，
-            // 迭代上限触发的回滚若在重放中撞上墙钟 ⇒ TimeLimit 诚实传播
-            // （防御性非 Optimal 映射，不冒充 Optimal）。
-            ledger.truncate(ledger_before);
-            recorded.truncate(recorded_before);
-            applied = applied_before;
-            let rollback_deadline = s.time_deadline();
-            let mut rebuilt = make()?;
-            rebuilt.set_time_deadline(rollback_deadline);
-            for rec in ledger.iter() {
-                rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
+        // —— S14-第一步：小批增量施加 ——
+        // 每轮的过闸割批（割集合与施加序与本改动前完全一致：同一批过闸
+        // 候选、同一合并序、同一次截断）按 [`CUT_APPLY_CHUNK`] 切分为连续
+        // 小批，逐批 add_row 记账 + 预算内 resolve：Optimal ⇒ 提交该小批并
+        // 继续；Infeasible ⇒ 如实终态返回（含本小批，与既有整轮语义同形
+        // ——整数不可行的合法证明路径）；IterationLimit ⇒ **只回退本小批**
+        // ——回滚后的 committed 集（ledger/recorded/applied）仍是『已 resolve
+        // 收敛过的前缀』，与既有整轮回滚语义**同构**（粒度从轮细化为小批：
+        // 旧行为超限时弃整轮 ≤40 条，新行为只弃最后 ≤8 条，此前小批的根界
+        // 收紧得以保留）；TimeLimit/Unbounded ⇒ 不回滚、如实传播（W2 纪律，
+        // 与旧行为一致）。小批失败即终止整个割循环（不再尝试后续小批：
+        // 失败表明增量割已使 resolve 超收紧预算，后续小批大概率同样超限，
+        // 且每次回滚需冷重建 + 全量重放）。小批候选来自本轮同一 x̄ 的一次
+        // 分离（后续小批不随前批 resolve 重新分离——本轮割集固定是
+        // 『割集合不变』约束的要求；后续小批在新表格上可能不再被违反，
+        // 但有效性不受影响，量级受 max_cuts_per_round 约束）。
+        let mut chunk_start = 0usize;
+        while chunk_start < batch.len() {
+            let chunk_end = (chunk_start + CUT_APPLY_CHUNK).min(batch.len());
+            let applied_before = applied;
+            let ledger_before = ledger.len();
+            let recorded_before = recorded.len();
+            for cut in &batch[chunk_start..chunk_end] {
+                let index = s.add_row(&cut.terms, RelOp::Le, cut.rhs)?;
+                ledger.push(CutRecord {
+                    terms: cut.terms.clone(),
+                    rhs: cut.rhs,
+                    index,
+                });
+                recorded.push(cut.clone());
+                applied = applied.saturating_add(1);
             }
-            let st = rebuilt.resolve(bounds).status;
-            *s = rebuilt;
-            status = st;
-            break;
-        }
-        if status != LpStatus::Optimal {
-            break; // Unbounded：如实返回终态
+            // R8（③）：割循环 resolve 收紧预算——暖启动（对偶修复快路径）下
+            // 收敛轮实测 ~1.5k 迭代，退化爬行轮放任到默认上限会白烧（setcover
+            // 算例第 5 轮 10000 迭代打满后整树回退丢全部割）。预算 = 已提交割
+            // 行数感知的收紧式 max(3000, 12×(m+n))；超限走下方回滚而非终态
+            // 传播。Infeasible 终局照旧第一时间如实返回；若某问题的 Phase-1
+            // 本身需要超过收紧预算的迭代，走下方回滚后树搜索继续——真实不可行
+            // 只会被延迟发现，不会被伪造或吞掉（hint 在回滚 resolve 前已复位）。
+            // S14-第一步起按小批口径计（m_now 含本小批新增行）。
+            let m_now = s.num_rows();
+            let n_now = problem.vars.len();
+            s.set_iter_limit_hint(Some(
+                3_000u64.max(12u64.saturating_mul((m_now + n_now) as u64)),
+            ));
+            status = s.resolve(bounds).status;
+            s.set_iter_limit_hint(None);
+            if status == LpStatus::Infeasible {
+                // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
+                // 整数可行解，而该集合为空时任意割皆有效——割后根 LP 不可行
+                // 是『整数不可行』的合法证明路径，正确终局是 Infeasible（终检
+                // 由 Phase-1 不可行性给出），不是数值错误。原『理论不可能』
+                // 断言只对『存在整数可行解』的问题成立。
+                return Ok((applied, LpStatus::Infeasible, recorded));
+            }
+            if status == LpStatus::IterationLimit {
+                // R8（③）回滚语义（S14-第一步细化为小批粒度）：本小批增量割
+                // 使 resolve 超收紧预算——弃**本小批**增量割，重建冷 Simplex +
+                // 重放**已提交**割（= 已收敛前缀，含本轮此前小批与既往轮次）
+                // + resolve，恢复到本小批前的 Optimal 根态后正常收尾
+                // （status = Optimal）。既有割的根界保留（树搜索受益），不再以
+                // limit_reached 无解终态传播。回滚后状态与本小批前逐字节一致
+                // （确定性冷重建路径 + 同割集），终态必为 Optimal；防御性保留
+                // 非 Optimal 映射（不冒充）。W2 注：回滚只对**迭代上限**触发
+                // ——墙钟超限返回独立的 LpStatus::TimeLimit，走下方 `!= Optimal`
+                // 出口如实传播（整树诚实 LimitReached，不做「再解一次整段根
+                // LP」的回滚重放，那会把超限点拖过 deadline）；重建 Simplex
+                // 透传原 deadline，迭代上限触发的回滚若在重放中撞上墙钟 ⇒
+                // TimeLimit 诚实传播（防御性非 Optimal 映射，不冒充 Optimal）。
+                ledger.truncate(ledger_before);
+                recorded.truncate(recorded_before);
+                applied = applied_before;
+                let rollback_deadline = s.time_deadline();
+                let mut rebuilt = make()?;
+                rebuilt.set_time_deadline(rollback_deadline);
+                for rec in ledger.iter() {
+                    rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
+                }
+                let st = rebuilt.resolve(bounds).status;
+                *s = rebuilt;
+                status = st;
+                break 'rounds;
+            }
+            if status != LpStatus::Optimal {
+                break 'rounds; // Unbounded/TimeLimit：如实返回终态
+            }
+            chunk_start = chunk_end;
         }
     }
     Ok((applied, status, recorded))
@@ -2127,9 +2638,196 @@ mod tests {
         }
     }
 
+    /// （S14-第二步）模 2/{0,½} 组合割有效性 fuzz：50 种子随机小模型
+    /// （aggregated_mir_fuzz_validity **同款管线**：同 rnd 流、同变量布局
+    /// （8 binary + 2 一般整数 + 1 连续列）、同 4 条整数系数 Le 行），根 LP
+    /// 上产出模 2 割后穷举全部整数可行点验证零误切。连续列 c 的处理比同款
+    /// 管线更严：对每个整数取值 v 按行约束解出 c 的**精确可行区间**
+    /// [0, min(ub_c, min_i cap_i)]，割对 c 线性 ⇒ 最大违反必在区间端点——
+    /// 两端点均检验（同款管线的 {0, 2.5} 固定双点是本检验的特例）。
+    #[test]
+    fn zerohalf_fuzz_validity() {
+        let mut total_cuts = 0usize;
+        for seed in 1..=50u64 {
+            let mut lcg = seed.wrapping_mul(0x9E3779B97F4A7C15);
+            let mut rnd = || {
+                lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((lcg >> 33) % 97 + 3) as f64
+            };
+            let mut pf = Problem::new(&format!("zhfuzz{seed}"), Sense::Maximize);
+            for j in 0..8 {
+                pf.vars.push(Variable {
+                    name: format!("b{j}"),
+                    var_type: VarType::Binary,
+                    lb: 0.0,
+                    ub: 1.0,
+                });
+            }
+            for j in 8..10 {
+                pf.vars.push(Variable {
+                    name: format!("y{j}"),
+                    var_type: VarType::Integer,
+                    lb: 0.0,
+                    ub: if j == 8 { 2.0 } else { 3.0 },
+                });
+            }
+            pf.vars.push(Variable {
+                name: "c0".into(),
+                var_type: VarType::Continuous,
+                lb: 0.0,
+                ub: 2.5,
+            });
+            let mut obj = Vec::new();
+            for j in 0..11 {
+                obj.push((j, rnd()));
+            }
+            pf.obj = LinearExpr { terms: obj };
+            let mut cons = Vec::new();
+            for i in 0..4 {
+                let terms: Vec<(usize, f64)> = (0..11).map(|j| (j, rnd())).collect();
+                let rhs = terms.iter().map(|&(_, w)| w).sum::<f64>() * 0.38;
+                cons.push(Constraint {
+                    name: Some(format!("r{i}")),
+                    expr: LinearExpr { terms },
+                    op: RelOp::Le,
+                    rhs,
+                });
+            }
+            pf.constraints = cons.clone();
+            let tf = Tolerances::default();
+            let mut sf = Simplex::new(&pf, tf).unwrap();
+            let bf = Bounds::from_problem(&pf);
+            assert_eq!(sf.solve(&bf).status, LpStatus::Optimal, "seed {seed} 根 LP");
+            let xbf = rebuild_x_bar(&sf, &bf, 11).unwrap();
+            let cuts = zerohalf_cuts(&pf, &bf, &xbf, CutOptions::default(), &tf);
+            total_cuts += cuts.len();
+            // 穷举整数盒；连续列 c 按行约束解精确可行区间，两端点检验
+            //（割对 c 线性 ⇒ 最大违反在端点）。
+            for cut in &cuts {
+                assert_eq!(cut.op, RelOp::Le);
+                for mask in 0..256u32 {
+                    for y8 in 0..=2i64 {
+                        for y9 in 0..=3i64 {
+                            let v = [
+                                (mask & 1) as f64,
+                                ((mask >> 1) & 1) as f64,
+                                ((mask >> 2) & 1) as f64,
+                                ((mask >> 3) & 1) as f64,
+                                ((mask >> 4) & 1) as f64,
+                                ((mask >> 5) & 1) as f64,
+                                ((mask >> 6) & 1) as f64,
+                                ((mask >> 7) & 1) as f64,
+                                y8 as f64,
+                                y9 as f64,
+                            ];
+                            // 各行 w_c > 0（rnd ∈ [3,99]）⇒ c ≤ cap_i；可行区间
+                            // [0, min(2.5, min cap_i)]，cap < 0 ⇒ 该 v 无可行 c。
+                            // （terms 按构造序 0..=10 升序，v 只含整数列 ⇒ 求和
+                            //  只取前 10 项，c0 的界单独解出。）
+                            let mut cap = 2.5f64;
+                            for con in &cons {
+                                let s: f64 =
+                                    con.expr.terms.iter().take(10).map(|&(j, w)| w * v[j]).sum();
+                                let &(_, wc) = &con.expr.terms[10]; // c0 列（构造序固定）
+                                cap = cap.min((con.rhs - s) / wc);
+                            }
+                            if cap < 0.0 {
+                                continue;
+                            }
+                            for c in [0.0f64, cap] {
+                                let mut x = v.to_vec();
+                                x.push(c);
+                                let feas = cons.iter().all(|con| {
+                                    con.expr
+                                        .terms
+                                        .iter()
+                                        .map(|&(j, w)| w * x[j])
+                                        .sum::<f64>()
+                                        <= con.rhs + 1e-9
+                                });
+                                if feas {
+                                    let lhs: f64 =
+                                        cut.terms.iter().map(|&(j, cf)| cf * x[j]).sum();
+                                    assert!(
+                                        lhs <= cut.rhs + 1e-7,
+                                        "seed {seed} 割 {cut:?} 切掉整数可行点 {x:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("zerohalf_fuzz_validity: 50 种子共产出 {total_cuts} 条模 2 割");
+    }
+
+    /// （S14-第二步）模 2 割产出锚点：奇洞算例 min a+b+c s.t. a+b≥1、b+c≥1、
+    /// c+a≥1（binary）。根 LP (0.5,0.5,0.5) 处 3 行模 2 合并（两两共享列
+    /// 成对相消，t = (−2,−2,−2) 全偶、β = −3 奇）产出经典割 a+b+c ≥ 2
+    ///（Le 形式 −2a−2b−2c ≤ −4）——与 Chvátal-Gomory 模 2 特例
+    /// λ = (1/2,1/2,1/2)、⌊β/2⌋ = ⌊−3/2⌋ = −2 完全一致；穷举 2^3 验证
+    /// 零误切、violation = 1、同输入两次逐字节一致。
+    #[test]
+    fn zerohalf_odd_hole_production() {
+        let mut p = Problem::new("odd-hole", Sense::Minimize);
+        for name in ["a", "b", "c"] {
+            p.add_var(name, VarType::Binary).unwrap();
+        }
+        p.set_objective(vec![(0, 1.0), (1, 1.0), (2, 1.0)], 0.0)
+            .unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Ge, 1.0)
+            .unwrap();
+        p.add_constraint(None, vec![(1, 1.0), (2, 1.0)], RelOp::Ge, 1.0)
+            .unwrap();
+        p.add_constraint(None, vec![(2, 1.0), (0, 1.0)], RelOp::Ge, 1.0)
+            .unwrap();
+        let b = Bounds::from_problem(&p);
+        // 根 LP 最优即 (0.5, 0.5, 0.5)（手算：三条 Ge 行紧 ⇒ 全 0.5）。
+        let x_bar = [0.5, 0.5, 0.5];
+        let t = tol();
+        let opts = CutOptions::default();
+        let cuts = zerohalf_cuts(&p, &b, &x_bar, opts, &t);
+        assert!(!cuts.is_empty(), "奇洞根 LP 处必产模 2 割");
+        // 每条割：穷举 2^3 行可行点零误切 + x̄ 处 violation ≥ min_violation。
+        for cut in &cuts {
+            for mask in 0..8u32 {
+                let x: Vec<f64> = (0..3).map(|i| ((mask >> i) & 1) as f64).collect();
+                let feas = (x[0] + x[1] >= 1.0 - 1e-12)
+                    && (x[1] + x[2] >= 1.0 - 1e-12)
+                    && (x[2] + x[0] >= 1.0 - 1e-12);
+                if feas {
+                    assert!(
+                        eval_cut(cut, &x) <= cut.rhs + 1e-9,
+                        "割 {cut:?} 切掉行可行点 {x:?}"
+                    );
+                }
+            }
+            assert!(
+                eval_cut(cut, &x_bar) - cut.rhs >= opts.min_violation,
+                "割 {cut:?} 须被 x̄ 违反"
+            );
+        }
+        // 经典奇洞割 −2(a+b+c) ≤ −4 在产出中（⇔ a+b+c ≥ 2）。
+        let has_odd_hole = cuts.iter().any(|c| {
+            c.terms.len() == 3
+                && c.terms.iter().all(|&(_, w)| (w + 2.0).abs() < 1e-12)
+                && (c.rhs + 4.0).abs() < 1e-12
+        });
+        assert!(has_odd_hole, "须含经典奇洞割 a+b+c ≥ 2：{cuts:?}");
+        // 确定性：同输入两次逐字节一致。
+        let cuts2 = zerohalf_cuts(&p, &b, &x_bar, opts, &t);
+        assert_eq!(cuts.len(), cuts2.len());
+        for (a, c) in cuts.iter().zip(cuts2.iter()) {
+            assert_eq!(a.terms, c.terms);
+            assert_eq!(a.rhs, c.rhs);
+        }
+    }
+
     fn tol() -> Tolerances {
         Tolerances::default()
     }
+
 
     /// wolsey 经典算例：max 5x1 + 8x2 s.t. x1+x2 ≤ 6, 5x1+9x2 ≤ 45，
     /// x1, x2 ≥ 0 整数。根 LP 41.25 @ (2.25, 3.75)，整数最优 (0,5) = 40；
@@ -3472,4 +4170,7 @@ mod tests {
             }
         }
     }
+
+
+
 }

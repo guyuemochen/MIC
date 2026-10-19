@@ -2995,9 +2995,10 @@ mod tests {
     }
 
     /// （W6）树内局部割：mknap-3x100（多维背包类，类门控命中）默认开启 ⇒
-    /// 触发（cuts > 根割基线 57）、双跑全部行为字段逐字节确定、目标恒同
+    /// 触发（cuts > 根割基线 58）、双跑全部行为字段逐字节确定、目标恒同
     /// 已知最优 2331；`local_cuts = false` ⇒ 与关闭路径逐字节一致
-    /// （57 cuts / 2,120 节点 = W6 前基线，回归钉）。
+    /// （根割基线 S14-第一步重钉 57→58（小批增量施加，见测试内注释）；
+    /// 历史基线 57 cuts / 2,120 节点 = W6 前，回归钉）。
     #[test]
     fn local_cuts_fire_deterministically_and_toggle_restores() {
         let path = format!(
@@ -3015,15 +3016,20 @@ mod tests {
         assert_eq!(on1.stats.lp_iterations, on2.stats.lp_iterations);
         assert_eq!(on1.stats.cuts, on2.stats.cuts);
         assert_eq!(on1.bound, on2.bound);
-        // 触发：局部割计入 cuts（根割基线 57 → 更高）。
+        // 触发：局部割计入 cuts（根割基线 58 → 更高）。
         assert!(
-            on1.stats.cuts > 57,
-            "局部割应触发（cuts = {}，根割基线 57）",
+            on1.stats.cuts > 58,
+            "局部割应触发（cuts = {}，根割基线 58）",
             on1.stats.cuts
         );
-        // 开关：关闭后无局部割（cuts = 根割基线 57）且目标恒同；对照
+        // 开关：关闭后无局部割（cuts = 根割基线 58）且目标恒同；对照
         // adaptive-on 口径（探针/CLI 默认）与 pre-W6 基线 2,120 节点逐位
         // 一致——证明 off 路径纯净。
+        // 【S14-第一步重钉】根割基线 57 → 58：cut_loop_recorded 施加改小批
+        // 增量纪律（每 10 条一批、收敛一批提交一批、超限只回退最后一批而非
+        // 整轮，cuts.rs）后，mknap-3x100 根循环一轮的迭代超限回滚不再弃
+        // 整轮——该轮此前已收敛小批的割得以保留（+1，实测钉：off 双跑
+        // 58/58、节点 1719/1719 逐位一致、目标恒 2331）。
         let off = branch_and_bound(
             &problem,
             &BbOptions {
@@ -3033,7 +3039,7 @@ mod tests {
             tol(),
         )
         .unwrap();
-        assert_eq!(off.stats.cuts, 57, "关闭后只剩根割");
+        assert_eq!(off.stats.cuts, 58, "关闭后只剩根割");
         assert_close(off.best_objective.unwrap(), 2331.0);
         let off_auto = branch_and_bound_controlled(
             &problem,
@@ -3049,7 +3055,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(off_auto.stats.cuts, 57);
+        assert_eq!(off_auto.stats.cuts, 58); // S14-第一步重钉（57→58），见上
         // raw（无 presolve）+ adaptive-on 的 pre-W6 基线 = 2,106 节点 /
         // 24,072 迭代（HEAD 实测钉；探针口径的 2,120 是 presolve 重建后
         // 的问题——与本测试的 raw 路径无关）。
@@ -3065,8 +3071,13 @@ mod tests {
         // 18,883→17,258（节点数非单调、迭代数下降，均属预期：固定只收紧
         // 可行域，树形非单调；目标恒 2331。净性能定档由 S13-B 的 A/B 矩阵
         // 另行裁决，本测试只钉确定性与目标恒同。））
-        assert_eq!(off_auto.stats.nodes, 1620, "S13-A 树内再应用后的 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 17258);
+        // （S14-第一步重钉：小批增量施加的根割集变化（+1 条）传导至树形
+        // ——根界/割集不同 ⇒ 后续退化基主元路径不同，1,620→1,719 节点、
+        // 17,258→20,160 迭代（实测钉，双跑逐位一致；目标恒 2331。树形对
+        // 割集混沌敏感为既有观察（S13-B 遗留②同性质），净性能裁决按 S14
+        // 任务书的算例配对 A/B 守门，本测试只钉确定性与目标恒同。））
+        assert_eq!(off_auto.stats.nodes, 1719, "S14-第一步小批施加后的 raw 基线");
+        assert_eq!(off_auto.stats.lp_iterations, 20160);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
