@@ -10,3 +10,4 @@ nul
 # Python 字节码缓存
 __pycache__/
 *.pyc
+.pytest_cache/

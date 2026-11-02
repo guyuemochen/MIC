@@ -54,6 +54,7 @@ python bench/run_timings.py --set gate --threads 1 --json bench/gate_runs.json
 
 ## 约定
 
+- 本项目不使用 RDM：不调用 RDM 技能或接口，提交不关联 RDM 任务，也不添加 RELEVANTS 或 CLOSES 字段。
 - 注释、文档、commit 信息全部用**中文**。
 - commit 前缀：`milp S2:`（大规模轮次）、`bench:`、`docs:` 这类"模块 + 轮次/主题"格式。
 - 测试框架就是 Rust 内置 `#[test]` 和 Python `unittest`，不要引入别的测试依赖。
