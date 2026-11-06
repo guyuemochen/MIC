@@ -3,6 +3,7 @@ target/
 
 # ZCode 工作流运行记录（机器管理）
 .zcode/
+.zcodeignore
 
 # Windows 设备名重定向残留（子代理实验命令偶发产生）
 nul
