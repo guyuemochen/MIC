@@ -1072,15 +1072,18 @@ fn sequential_bb(
         // 节点/时间上限：每次 resolve 前检查；0 = 不限。W3：budget 模式的
         // 时限语义 = 节点预算（确定性，零墙钟读点）；wall 模式照旧墙钟检查。
         if opts.node_limit != 0 && stats.nodes >= opts.node_limit {
+            stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
         }
         if let Some(cap) = budget_node_cap {
             if stats.nodes >= cap {
+                stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
                 limit_hit = true;
                 break;
             }
         } else if opts.time_limit_ms != 0 && time_exceeded(&start, opts.time_limit_ms) {
+            stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
         }
@@ -2639,6 +2642,17 @@ mod tests {
     /// 行数超限均回落。（P3 重钉：单行背包向量从命中改为排除——行数下限
     /// 1→2 收紧，单行类 Pseudocost 零收益纯付探测开销，见
     /// detect_pseudocost_favorable 文档注释的 A/B 数字；新增 2 行命中向量。）
+    #[test]
+    fn node_limit_keeps_unprocessed_frontier_bound() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for limit in [1, 2, 8, 64] {
+            let result = branch_and_bound(&p, &BbOptions { node_limit: limit, heuristics: false, local_cuts: false, ..BbOptions::default() }, tol()).unwrap();
+            assert_eq!(result.status, SolveStatus::LimitReached);
+            assert!(result.bound.unwrap() >= 2331.0 - 1e-7, "未处理节点的界必须包含真实最优值");
+        }
+    }
+
     #[test]
     fn detect_pseudocost_favorable_classification() {
         // 命中：2 Binary + 2 条正系数 Le 行（多维背包）。
