@@ -1,0 +1,3 @@
+{"rep": 0, "outer_secs": 1.4262067500003468, "stdout": "status = optimal\nnodes = 32281\nobjective = 4762.000000\n"}
+{"rep": 1, "outer_secs": 1.3961402919994725, "stdout": "status = optimal\nnodes = 32281\nobjective = 4762.000000\n"}
+{"rep": 2, "outer_secs": 1.4088140409994594, "stdout": "status = optimal\nnodes = 32281\nobjective = 4762.000000\n"}

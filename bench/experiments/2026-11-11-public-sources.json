@@ -1,0 +1,29 @@
+{
+  "highspy_version": "1.15.1",
+  "sources": [
+    {
+      "instance": "p0033",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0033.mps.gz",
+      "sha256": "d606d733c9c7165d4e6ed621b20870e2b0dbce3c3dfd42f0f8e5b35d418f6a5e",
+      "converted_sha256": "18425217587af33fc001d1b3954a55de862b495b81452df386fcb25850ab40cb"
+    },
+    {
+      "instance": "p0201",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0201.mps.gz",
+      "sha256": "3df3dac32b6e096db1a7b136eca8bf8c4bc901203b5f4959f4c9e0ccc0c20204",
+      "converted_sha256": "040ec92353da3175afb3f6f87a323afc943ac305b66fa74d0931017e1c2710d2"
+    },
+    {
+      "instance": "enigma",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/enigma.mps.gz",
+      "sha256": "eeae727af2ec40bf6cf330f254b91186c852fb63f0e13ffca1f232f69a10aa1c",
+      "converted_sha256": "afc7f6a77f32f6dceaf047306a73e6786a6d67d4b7eeb82cbe986d56620a02e2"
+    },
+    {
+      "instance": "stein27",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/stein27.mps.gz",
+      "sha256": "559caf031adb6e3536d47b39325c82e52dc60507487e73ff046e6a43268c4abb",
+      "converted_sha256": "23a762e7bd3ea01cddea4582681d3a7ad83b4ed456e511d4244cb506ad67358d"
+    }
+  ]
+}

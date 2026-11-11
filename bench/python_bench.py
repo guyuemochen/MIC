@@ -152,11 +152,12 @@ def run_scipy(p, limit):
     build = time.perf_counter() - t0
 
     t0 = time.perf_counter()
+    # threads 由 SciPy 原样传给 HiGHS；SciPy 会提示未列入自身选项表。
     res = milp(c=c, constraints=LinearConstraint(A, lb, ub), integrality=integ,
                bounds=Bounds(vlb, vub),
-               options={"time_limit": limit, "mip_rel_gap": 0.0})
+               options={"time_limit": limit, "mip_rel_gap": 0.0, "threads": 1})
     solve = time.perf_counter() - t0
-    status = {0: "optimal", 1: "limit", 4: "limit"}.get(res.status, f"status{res.status}")
+    status = {0: "optimal", 1: "limit", 2: "infeasible", 3: "unbounded", 4: "solver_error"}.get(res.status, f"status{res.status}")
     obj = None
     if res.fun is not None:
         obj = -res.fun if p.sense == "max" else res.fun
@@ -180,6 +181,9 @@ def run_ortools(p, limit):
         s.SetNumThreads(1)
     except AttributeError:
         pass  # SCIP 默认串行
+    # 将证明最优的间隙阈值显式设零，避免把容差内停止当作严格对账。
+    if not s.SetSolverSpecificParametersAsString("limits/gap = 0\nlimits/absgap = 0"):
+        raise RuntimeError("SCIP 间隙参数设置失败")
     for cn, terms, rel, rhs in p.cons:
         lo, hi = (-s.infinity(), rhs) if rel == "<=" else \
                  (rhs, s.infinity()) if rel == ">=" else (rhs, rhs)

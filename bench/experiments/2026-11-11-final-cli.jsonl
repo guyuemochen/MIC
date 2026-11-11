@@ -1,0 +1,6 @@
+{"variant": "default", "rep": 0, "outer_secs": 3.9756108329997915, "status": "optimal", "nodes": "127369", "objective": "4762.000000"}
+{"variant": "hybrid", "rep": 0, "outer_secs": 3.4349272499998733, "status": "optimal", "nodes": "114318", "objective": "4762.000000"}
+{"variant": "hybrid", "rep": 1, "outer_secs": 3.5371480420003536, "status": "optimal", "nodes": "114318", "objective": "4762.000000"}
+{"variant": "default", "rep": 1, "outer_secs": 3.928781000000072, "status": "optimal", "nodes": "127369", "objective": "4762.000000"}
+{"variant": "default", "rep": 2, "outer_secs": 3.914892124999824, "status": "optimal", "nodes": "127369", "objective": "4762.000000"}
+{"variant": "hybrid", "rep": 2, "outer_secs": 3.4380092080000395, "status": "optimal", "nodes": "114318", "objective": "4762.000000"}

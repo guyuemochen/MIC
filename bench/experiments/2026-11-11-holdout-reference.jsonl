@@ -1,0 +1,4 @@
+{"instance": "scan-dense-wide", "solver": "SciPy-HiGHS-1.12.0", "status": "optimal", "objective": 245.9146331457337}
+{"instance": "scan-medium", "solver": "SciPy-HiGHS-1.12.0", "status": "optimal", "objective": 995.9821442516982}
+{"instance": "scan-sparse-newseed", "solver": "SciPy-HiGHS-1.12.0", "status": "optimal", "objective": 12474.450211243759}
+{"instance": "scan-sparse-tall", "solver": "SciPy-HiGHS-1.12.0", "status": "optimal", "objective": 3749.197362207832}

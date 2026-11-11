@@ -1,0 +1,34 @@
+[
+  {
+    "name": "scan-sparse-newseed",
+    "variables": 2400,
+    "rows": 500,
+    "density": 0.05,
+    "seed": 20261111,
+    "sha256": "1b22579208ce179e4b9a240960bf9a2e5d75fd92cfa0fa01e5ccbd7cc46159c8"
+  },
+  {
+    "name": "scan-sparse-tall",
+    "variables": 1000,
+    "rows": 1500,
+    "density": 0.08,
+    "seed": 20261112,
+    "sha256": "c639d83057d9f0f40851d6fc78d86e8a7dff4e28cba62a20301c08b49f1d293f"
+  },
+  {
+    "name": "scan-medium",
+    "variables": 1600,
+    "rows": 800,
+    "density": 0.3,
+    "seed": 20261113,
+    "sha256": "2a525bf6929a8386cbe9dab12dd975680df6ff7801fcf61421dfc038c07f9201"
+  },
+  {
+    "name": "scan-dense-wide",
+    "variables": 2000,
+    "rows": 500,
+    "density": 1.0,
+    "seed": 20261114,
+    "sha256": "2a655d221b2bd3c44c4f506b96b10f493601406b0093583e697da41c030db828"
+  }
+]
