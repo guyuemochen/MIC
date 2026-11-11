@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -42,7 +42,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -100,6 +100,9 @@ struct Config {
     /// pseudocost 覆盖优先（pseudocost 含可靠性冷启动，`--pc-probes` 仅
     /// bench 探针暴露）。
     branch_rule: Option<BranchRule>,
+    /// 节点规则与局部割独立指定，不隐式关闭局部割。
+    node_rule: NodeRule,
+    local_cuts: bool,
     /// 数值缩放（`--scaling=on|off`，R4）；默认 on（行列迭代几何均值，
     /// 2 的幂系数；目标与解还原原尺度，输出契约不变）。
     scaling: bool,
@@ -192,6 +195,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut mipgap_percent: Option<f64> = None;
     let mut heuristic_mode: Option<HeuristicModeCli> = None;
     let mut branch_rule: Option<BranchRule> = None;
+    let mut node_rule = None;
+    let mut local_cuts = None;
     let mut scaling: Option<bool> = None;
     let mut mitm: Option<bool> = None;
     let mut work_stack: Option<WorkStackCli> = None;
@@ -317,6 +322,28 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             heuristic_mode = Some(mode);
             index += 1; // 额外消费模式 token
+        } else if arg == "--node-rule" || arg.starts_with("--node-rule=") {
+            if node_rule.is_some() { return Err(format!("`--node-rule` 重复出现（{USAGE}）")); }
+            let value = if let Some(v) = arg.strip_prefix("--node-rule=") { v } else {
+                index += 1;
+                args.get(index).ok_or_else(|| format!("`--node-rule` 缺少参数 dfs|hybrid（{USAGE}）"))?.as_str()
+            };
+            node_rule = Some(match value {
+                "dfs" => NodeRule::DepthFirst,
+                "hybrid" => NodeRule::HybridBestBound,
+                _ => return Err(format!("未知 --node-rule 值 `{value}`（期望 dfs|hybrid，{USAGE}）")),
+            });
+        } else if arg == "--local-cuts" || arg.starts_with("--local-cuts=") {
+            if local_cuts.is_some() { return Err(format!("`--local-cuts` 重复出现（{USAGE}）")); }
+            let value = if let Some(v) = arg.strip_prefix("--local-cuts=") { v } else {
+                index += 1;
+                args.get(index).ok_or_else(|| format!("`--local-cuts` 缺少参数 on|off（{USAGE}）"))?.as_str()
+            };
+            local_cuts = Some(match value {
+                "on" => true,
+                "off" => false,
+                _ => return Err(format!("未知 --local-cuts 值 `{value}`（期望 on|off，{USAGE}）")),
+            });
         } else if arg == "--branch-rule" {
             if branch_rule.is_some() {
                 return Err(format!("`--branch-rule` 重复出现（{USAGE}）"));
@@ -503,6 +530,11 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     // 但 CLI 用户应看到用法信息而非「内部错误」前缀）。
     let determinism = determinism.unwrap_or(Determinism::Wall);
     let threads = threads.unwrap_or(1);
+    let node_rule = node_rule.unwrap_or(NodeRule::DepthFirst);
+    let local_cuts = local_cuts.unwrap_or(true);
+    if node_rule == NodeRule::HybridBestBound && (local_cuts || threads != 1) {
+        return Err(format!("`--node-rule hybrid` 需要显式 `--local-cuts off` 且 `--threads 1`（{USAGE}）"));
+    }
     // S3 交叉校验：显式 revised 仅 threads=1——解析层就以用法错误拒绝。
     // auto（S4 默认）不在解析层拦：算例规模未知，大算例（≥10^6 格）解析
     // 为 revised × threads≥2 由库层求解入口拒绝（消息含成因与回退方式）。
@@ -530,6 +562,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
         // 节点数 ⇒ 原算例 auto ≡ on，见 README）。
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
+        node_rule,
+        local_cuts,
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
         mitm: mitm.unwrap_or(true),
@@ -563,7 +597,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
         bb: BbOptions {
             branch_rule: config.branch_rule.unwrap_or(BranchRule::MostFractional),
             branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
-            node_rule: NodeRule::DepthFirst,
+            node_rule: config.node_rule,
             node_limit: 2_000_000,
             time_limit_ms: config
                 .time_limit_secs
@@ -575,7 +609,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             mitm_windows: if config.mitm { 8 } else { 0 },
-            local_cuts: true, // W6 树内局部割（库默认；CLI 不设旗标）
+            local_cuts: config.local_cuts,
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；
             // 显式 local/global ⇒ auto=false、字段逐字生效（覆盖优先）。
             global_work_stack: config.work_stack == WorkStackCli::Global,
@@ -796,6 +830,8 @@ mod tests {
     /// Config 便捷构造（新字段取默认值；单测内集中补齐，避免每个用例重复）。
     fn config_with(time_limit_secs: Option<u64>) -> Config {
         Config {
+            node_rule: NodeRule::DepthFirst,
+            local_cuts: true,
             instance_path: "a.milp".to_string(),
             time_limit_secs,
             verbose: false,
@@ -816,6 +852,35 @@ mod tests {
     // —— parse_args ——
 
     /// 仅算例路径：默认无时间上限、非 verbose。
+    #[test]
+    fn hybrid_cli_requires_explicit_supported_combination() {
+        let defaults = parse_args(&args(&["a.milp"])).unwrap();
+        assert_eq!(defaults.node_rule, NodeRule::DepthFirst);
+        assert!(defaults.local_cuts);
+        for input in [
+            vec!["a.milp", "--node-rule", "hybrid", "--local-cuts", "off"],
+            vec!["a.milp", "--node-rule=hybrid", "--local-cuts=off", "--threads", "1"],
+        ] {
+            let c = parse_args(&args(&input)).unwrap();
+            let options = solve_options_from(&c);
+            assert_eq!(options.bb.node_rule, NodeRule::HybridBestBound);
+            assert!(!options.bb.local_cuts);
+        }
+        for input in [
+            vec!["a.milp", "--node-rule", "hybrid"],
+            vec!["a.milp", "--node-rule=hybrid", "--local-cuts=off", "--threads", "2"],
+            vec!["a.milp", "--node-rule=fast"],
+            vec!["a.milp", "--node-rule"],
+            vec!["a.milp", "--node-rule=dfs", "--node-rule=dfs"],
+            vec!["a.milp", "--local-cuts=maybe"],
+            vec!["a.milp", "--local-cuts"],
+            vec!["a.milp", "--local-cuts=off", "--local-cuts=on"],
+        ] { assert!(parse_args(&args(&input)).is_err(), "非法组合{input:?}"); }
+        let c = parse_args(&args(&["a.milp", "--node-rule=dfs", "--local-cuts=off"])).unwrap();
+        assert_eq!(solve_options_from(&c).bb.node_rule, NodeRule::DepthFirst);
+        assert!(!solve_options_from(&c).bb.local_cuts);
+    }
+
     #[test]
     fn parse_args_path_only() {
         let config = parse_args(&args(&["a.milp"])).unwrap();

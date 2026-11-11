@@ -48,6 +48,9 @@
 //!   界修改的回放记录）。每个 `Pending` 记录应用前 trail 应回退到的长度
 //!   `unwind_to`，保证兄弟节点在父节点界状态上施加自己的分支界；回退严格
 //!   按 trail 逆序恢复旧值。
+//! - 可选 HybridBestBound 每64节点选最好界，其余深搜；Pending另存完整父域，
+//!   跨子树恢复时替换整个父域并清空trail。仅单线程、local_cuts=false，
+//!   默认DFS不分配父域副本。限额触发时未处理节点仍保留在前沿界计算内。
 //! - 进展保证：子节点分支界相对当前界严格收缩且新区间非空时才压栈
 //!   （[`tighten_child`]）。非分数 x̄ 的两个分支界中至多一侧无收缩，伪整数
 //!   回退分支因此在最坏情形下也单调收缩，节点上限兜底。
@@ -120,11 +123,13 @@ pub enum BranchRule {
     Pseudocost,
 }
 
-/// 节点选择规则（首版仅 DFS；best-bound 需按节点存基或冷重启，代价大）。
+/// 节点选择规则：默认DFS；混合候选用完整父域快照支持跨子树恢复。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRule {
     /// 深度优先 + 界栈热启动 + 回溯恢复旧界。
     DepthFirst,
+    /// 试验：每64个节点选最好界，其余深搜；仅单线程且关闭局部割。
+    HybridBestBound,
 }
 
 /// 分支定界参数。
@@ -453,6 +458,9 @@ pub fn branch_and_bound_controlled(
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
+    if opts.node_rule == NodeRule::HybridBestBound && (opts.local_cuts || ctrl.threads != 1) {
+        return Err(MilpError::InvalidModel("混合节点策略仅支持单线程且 local_cuts=false".to_string()));
+    }
     let opts = &resolve_branch_rule_defaults(problem, opts);
     if ctrl.threads >= 2 {
         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
@@ -1043,7 +1051,17 @@ fn sequential_bb(
             }
         }
         // 栈空 ⇒ 搜索自然耗尽（先于上限判定，见模块实现说明）。
-        let Some(p) = stack.pop() else {
+        let selected = if opts.node_rule == NodeRule::HybridBestBound && stats.nodes % 64 == 0 {
+            stack.iter().enumerate().min_by(|(ia, a), (ib, b)| {
+                let order = match sense {
+                    Sense::Minimize => a.est.total_cmp(&b.est),
+                    Sense::Maximize => b.est.total_cmp(&a.est),
+                };
+                order.then(ia.cmp(ib))
+            }).map(|(i, _)| i)
+        } else { None };
+        let pending = selected.map(|i| stack.remove(i)).or_else(|| stack.pop());
+        let Some(p) = pending else {
             break;
         };
         // W6：退出局部割作用域——弹出的 Pending 属祖先层（unwind_to 更短）
@@ -1088,7 +1106,13 @@ fn sequential_bb(
             break;
         }
         // 回退到父路径界状态后施加本分支界；空界/无收缩 ⇒ (f) 剪枝（不 resolve）。
-        unwind(&mut trail, &mut bounds, p.unwind_to);
+        if let Some(parent_bounds) = p.parent_bounds {
+            // 完整父域替换，不能用DFS的长度回退重建已经离开的祖先路径。
+            bounds = parent_bounds;
+            trail.clear();
+        } else {
+            unwind(&mut trail, &mut bounds, p.unwind_to);
+        }
         // —— S13-A：已入栈节点的界快照在展开时与全局固定取交 ——
         // **顺序必须是 tighten_child 之后**：unwind 恢复的是压栈时刻的基础界
         //（固定只存覆盖层、绝不在 unwind 可达的 trail 里），tighten 在与压栈
@@ -1919,6 +1943,8 @@ struct TrailEntry {
 
 /// 待应用的分支决策（stack 元素）。
 struct Pending {
+    /// 仅混合策略保存完整父域；默认DFS不分配。
+    parent_bounds: Option<Bounds>,
     var: usize,
     /// true = 上行分支（收紧 lb 至 ⌊x̄⌋+1）；false = 下行（收紧 ub 至 ⌊x̄⌋）。
     tighten_lb: bool,
@@ -2258,7 +2284,7 @@ fn branch_or_close(
             opts,
             pc,
             simplex,
-            trail.len(),
+            depth as usize,
         );
     }
     // 分支：按规则选变量（MostFractional / Pseudocost）；无可分支变量为
@@ -2283,7 +2309,9 @@ fn branch_or_close(
         && pc.est_gain(var, true, 1.0 - frac) < pc.est_gain(var, false, frac);
     // est = 压栈时父节点 LP 目标；frac_dir = 该方向距界的分数距离
     // （伪代价观测用）。
+    let parent_bounds = (opts.node_rule == NodeRule::HybridBestBound).then(|| bounds.clone());
     let up = Pending {
+        parent_bounds: parent_bounds.clone(),
         depth: depth + 1,
         var,
         tighten_lb: true,
@@ -2293,6 +2321,7 @@ fn branch_or_close(
         frac_dir: 1.0 - frac,
     };
     let down = Pending {
+        parent_bounds,
         depth: depth + 1,
         var,
         tighten_lb: false,
@@ -2651,6 +2680,38 @@ mod tests {
             assert_eq!(result.status, SolveStatus::LimitReached);
             assert!(result.bound.unwrap() >= 2331.0 - 1e-7, "未处理节点的界必须包含真实最优值");
         }
+    }
+
+    #[test]
+    fn hybrid_full_domains_preserve_optimum_and_limits() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        let opts = BbOptions { node_rule: NodeRule::HybridBestBound, local_cuts: false, ..BbOptions::default() };
+        let a = branch_and_bound(&p, &opts, tol()).unwrap();
+        let b = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(a.status, SolveStatus::Optimal);
+        assert_eq!(a.best_objective, Some(2331.0));
+        assert_eq!(a.best_objective, b.best_objective);
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert!(a.stats.nodes > 64, "覆盖周期最好界切换");
+        let limited = branch_and_bound(&p, &BbOptions { node_limit: 2, ..opts }, tol()).unwrap();
+        assert_eq!(limited.status, SolveStatus::LimitReached);
+        assert!(branch_and_bound(&p, &BbOptions { local_cuts: true, ..opts }, tol()).is_err());
+        let mut minimization = p.clone();
+        minimization.sense = Sense::Minimize;
+        for (_, coefficient) in &mut minimization.obj.terms { *coefficient = -*coefficient; }
+        let minimum = branch_and_bound(&minimization, &opts, tol()).unwrap();
+        assert_eq!(minimum.status, SolveStatus::Optimal);
+        assert_eq!(minimum.best_objective, Some(-2331.0));
+        let limited_min = branch_and_bound(&minimization, &BbOptions { node_limit: 64, ..opts }, tol()).unwrap();
+        assert_eq!(limited_min.status, SolveStatus::LimitReached);
+        assert!(limited_min.bound.unwrap() <= -2331.0 + 1e-7);
+        let sparse = branch_and_bound(&p, &BbOptions { lp_engine: LpEngineKind::Revised, ..opts }, tol()).unwrap();
+        assert_eq!(sparse.status, SolveStatus::Optimal);
+        assert_eq!(sparse.best_objective, Some(2331.0));
+
+
     }
 
     #[test]

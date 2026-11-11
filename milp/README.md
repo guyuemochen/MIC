@@ -63,6 +63,8 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
 | `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
+| `--node-rule dfs\|hybrid` | 节点选择；`dfs` 为原深度优先，`hybrid` 每64节点选择当前最好界，其余深搜。混合策略保存完整父域快照，可能增加内存；收益依问题而异，不自动启用 | `dfs` | 未知值 / 缺参 / 重复出现报错；`hybrid` 必须显式 `--local-cuts off` 且 `--threads 1`，否则报错；支持等号/空格两式 |
+| `--local-cuts on\|off` | 树内局部割开关；`off` 不影响根割开关，用于混合策略及同口径对照 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
@@ -70,6 +72,15 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）= 类自适应——表格规模 m×(n+m) ≥ 10^6 格 ⇒ revised，阈下留 tableau（小算例走旧路径防 codegen 扰动）；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
 | `--root-rc-fixing on\|off` | reduced-cost 变量固定**两级总开关**（大规模轮 S12 根阶段固定 + S13 树内再应用同门控，映射 `BbOptions.root_rc_fixing`）：`on` = 根阶段按对偶界固定非基贴界整数列 + 树内 incumbent 严格改进时以更小 τ 对同一根基快照再固定（均保最优，见「深度优先分支定界」一节）；`off` = 两级全关（不捕获快照、不挂触发、取交零开销直通），复现 S12 之前的旧行为 | `on` | 非 `on\|off` token / 缺参 / 重复出现报错（等号/空格两式） |
 | `--verbose` | Optimal 时先输出固定机制统计三行（`rc_fixed` / `rc_reapplies` / `rc_refixed`，S13；全 0 也如实输出），再逐行输出变量取值 | 关 | — |
+
+可选混合节点策略示例：
+
+```bash
+cargo run --release --manifest-path milp/Cargo.toml -- bench/instances/mknap-5x300.milp --node-rule hybrid --local-cuts off --threads 1
+```
+
+比较节点策略本身时，以 `--node-rule dfs --local-cuts off` 作对照；同时保留不加参数的默认成绩，
+避免将关闭局部割的影响算作策略收益。混合策略不隐式关闭局部割，也不改变根割或RC固定。
 
 ### 输出格式
 
