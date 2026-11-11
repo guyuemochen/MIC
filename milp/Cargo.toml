@@ -3,3 +3,9 @@ name = "milp"
 version = "0.1.0"
 edition = "2021"
 publish = false
+
+[features]
+# 诊断计时完全独立于求解决策，默认不编译。
+sparse_profile = []
+# 实验开关：保留重构基列的内层容量，便于独立配对验证。
+sparse_reuse_columns = []

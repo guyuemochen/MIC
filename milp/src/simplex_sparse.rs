@@ -103,6 +103,73 @@
 //! 检验数/表格列由三角求解现算（非增量维护），误差随因子化精度而非
 //! 主元序列累积；refactorization 周期重置一切累积误差。
 
+
+/// 可关闭的线程内成本诊断；只计时，不参与任何求解决策。
+/// 各类别互斥：嵌套调用暂停父类别，避免重复加总。未覆盖的外层工作不计。
+#[cfg(feature = "sparse_profile")]
+pub mod cost_profile {
+    use std::cell::RefCell;
+    use std::time::Instant;
+
+    /// 类别依次为基重构、定价、基求解、基更新。
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Costs {
+        pub nanos: [u128; 4],
+        pub calls: [u64; 4],
+    }
+
+    #[derive(Default)]
+    struct State {
+        costs: Costs,
+        active: Option<usize>,
+        last: Option<Instant>,
+    }
+    thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
+
+    fn account(s: &mut State, now: Instant) {
+        if let (Some(k), Some(last)) = (s.active, s.last) {
+            s.costs.nanos[k] += now.duration_since(last).as_nanos();
+        }
+        s.last = Some(now);
+    }
+
+    pub(crate) struct Guard(Option<usize>);
+    pub(crate) fn enter(kind: usize) -> Guard {
+        STATE.with(|cell| {
+            let mut s = cell.borrow_mut();
+            account(&mut s, Instant::now());
+            let parent = s.active.replace(kind);
+            s.costs.calls[kind] += 1;
+            Guard(parent)
+        })
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            STATE.with(|cell| {
+                let mut s = cell.borrow_mut();
+                account(&mut s, Instant::now());
+                s.active = self.0;
+            });
+        }
+    }
+    /// 仅在求解调用外重置；计数与计时不随求解器快照回滚。
+    pub fn reset() {
+        STATE.with(|cell| {
+            let mut s = cell.borrow_mut();
+            assert!(s.active.is_none(), "不能在诊断区间内重置");
+            *s = State::default();
+        });
+    }
+    /// 返回当前线程累计值；多线程调用者须自行逐线程汇总。
+    pub fn snapshot() -> Costs {
+        STATE.with(|cell| {
+            let mut s = cell.borrow_mut();
+            account(&mut s, Instant::now());
+            s.costs
+        })
+    }
+}
+
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, Sense, Tolerances};
 use crate::simplex::{
@@ -2262,6 +2329,8 @@ impl SparseSimplex {
     ///（零填充消元），多元素列按 (nnz 升序, 基位置升序) 排后——LP 基的
     /// 三角形部分先行、结构性内核的规模与 fill 大降（确定性排序）。
     fn refactor(&mut self) -> std::result::Result<(), String> {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(0);
         let m = self.basis.len();
         let ncs = self.ncols_static();
         // 列权：(行 or nnz, 基位置)。
@@ -2287,7 +2356,9 @@ impl SparseSimplex {
         // 按因子化列序收集基列（原始行空间稀疏列）。
         self.lu_scratch.resize(m);
         self.lu.resize(m);
+        #[cfg(not(feature = "sparse_reuse_columns"))]
         self.refactor_cols.clear();
+        // 保留每个基位置的列缓冲；长度缩小时仍由 resize_with 丢弃尾部。
         self.refactor_cols.resize_with(m, Vec::new);
         for (t, &bp) in order.iter().enumerate() {
             let j = self.basis[bp];
@@ -2349,6 +2420,8 @@ impl SparseSimplex {
 
     /// FTRAN：α = B⁻¹A_q（含 ETA 顺序施加 E⁻¹）→ self.alpha。
     fn ftran_col(&mut self, q: usize) {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(2);
         for v in self.ftran_in.iter_mut() {
             *v = 0.0;
         }
@@ -2379,6 +2452,8 @@ impl SparseSimplex {
     /// ETA 逆序施加 (Eᵀ)⁻¹（新 → 旧：w_i = v_i (i≠r)；w_r =
     /// (v_r − Σ e_i·v_i)/e_r），再基础 LU BTRAN。
     fn btran_full(&self, c: &[f64]) -> Vec<f64> {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(2);
         let mut v = c.to_vec();
         for eta in self.etas.iter().rev() {
             let mut acc = 0.0;
@@ -2706,6 +2781,8 @@ impl SparseSimplex {
     /// 参考权重，见 `devex_update`），严格大于取最大 ⇒ 并列最小下标破键
     /// （确定性不变）。人工列与固定列（ub−lb ≤ feas）永不入基。
     fn price(&mut self, phase: u8) -> Pricing {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(1);
         let ncs = self.ncols_static();
         if self.devex_w.len() != ncs {
             // 防御：权重与静态列空间不同步（各入口重置后不应发生）——按
@@ -2795,6 +2872,8 @@ impl SparseSimplex {
     /// ⇒ 参考框架重置。Bland 模式打分不用权重，但更新照常维护——释放
     /// Bland 后权重仍与基演进一致。
     fn devex_update(&mut self, q: usize, r: usize, leaving: usize) {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(3);
         if !self.devex_active {
             return; // 阈下 Dantzig：不维护权重（打分也不消费）
         }
@@ -2945,6 +3024,8 @@ impl SparseSimplex {
         t: f64,
         hit_upper: bool,
     ) -> std::result::Result<(), String> {
+        #[cfg(feature = "sparse_profile")]
+        let _cost_guard = cost_profile::enter(3);
         let m = self.basis.len();
         let entering_old = if delta > 0.0 {
             self.col_bounds(q).0
@@ -3584,6 +3665,39 @@ mod tests {
     // ---- A. LU 单元 ----
 
     /// L·U 与 P·B 逐元素重建 + FTRAN/BTRAN 残差（多形态矩阵）。
+    /// 诊断与容量复用不得影响同输入的主元轨迹和解；重构保留列缓冲容量。
+    #[test]
+    fn refactor_column_storage_and_diagnostics_preserve_solution() {
+        let p = load_instance(&milp_instance("knapsack-10")).unwrap();
+        let bounds = Bounds::from_problem(&p);
+        let mut a = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        let mut b = a.clone();
+        #[cfg(feature = "sparse_profile")]
+        cost_profile::reset();
+        let x = a.solve(&bounds);
+        let y = b.solve(&bounds);
+        assert_eq!(x.status, y.status);
+        assert_eq!(x.objective.to_bits(), y.objective.to_bits());
+        assert_eq!(x.x, y.x);
+        assert_eq!(a.iterations(), b.iterations());
+        #[cfg(feature = "sparse_profile")]
+        {
+            let costs = cost_profile::snapshot();
+            assert!(costs.calls[0] > 0);
+            assert!(costs.calls[1] > 0);
+            assert!(costs.calls[2] > 0);
+        }
+        #[cfg(feature = "sparse_reuse_columns")]
+        {
+            for col in &mut a.refactor_cols { col.reserve(100); }
+            let capacities: Vec<_> = a.refactor_cols.iter().map(Vec::capacity).collect();
+            a.refactor().unwrap();
+            for (col, old) in a.refactor_cols.iter().zip(capacities) {
+                assert!(col.capacity() >= old, "重构不能丢弃已分配容量");
+            }
+        }
+    }
+
     #[test]
     fn lu_reconstruction_and_solves() {
         let cases: Vec<Vec<Vec<(usize, f64)>>> = vec![
