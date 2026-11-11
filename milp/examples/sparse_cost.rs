@@ -1,6 +1,6 @@
 //! 稀疏 LP 成本探针：只解 LP 松弛，不做预处理或分支定界。
 //! 用法：cargo run --release --features sparse_profile --example sparse_cost -- 算例 [迭代上限]
-//! A/B：另加 sparse_reuse_columns 特性；正式端到端计时关闭 sparse_profile。
+//! 正式端到端计时关闭 sparse_profile；扫描候选在独立实验分支验证。
 use milp::instance::load_instance;
 use milp::model::Tolerances;
 use milp::simplex::Bounds;
@@ -23,12 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     lp.set_iter_limit_hint(limit);
     let result = lp.solve(&Bounds::from_problem(&problem));
     println!(
-        "status={:?} objective={:?} iterations={} wall_secs={:.6} reuse_columns={}",
+        "status={:?} objective={:?} iterations={} wall_secs={:.6}",
         result.status,
         result.objective,
         lp.iterations(),
-        start.elapsed().as_secs_f64(),
-        cfg!(feature = "sparse_reuse_columns")
+        start.elapsed().as_secs_f64()
     );
     #[cfg(feature = "sparse_profile")]
     {

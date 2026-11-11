@@ -2,8 +2,8 @@
 //!
 //! 覆盖（对应 README 契约）：
 //! ① 全流程（dive 21 / knapsack-10 17 / LP+offset 111）；
-//! ② gap 向量（hard-knapsack-12，阈值 20%，事实由 milp CLI 实跑钉死：
-//!    --mipgap 20 → gap_reached best=511 gap=3.11%；默认 → optimal 523）；
+//! ② gap 向量（hard-knapsack-12，阈值20%；核查可行解、界与gap公式，
+//!    不锁定会随启发式演进变化的提前终止目标；默认最优523）；
 //! ③ 错误路径全码；
 //! ④ 参数覆盖序列（0=关断编码钉死：TimeLimit/LogPeriodSecs 后设 0.0 真正关断）；
 //! ⑤ last_error 截断/长度/粘滞；
@@ -204,7 +204,7 @@ fn build_dive() -> *mut c_void {
 /// hard-knapsack-12（milp/instances/hard-knapsack-12.milp 等价）：
 /// 12 个 BINARY，obj=[11,20,32,44,55,70,88,99,111,122,133,144]，
 /// 重量 [7,11,13,17,19,23,29,31,37,41,43,47] ≤ 172 → 默认 OPTIMAL 523；
-/// MIPGap=20% → LIMIT_REACHED best=511 gap≈3.11%。
+/// MIPGap=20% → LIMIT_REACHED，返回可行解及不超过阈值的gap证据。
 fn build_hard12() -> *mut c_void {
     let obj = [
         11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0,
@@ -297,11 +297,8 @@ fn lp_with_offset_111() {
 // ② gap 向量
 // ===========================================================================
 
-/// MIPGap=20% → LIMIT_REACHED(4)、gap_terminated=1、objective≈511、
-/// gap_percent ∈ (2.0, 4.0)；新句柄缺省 → OPTIMAL 523、gap_terminated=0。
-/// （2026-10 割族增强后根 LP 终顶点漂移：旧 GMI 终顶点取整复核恰为 512；
-/// 新割终顶点中面化，根 incumbent 改由割前顶点 dive 供应 = 511（CLI 实跑
-/// 佐证 gap=3.11% / best=511.000000）。gap 区间断言 (2,4) 不变。）
+/// 提前终止必须诚实返回限额状态、可行解和一致的界/gap证据。
+/// 基线3cf2144已返回520而非历史511；测试固定数学契约，不固定启发式轨迹。
 #[test]
 fn gap_vector_hard_knapsack_12() {
     let m = build_hard12();
@@ -309,15 +306,22 @@ fn gap_vector_hard_knapsack_12() {
     solve(m);
     assert_eq!(status(m), 4, "LIMIT_REACHED（gap 提前终止）");
     assert_eq!(stat(m, 6), 1, "gap_terminated");
-    assert!(
-        (objective(m) - 511.0).abs() <= 1e-6,
-        "objective = {}",
-        objective(m)
-    );
-    let g = gap_percent(m);
-    assert!(g.is_finite() && g > 2.0 && g < 4.0, "gap = {g}");
+    let incumbent = objective(m);
+    let values = solution(m);
+    let coefficients = [11.0, 20.0, 32.0, 44.0, 55.0, 70.0, 88.0, 99.0, 111.0, 122.0, 133.0, 144.0];
+    let weights = [7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0, 31.0, 37.0, 41.0, 43.0, 47.0];
+    assert_eq!(values.len(), 12);
+    assert!(values.iter().all(|x| x.is_finite() && *x >= -1e-6 && *x <= 1.0 + 1e-6 && (*x - x.round()).abs() <= 1e-6));
+    let weight: f64 = values.iter().zip(weights).map(|(x, w)| x * w).sum();
+    let recomputed: f64 = values.iter().zip(coefficients).map(|(x, c)| x * c).sum();
+    assert!(weight <= 172.0 + 1e-6, "不可行重量={weight}");
+    assert!((incumbent - recomputed).abs() <= 1e-6);
     let b = bound(m);
-    assert!(b.is_finite() && b > 511.0, "bound 证据 = {b}");
+    assert!(incumbent.is_finite() && incumbent > 0.0 && incumbent <= 523.0 + 1e-6);
+    assert!(b.is_finite() && b >= 523.0 - 1e-6 && b >= incumbent - 1e-6, "bound证据={b}");
+    let g = gap_percent(m);
+    assert!(g.is_finite() && g >= 0.0 && g <= 20.0 + 1e-6, "gap={g}");
+    assert!((g - ((b - incumbent) / incumbent.abs() * 100.0).max(0.0)).abs() <= 1e-6);
     milp_ffi_model_destroy(m);
 
     // 同一模型、新句柄缺省参数：完整证明最优。

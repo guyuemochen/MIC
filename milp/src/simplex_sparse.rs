@@ -2356,9 +2356,7 @@ impl SparseSimplex {
         // 按因子化列序收集基列（原始行空间稀疏列）。
         self.lu_scratch.resize(m);
         self.lu.resize(m);
-        #[cfg(not(feature = "sparse_reuse_columns"))]
         self.refactor_cols.clear();
-        // 保留每个基位置的列缓冲；长度缩小时仍由 resize_with 丢弃尾部。
         self.refactor_cols.resize_with(m, Vec::new);
         for (t, &bp) in order.iter().enumerate() {
             let j = self.basis[bp];
@@ -3664,10 +3662,9 @@ mod tests {
 
     // ---- A. LU 单元 ----
 
-    /// L·U 与 P·B 逐元素重建 + FTRAN/BTRAN 残差（多形态矩阵）。
-    /// 诊断与容量复用不得影响同输入的主元轨迹和解；重构保留列缓冲容量。
+    /// 成本诊断不得影响同输入的主元轨迹和解。
     #[test]
-    fn refactor_column_storage_and_diagnostics_preserve_solution() {
+    fn diagnostics_preserve_solution() {
         let p = load_instance(&milp_instance("knapsack-10")).unwrap();
         let bounds = Bounds::from_problem(&p);
         let mut a = SparseSimplex::new(&p, Tolerances::default()).unwrap();
@@ -3687,17 +3684,9 @@ mod tests {
             assert!(costs.calls[1] > 0);
             assert!(costs.calls[2] > 0);
         }
-        #[cfg(feature = "sparse_reuse_columns")]
-        {
-            for col in &mut a.refactor_cols { col.reserve(100); }
-            let capacities: Vec<_> = a.refactor_cols.iter().map(Vec::capacity).collect();
-            a.refactor().unwrap();
-            for (col, old) in a.refactor_cols.iter().zip(capacities) {
-                assert!(col.capacity() >= old, "重构不能丢弃已分配容量");
-            }
-        }
     }
 
+    /// L·U 与 P·B 逐元素重建 + FTRAN/BTRAN 残差（多形态矩阵）。
     #[test]
     fn lu_reconstruction_and_solves() {
         let cases: Vec<Vec<Vec<(usize, f64)>>> = vec![

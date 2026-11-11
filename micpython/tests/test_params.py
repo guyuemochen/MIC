@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """参数语义测试：镜像三铁律、关断编码、gap 向量、非法值（公共 API）。
 
-gap 统一向量 hard-knapsack-12（前轮实跑钉死：CLI ``--mipgap 20`` →
-``status=gap_reached, nodes=1, gap=3.11%, best=511.000000``；``--mipgap 0``
-→ ``status=optimal, objective=523.000000``。2026-10 割族增强后根 LP 终
-顶点漂移：旧值 512/2.83% 出自旧 GMI 终顶点的取整复核；新割终顶点中面
-化，根 incumbent 改由割前顶点 dive 供应 = 511）。
+gap向量hard-knapsack-12核查可行解、已知最优523、对偶界与gap公式。
+提前终止目标由启发式决定，不锁定历史511；基线3cf2144已返回520。
 """
 
+import math
 import unittest
 
 from micpython import (
@@ -138,11 +136,28 @@ class ParamBehaviorTests(unittest.TestCase):
         self.assertEqual(m.optimize(), Status.LIMIT_REACHED,
                          '达阈值提前终止的诚实终态（非 OPTIMAL）')
         self.assertTrue(m.GapTerminated)
-        self.assertAlmostEqual(m.ObjVal, 511.0, delta=TOL,
-                               msg='LIMIT_REACHED 携带 incumbent')
+        incumbent = m.ObjVal
+        values = [m.getVarByName('x%d' % i).X for i in range(12)]
+        coefficients = [11, 20, 32, 44, 55, 70, 88, 99, 111, 122, 133, 144]
+        weights = [7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+        for value in values:
+            self.assertTrue(math.isfinite(value))
+            self.assertGreaterEqual(value, -TOL)
+            self.assertLessEqual(value, 1.0 + TOL)
+            self.assertAlmostEqual(value, round(value), delta=TOL)
+        self.assertLessEqual(sum(w * x for w, x in zip(weights, values)), 172 + TOL)
+        self.assertAlmostEqual(incumbent, sum(c * x for c, x in zip(coefficients, values)), delta=TOL)
+        bound = m.Bound
+        self.assertTrue(math.isfinite(incumbent) and math.isfinite(bound))
+        self.assertGreater(incumbent, 0.0)
+        self.assertLessEqual(incumbent, 523 + TOL)
+        self.assertGreaterEqual(bound, 523 - TOL)
+        self.assertGreaterEqual(bound, incumbent - TOL)
         gap = m.MIPGapPercent
-        self.assertGreater(gap, 2.0)
-        self.assertLess(gap, 4.0, '实跑 CLI 佐证 3.11%')
+        self.assertTrue(math.isfinite(gap))
+        self.assertGreaterEqual(gap, 0.0)
+        self.assertLessEqual(gap, 20.0 + TOL)
+        self.assertAlmostEqual(gap, max(0.0, (bound - incumbent) / abs(incumbent) * 100), delta=TOL)
         self.assertEqual(m.SolCount, 1)
 
     def test_mipgap_zero_still_optimal(self):
