@@ -48,9 +48,9 @@
 //!   界修改的回放记录）。每个 `Pending` 记录应用前 trail 应回退到的长度
 //!   `unwind_to`，保证兄弟节点在父节点界状态上施加自己的分支界；回退严格
 //!   按 trail 逆序恢复旧值。
-//! - 可选 HybridBestBound 每64节点选最好界，其余深搜；Pending另存完整父域，
-//!   跨子树恢复时替换整个父域并清空trail。仅单线程、local_cuts=false，
-//!   默认DFS不分配父域副本。限额触发时未处理节点仍保留在前沿界计算内。
+//! - 可选 HybridBestBound 每64节点选最好界，其余深搜；Pending保存分块共享的
+//!   完整父域快照，跨子树恢复全部边界并清空trail。仅单线程、local_cuts=false，
+//!   默认DFS不分配快照。限额触发时未处理节点仍保留在前沿界计算内。
 //! - 进展保证：子节点分支界相对当前界严格收缩且新区间非空时才压栈
 //!   （[`tighten_child`]）。非分数 x̄ 的两个分支界中至多一侧无收缩，伪整数
 //!   回退分支因此在最坏情形下也单调收缩，节点上限兜底。
@@ -85,6 +85,7 @@
 //!   （根终局直返；NodeLimit/TimeLimit/Gap ⇒ LimitReached，Gap 附
 //!   `gap_terminated = true` 与证据 bound；无 stop ⇒ incumbent?Optimal:Infeasible）。
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use crate::cuts::{self, CutOptions};
@@ -964,6 +965,7 @@ fn sequential_bb(
         budget_progress_cap,
         &mut pc,
         adaptive.as_mut(),
+        None,
         0,
     );
     // S13-A：根节点判定产生的 incumbent 严格改进（如根 LP 恰整数、根
@@ -1106,9 +1108,9 @@ fn sequential_bb(
             break;
         }
         // 回退到父路径界状态后施加本分支界；空界/无收缩 ⇒ (f) 剪枝（不 resolve）。
-        if let Some(parent_bounds) = p.parent_bounds {
-            // 完整父域替换，不能用DFS的长度回退重建已经离开的祖先路径。
-            bounds = parent_bounds;
+        if let Some(parent_bounds) = p.parent_bounds.as_ref() {
+            // 恢复完整父域，不能用DFS的长度回退重建已经离开的祖先路径。
+            parent_bounds.restore(&mut bounds);
             trail.clear();
         } else {
             unwind(&mut trail, &mut bounds, p.unwind_to);
@@ -1259,6 +1261,7 @@ fn sequential_bb(
             budget_progress_cap,
             &mut pc,
             adaptive.as_mut(),
+            p.parent_bounds.as_deref(),
             p.depth,
         );
         // S13-A：本节点判定（(e) 记录或自适应 dive 命中）产生的 incumbent
@@ -1941,10 +1944,61 @@ struct TrailEntry {
     old: f64,
 }
 
+/// 32列一块兼顾块指针开销与单列分支的复制量；不改变搜索或内存预算。
+const DOMAIN_BLOCK_COLUMNS: usize = 32;
+type DomainBlock = [[f64; 2]; DOMAIN_BLOCK_COLUMNS];
+
+/// 混合搜索的完整父域：共享未改动的块，不引用祖先快照，释放深度不随树深增长。
+///
+/// 捕获发生在压栈前，逐位比较实际边界，故包含不记入trail的RC覆盖层和所有其它修改。
+/// 块不可变；兄弟快照及跨子树恢复均不会相互污染。只在允许单线程的混合模式使用Rc。
+struct DomainSnapshot {
+    columns: usize,
+    blocks: Box<[Rc<DomainBlock>]>,
+}
+
+impl DomainSnapshot {
+    fn capture(bounds: &Bounds, previous: Option<&Self>) -> Self {
+        let columns = bounds.lb.len();
+        debug_assert_eq!(columns, bounds.ub.len());
+        let mut blocks = Vec::with_capacity(columns.div_ceil(DOMAIN_BLOCK_COLUMNS));
+        for begin in (0..columns).step_by(DOMAIN_BLOCK_COLUMNS) {
+            let end = (begin + DOMAIN_BLOCK_COLUMNS).min(columns);
+            let old = previous.filter(|p| p.columns == columns)
+                .map(|p| &p.blocks[begin / DOMAIN_BLOCK_COLUMNS]);
+            if let Some(old) = old.filter(|old| (begin..end).all(|j| {
+                old[j - begin][0].to_bits() == bounds.lb[j].to_bits()
+                    && old[j - begin][1].to_bits() == bounds.ub[j].to_bits()
+            })) {
+                blocks.push(Rc::clone(old));
+            } else {
+                let mut block = [[0.0; 2]; DOMAIN_BLOCK_COLUMNS];
+                for j in begin..end { block[j - begin] = [bounds.lb[j], bounds.ub[j]]; }
+                blocks.push(Rc::new(block));
+            }
+        }
+        Self { columns, blocks: blocks.into_boxed_slice() }
+    }
+
+    fn restore(&self, bounds: &mut Bounds) {
+        // 同一搜索中的列数不变，通常只复用现有缓冲，不再逐节点分配两条Vec。
+        bounds.lb.resize(self.columns, 0.0);
+        bounds.ub.resize(self.columns, 0.0);
+        for (i, block) in self.blocks.iter().enumerate() {
+            let begin = i * DOMAIN_BLOCK_COLUMNS;
+            let end = (begin + DOMAIN_BLOCK_COLUMNS).min(self.columns);
+            for j in begin..end {
+                bounds.lb[j] = block[j - begin][0];
+                bounds.ub[j] = block[j - begin][1];
+            }
+        }
+    }
+}
+
 /// 待应用的分支决策（stack 元素）。
 struct Pending {
-    /// 仅混合策略保存完整父域；默认DFS不分配。
-    parent_bounds: Option<Bounds>,
+    /// 仅混合策略保存共享父域快照；兄弟节点共用，默认DFS不分配。
+    parent_bounds: Option<Rc<DomainSnapshot>>,
     var: usize,
     /// true = 上行分支（收紧 lb 至 ⌊x̄⌋+1）；false = 下行（收紧 ub 至 ⌊x̄⌋）。
     tighten_lb: bool,
@@ -2202,6 +2256,7 @@ fn branch_or_close(
     budget_progress_cap: Option<f64>,
     pc: &mut Pseudocosts,
     mut adaptive: Option<&mut AdaptiveState>,
+    parent_domain: Option<&DomainSnapshot>,
     depth: u32,
 ) {
     // (d)：LP bound 不优于 incumbent ⇒ 剪枝（按原始 sense 方向比较）。
@@ -2309,7 +2364,8 @@ fn branch_or_close(
         && pc.est_gain(var, true, 1.0 - frac) < pc.est_gain(var, false, frac);
     // est = 压栈时父节点 LP 目标；frac_dir = 该方向距界的分数距离
     // （伪代价观测用）。
-    let parent_bounds = (opts.node_rule == NodeRule::HybridBestBound).then(|| bounds.clone());
+    let parent_bounds = (opts.node_rule == NodeRule::HybridBestBound)
+        .then(|| Rc::new(DomainSnapshot::capture(bounds, parent_domain)));
     let up = Pending {
         parent_bounds: parent_bounds.clone(),
         depth: depth + 1,
@@ -2680,6 +2736,56 @@ mod tests {
             assert_eq!(result.status, SolveStatus::LimitReached);
             assert!(result.bound.unwrap() >= 2331.0 - 1e-7, "未处理节点的界必须包含真实最优值");
         }
+    }
+
+    #[test]
+    fn hybrid_domain_snapshots_restore_all_bits_without_sibling_changes() {
+        // 尾块、非二元边界、无穷界和有符号零都必须按原位模式恢复。
+        let n = DOMAIN_BLOCK_COLUMNS * 3 + 5;
+        let mut original = Bounds {
+            lb: (0..n).map(|j| -(j as f64)).collect(),
+            ub: (0..n).map(|j| j as f64 + 0.5).collect(),
+        };
+        original.lb[0] = 0.0;
+        original.ub[n - 1] = f64::INFINITY;
+        let root = Rc::new(DomainSnapshot::capture(&original, None));
+        let sibling = Rc::clone(&root);
+        let unchanged = DomainSnapshot::capture(&original, Some(&root));
+        assert!(root.blocks.iter().zip(&unchanged.blocks).all(|(a, b)| Rc::ptr_eq(a, b)));
+        let mut changed = original.clone();
+        changed.lb[0] = -0.0;
+        // 同时模拟分支与不写trail的全局覆盖：不能只捕获本次分支列。
+        changed.lb[DOMAIN_BLOCK_COLUMNS + 2] = 0.25;
+        changed.ub[n - 1] = 123.0;
+        let child = DomainSnapshot::capture(&changed, Some(&root));
+        assert!(!Rc::ptr_eq(&root.blocks[0], &child.blocks[0]));
+        assert!(!Rc::ptr_eq(&root.blocks[1], &child.blocks[1]));
+        assert!(Rc::ptr_eq(&root.blocks[2], &child.blocks[2]));
+        assert!(!Rc::ptr_eq(&root.blocks[3], &child.blocks[3]));
+        let mut restored = Bounds { lb: Vec::new(), ub: Vec::new() };
+        for (snapshot, expected) in [(&child, &changed), (&*sibling, &original), (&unchanged, &original), (&child, &changed)] {
+            snapshot.restore(&mut restored);
+            assert_eq!(restored.lb.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.lb.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+            assert_eq!(restored.ub.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.ub.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        }
+        // 重放兄弟后再分支，比较基准来自兄弟自身而非最后访问的另一条路径。
+        let back = DomainSnapshot::capture(&original, Some(&child));
+        back.restore(&mut restored);
+        assert_eq!(restored.ub, original.ub);
+        assert_eq!(restored.lb[0].to_bits(), original.lb[0].to_bits());
+    }
+
+    #[test]
+    fn hybrid_domain_snapshots_do_not_retain_ancestor_chains() {
+        let mut bounds = Bounds { lb: vec![0.0; 65], ub: vec![f64::INFINITY; 65] };
+        let mut current = Rc::new(DomainSnapshot::capture(&bounds, None));
+        for step in 0..10_000 {
+            let ancestor = Rc::downgrade(&current);
+            bounds.lb[step % 65] = step as f64;
+            current = Rc::new(DomainSnapshot::capture(&bounds, Some(&current)));
+            assert!(ancestor.upgrade().is_none(), "共享块不应延长祖先快照的寿命");
+        }
+        drop(current); // 无递归父链，不因深搜索导致递归析构。
     }
 
     #[test]
