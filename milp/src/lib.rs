@@ -42,3 +42,5 @@ pub mod scaling;
 // revised 侧（m×(n+m) ≥ 10^6 格 ⇒ revised，否则 tableau；显式指定覆盖
 // 优先，revised 仅 threads=1）。
 pub mod simplex_sparse;
+
+mod binary_propagation;

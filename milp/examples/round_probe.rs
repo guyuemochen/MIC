@@ -141,6 +141,7 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
             }
             "--pc-probes" => opts.bb.pc_reliability_probes = value.parse()?,
             "--probe-reuse" => opts.bb.reuse_probe_evidence = toggle(value)?,
+            "--binary-propagation" => opts.bb.binary_row_propagation = toggle(value)?,
             "--early-stop" => {
                 ctrl.degrade = if toggle(value)? {
                     DegradePolicy::default()
@@ -189,6 +190,10 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
     } else {
         write!(out, "null")?;
     }
+    let prop = stats.propagation;
+    write!(out, ",\"prop_accepted_rows\":{},\"prop_skipped_rows\":{},\"prop_calls\":{},\"prop_row_visits\":{},\"prop_term_visits\":{},\"prop_fixes\":{},\"prop_conflicts\":{}",
+        prop.accepted_rows, prop.skipped_rows, prop.calls, prop.row_visits,
+        prop.term_visits, prop.fixes, prop.conflicts)?;
     writeln!(out, "}}")?;
     Ok(())
 }

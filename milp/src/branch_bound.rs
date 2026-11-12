@@ -134,6 +134,9 @@ pub enum NodeRule {
     HybridBestBound,
 }
 
+pub use crate::binary_propagation::PropagationStats;
+use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome};
+
 /// 分支定界参数。
 #[derive(Debug, Clone, Copy)]
 pub struct BbOptions {
@@ -174,6 +177,8 @@ pub struct BbOptions {
     /// 试验：复用当前节点强分支中最终选中变量的已证不可行方向与子节点界。
     /// 默认 false；仅顺序路径。证据不跨节点/局部割作用域缓存，不复用 LP 解或基。
     pub reuse_probe_evidence: bool,
+    /// 试验：精确二元静态行传播。默认 false，仅顺序树节点，不读取割。
+    pub binary_row_propagation: bool,
     /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
     /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
     /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
@@ -253,6 +258,7 @@ impl Default for BbOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             reuse_probe_evidence: false,
+            binary_row_propagation: false,
             mitm_windows: 8,
             global_work_stack: false,
             work_stack_auto: true,
@@ -341,6 +347,8 @@ pub struct BbStats {
     /// 树内再应用累计新固定的整数变量数（S13-A；不含根阶段 [`Self::rc_fixed`]。
     /// 列一旦固定即 lb=ub，后续轮次天然跳过 ⇒ 计数不重）。纯记账。
     pub rc_refixed: u64,
+    /// 默认关闭的二元静态行传播统计；不计入 LP 节点数。
+    pub propagation: PropagationStats,
 }
 
 /// 分支定界结果。
@@ -465,6 +473,9 @@ pub fn branch_and_bound_controlled(
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
+    if opts.binary_row_propagation && ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("二元静态行传播试验仅支持单线程".to_string()));
+    }
     if opts.reuse_probe_evidence && ctrl.threads != 1 {
         return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
     }
@@ -930,6 +941,9 @@ fn sequential_bb(
         ))
     });
 
+    // 关闭或根部已闭合时不构造、不扫描模型；首次展开孩子才认证静态行。
+    let mut propagation: Option<BinaryPropagation> = None;
+
     // —— DFS 主循环状态 ——
     let mut stack: Vec<Pending> = Vec::new();
     let mut trail: Vec<TrailEntry> = Vec::new();
@@ -1149,6 +1163,27 @@ fn sequential_bb(
         if let Some(state) = rc_refix.as_ref() {
             if state.has_fixes() && !state.intersect(&mut bounds) {
                 continue;
+            }
+        }
+        if opts.binary_row_propagation {
+            let state = propagation.get_or_insert_with(|| BinaryPropagation::new(problem, tol));
+            // RC 覆盖层不记 trail；即使本次取交未改界，也必须重播种全部日志。
+            // 深层父域已闭包，只有分支界与 RC 前提可能新增静态行推论。
+            let seeds = std::iter::once(p.var).chain(
+                rc_refix.as_ref().into_iter().flat_map(|rc| rc.log.iter().map(|e| e.var)),
+            );
+            let outcome = state.propagate(&mut bounds, p.depth == 1, seeds, time_deadline,
+                |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old }));
+            stats.propagation = state.stats;
+            match outcome {
+                PropagationOutcome::Conflict => continue,
+                PropagationOutcome::Deadline => {
+                    // 中断不是不可行证明：当前子树仍在前沿，终态必须限额退出。
+                    stack.push(p);
+                    limit_hit = true;
+                    break;
+                }
+                PropagationOutcome::Complete => {}
             }
         }
         let mut sol = simplex.resolve(&bounds);
@@ -5831,4 +5866,207 @@ mod tests {
             assert!(!r.gap_terminated);
         }
     }
+}
+
+#[cfg(test)]
+mod binary_propagation_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+    use crate::solver::{solve, SolveOptions};
+
+    fn small_model(seed: u64, sense: Sense) -> Problem {
+        let mut p = Problem::new("传播端到端穷举", sense);
+        let mut rng = seed + 17;
+        let mut next = || { rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1); rng >> 32 };
+        for j in 0..6 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.set_objective((0..6).map(|j| (j, (next() % 17) as f64 - 5.0)).collect(), 0.25).unwrap();
+        for row in 0..4 {
+            let terms = (0..6).map(|j| (j, (next() % 9) as f64 - 3.0)).collect();
+            let op = if row == 3 && seed % 3 == 0 { RelOp::Eq } else if row % 2 == 0 { RelOp::Le } else { RelOp::Ge };
+            p.add_constraint(None, terms, op, (next() % 16) as f64 - 3.0).unwrap();
+        }
+        p
+    }
+
+    fn optimum(p: &Problem) -> Option<f64> {
+        let mut best: Option<f64> = None;
+        for mask in 0..(1 << p.vars.len()) {
+            let x: Vec<_> = (0..p.vars.len()).map(|j| ((mask >> j) & 1) as f64).collect();
+            if !p.constraints.iter().all(|row| match row.op {
+                RelOp::Le => row.expr.eval(&x) <= row.rhs,
+                RelOp::Ge => row.expr.eval(&x) >= row.rhs,
+                RelOp::Eq => row.expr.eval(&x) == row.rhs,
+            }) { continue; }
+            let value = p.obj.eval(&x) + p.obj_offset;
+            best = Some(best.map_or(value, |old| match p.sense { Sense::Maximize => old.max(value), Sense::Minimize => old.min(value) }));
+        }
+        best
+    }
+
+    fn options(engine: LpEngineKind) -> BbOptions {
+        BbOptions { binary_row_propagation: true, branch_rule_auto: false,
+            branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
+            local_cuts: false, root_rc_fixing: false, lp_engine: engine, ..BbOptions::default() }
+    }
+
+    #[test]
+    fn binary_propagation_matches_enumeration_across_engines_domains_and_rc() {
+        let tol = Tolerances::default();
+        let mut calls = 0;
+        let mut fixes = 0;
+        for seed in 0..12 {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let p = small_model(seed, sense);
+                let exact = optimum(&p);
+                for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                    for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
+                        for rc in [false, true] {
+                            let opts = BbOptions { node_rule: rule, root_rc_fixing: rc, ..options(engine) };
+                            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: false, ..opts }, tol).unwrap();
+                            let on = branch_and_bound(&p, &opts, tol).unwrap();
+                            assert_eq!(off.status, on.status, "seed={seed} engine={engine:?} rule={rule:?} rc={rc}");
+                            assert_eq!(on.best_objective, exact);
+                            assert_eq!(on.status, if exact.is_some() { SolveStatus::Optimal } else { SolveStatus::Infeasible });
+                            assert_eq!(off.stats.propagation.calls, 0);
+                            assert_eq!(off.stats.propagation.accepted_rows, 0);
+                            calls += on.stats.propagation.calls;
+                            fixes += on.stats.propagation.fixes;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(calls > 0 && fixes > 0);
+    }
+
+    #[test]
+    fn binary_propagation_scaling_presolve_probe_local_cut_and_budget_paths() {
+        let mut p = Problem::new("传播背包接线", Sense::Maximize);
+        for j in 0..8 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.set_objective((0..8).map(|j| (j, (j * 7 % 11 + 1) as f64)).collect(), 0.25).unwrap();
+        for k in 0..3 {
+            p.add_constraint(None, (0..8).map(|j| (j, (j * 3 + k * 2 + 1) as f64)).collect(), RelOp::Le, (35 + k * 5) as f64).unwrap();
+        }
+        let exact = optimum(&p).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for presolve in [false, true] {
+                for scaling in [false, true] {
+                    for reuse in [false, true] {
+                        let bb = BbOptions { branch_rule: BranchRule::Pseudocost, reuse_probe_evidence: reuse,
+                            local_cuts: true, root_rc_fixing: true, ..options(engine) };
+                        let result = solve(&p, &SolveOptions { bb, use_presolve: presolve, use_scaling: scaling, ..SolveOptions::default() }).unwrap();
+                        assert_eq!(result.status, SolveStatus::Optimal);
+                        assert_eq!(result.objective, Some(exact));
+                    }
+                }
+            }
+            let mut fractional = Problem::new("传播限额前沿", Sense::Maximize);
+            fractional.add_var("a", VarType::Binary).unwrap();
+            fractional.add_var("b", VarType::Binary).unwrap();
+            fractional.set_objective(vec![(0, 10.0), (1, 7.0)], 0.25).unwrap();
+            fractional.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0).unwrap();
+            let opts = BbOptions { node_limit: 1, ..options(engine) };
+            let ctrl = SearchControl { determinism: Determinism::Budget, ..SearchControl::default() };
+            let first = branch_and_bound_controlled(&fractional, &opts, &ctrl, Tolerances::default(), None).unwrap();
+            let second = branch_and_bound_controlled(&fractional, &opts, &ctrl, Tolerances::default(), None).unwrap();
+            assert_eq!(first.status, SolveStatus::LimitReached);
+            assert!(first.bound.unwrap() >= 10.25);
+            assert_eq!(first.bound, second.bound);
+            assert_eq!(first.best_values, second.best_values);
+            assert_eq!(first.stats.nodes, second.stats.nodes);
+            assert_eq!(first.stats.lp_iterations, second.stats.lp_iterations);
+            assert_eq!(first.stats.propagation.fixes, second.stats.propagation.fixes);
+        }
+    }
+
+    #[test]
+    fn binary_propagation_replays_unchanged_rc_overlay_after_dfs_and_hybrid_restore() {
+        let mut p = Problem::new("覆盖层重复播种", Sense::Maximize);
+        for j in 0..3 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.0).unwrap();
+        let root = Bounds::from_problem(&p);
+        let snapshot = DomainSnapshot::capture(&root, None);
+        let cache = RootRcCache { sense: Sense::Maximize, obj_offset: 0.0, obj_integral: true,
+            int_vars: vec![0, 1, 2], z_lp: 3.0, rc: vec![0.0; 3], side: vec![0; 3], n_struct: 3, base: root.clone() };
+        let mut rc = RcRefixState::new(cache);
+        rc.log.push(RcFixEntry { var: 0, tighten_lb: true, value: 1.0 });
+        let mut state = BinaryPropagation::new(&p, Tolerances::default());
+        let mut bounds = root.clone();
+        let mut trail = Vec::new();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+        unwind(&mut trail, &mut bounds, 0);
+        assert_eq!(bounds.lb[0], 1.0, "RC不记trail，祖先仍保留覆盖界");
+        assert_eq!(bounds.ub[1], 1.0);
+        let before = bounds.clone();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(before.lb, bounds.lb);
+        // 只播种本次分支列会漏掉推论；生产接线必须播种整个RC日志。
+        assert_eq!(state.propagate(&mut bounds, false, [2], None, |_, _, _| {}), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 1.0);
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+        snapshot.restore(&mut bounds); trail.clear();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+    }
+
+    #[test]
+    fn binary_propagation_rejects_both_parallel_public_entries() {
+        let p = small_model(1, Sense::Maximize);
+        let opts = options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let error = branch_and_bound_controlled(&p, &opts, &ctrl, Tolerances::default(), None).unwrap_err();
+        assert!(error.to_string().contains("二元静态行传播"));
+        // 直接入口不能绕过上层检查；配置其余项用已有默认控制参数构建。
+        let config = crate::parallel_bb::ParallelConfig { threads: 2, mipgap_percent: None,
+            adaptive_heuristics: false, degrade: DegradePolicy::disabled(), log_period_secs: None,
+            progress: None };
+        let result = crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, Tolerances::default());
+        assert!(matches!(result, Err(MilpError::InvalidModel(message)) if message.contains("二元静态行传播")));
+    }
+    #[test]
+    fn binary_propagation_root_children_scan_unrelated_rows_and_skip_conflict_lp() {
+        let mut p = Problem::new("两个根孩子独立播种", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 0.5), (1, 0.5)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.25).unwrap();
+        p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let on = branch_and_bound(&p, &options(engine), Tolerances::default()).unwrap();
+            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: false, ..options(engine) }, Tolerances::default()).unwrap();
+            assert_eq!(on.status, SolveStatus::Optimal);
+            assert_eq!(on.best_objective, Some(0.0));
+            assert_eq!(on.stats.propagation.calls, 2);
+            assert_eq!(on.stats.propagation.conflicts, 1);
+            assert_eq!(on.stats.nodes, 2, "一个根LP加一个非空孩子LP，冲突不算节点");
+            assert!(off.stats.nodes > on.stats.nodes);
+        }
+    }
+
+    #[test]
+    fn binary_propagation_large_hybrid_frontier_keeps_known_optimum() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = BbOptions { node_rule: NodeRule::HybridBestBound, node_limit: 128,
+                ..options(engine) };
+            let r = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert!(r.stats.nodes > 64, "覆盖跨子树最好界切换");
+            assert!(r.stats.propagation.calls > 64);
+            assert!(r.stats.propagation.accepted_rows > 0);
+            match r.status {
+                SolveStatus::Optimal => assert_eq!(r.best_objective, Some(2331.0)),
+                SolveStatus::LimitReached => assert!(r.bound.unwrap() >= 2331.0 - 1e-7),
+                other => panic!("已知可行实例不能被传播误报为{other:?}"),
+            }
+        }
+    }
+
 }

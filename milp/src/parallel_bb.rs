@@ -808,6 +808,9 @@ pub fn parallel_branch_and_bound(
     tol: Tolerances,
 ) -> Result<ParallelOutcome> {
     let start = Instant::now();
+    if opts.binary_row_propagation {
+        return Err(MilpError::InvalidModel("二元静态行传播试验仅支持单线程".to_string()));
+    }
     if opts.reuse_probe_evidence {
         return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
     }
