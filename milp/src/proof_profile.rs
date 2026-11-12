@@ -72,7 +72,7 @@ pub struct ProbeTotals {
     pub positive: u64,
     pub zero: u64,
     pub negative: u64,
-    pub nonfinite: u64,
+    pub nonfinite_optimal_gain: u64,
     pub infeasible: u64,
     pub iteration_limit: u64,
     pub time_limit: u64,
@@ -156,7 +156,26 @@ pub fn lp(
                 }
                 .into(),
             ),
+            // B&B既有计数会随cut_loop内部重建重置一段；不冒充实际全部LP成本。
+            (
+                "iterations_note",
+                if kind == "root_after_cuts" {
+                    "production_counter_may_reset_on_rebuild"
+                } else {
+                    "observed_call_delta"
+                }
+                .into(),
+            ),
             ("seconds", optional(seconds)),
+            (
+                "seconds_scope",
+                if kind == "root_after_cuts" {
+                    "root_cut_stage_including_rebuild"
+                } else {
+                    "call"
+                }
+                .into(),
+            ),
             ("retained_cuts", retained_cuts.into()),
         ],
     );
@@ -209,7 +228,7 @@ pub fn probe(
                     Sense::Minimize => sol.objective - parent,
                 };
                 if !gain.is_finite() {
-                    p.nonfinite += 1;
+                    p.nonfinite_optimal_gain += 1;
                 } else if gain > 0.0 {
                     p.positive += 1;
                 } else if gain < 0.0 {
@@ -221,9 +240,6 @@ pub fn probe(
             LpStatus::Infeasible => p.infeasible += 1,
             LpStatus::IterationLimit => {
                 p.iteration_limit += 1;
-                if !sol.objective.is_finite() {
-                    p.nonfinite += 1;
-                }
             }
             LpStatus::TimeLimit => p.time_limit += 1,
             LpStatus::Unbounded => p.unbounded += 1,
@@ -336,6 +352,8 @@ pub fn frontier(
     nodes: u64,
     exit: bool,
     incumbent: Option<f64>,
+    unresolved_bound: Option<f64>,
+    combined_bound: impl FnOnce() -> Option<f64>,
     entries: impl Iterator<Item = (f64, u32)>,
 ) {
     const POINTS: [u64; 7] = [1, 64, 128, 256, 512, 1024, 4096];
@@ -359,6 +377,8 @@ pub fn frontier(
     if !sample {
         return;
     }
+    // 只有真正采样时才扫描生产前沿，不能让实参求值每个节点都付O(stack)。
+    let combined_bound = combined_bound();
     let mut len = 0usize;
     let mut root_children = 0usize;
     let mut minimum = u32::MAX;
@@ -403,6 +423,12 @@ pub fn frontier(
                     Value::Null
                 },
             ),
+            (
+                "unresolved_count",
+                TRACE.with(|t| t.borrow().unresolved_lp_nodes).into(),
+            ),
+            ("unresolved_bound", optional(unresolved_bound)),
+            ("combined_bound", optional(combined_bound)),
             ("size", len.into()),
             ("unknown_est_count", unknown.into()),
             ("weakest_ties", ties.into()),
@@ -545,7 +571,7 @@ impl Trace {
                 p.calls, p.iterations
             )?;
             write_value(out, &Value::Number(p.seconds))?;
-            write!(out,",\"positive_gain\":{},\"zero_gain\":{},\"negative_gain\":{},\"nonfinite\":{},\"infeasible\":{},\"iteration_limit\":{},\"time_limit\":{},\"unbounded\":{}}}",p.positive,p.zero,p.negative,p.nonfinite,p.infeasible,p.iteration_limit,p.time_limit,p.unbounded)?;
+            write!(out,",\"positive_gain\":{},\"zero_gain\":{},\"negative_gain\":{},\"nonfinite_optimal_gain\":{},\"infeasible\":{},\"iteration_limit\":{},\"time_limit\":{},\"unbounded\":{}}}",p.positive,p.zero,p.negative,p.nonfinite_optimal_gain,p.infeasible,p.iteration_limit,p.time_limit,p.unbounded)?;
         }
         write!(out, "]}}")
     }
@@ -827,5 +853,96 @@ mod tests {
         let mut bytes = Vec::new();
         write_value(&mut bytes, &Value::String("错误\"\\\n".into())).unwrap();
         assert_eq!(String::from_utf8(bytes).unwrap(), "\"错误\\\"\\\\\\u000a\"");
+    }
+    #[test]
+    fn interrupted_child_is_reported_separately_from_empty_execution_stack() {
+        use crate::branch_bound::{test_node_lp_interrupt::Guard, unresolved_bound_tests};
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut p = Problem::new("诊断未完成子树", sense);
+            p.add_var("b", VarType::Binary).unwrap();
+            p.set_objective(
+                vec![(0, if sense == Sense::Minimize { -1.0 } else { 1.0 })],
+                0.25,
+            )
+            .unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5)
+                .unwrap();
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                for state in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                    let opts = BbOptions {
+                        branch_rule: BranchRule::Pseudocost,
+                        reuse_probe_evidence: true,
+                        ..unresolved_bound_tests::options(engine)
+                    };
+                    reset(1);
+                    let result = {
+                        let _guard =
+                            Guard::install(Some(unresolved_bound_tests::interrupt(state, 0, 1)));
+                        branch_and_bound(&p, &opts, Tolerances::default()).unwrap()
+                    };
+                    let trace = take();
+                    assert_eq!(result.status, SolveStatus::LimitReached);
+                    assert_eq!(trace.unresolved_lp_nodes, 1);
+                    assert_eq!(trace.unresolved_est, result.bound);
+                    let frontier = trace
+                        .events
+                        .iter()
+                        .rev()
+                        .find(|e| e.kind == "frontier")
+                        .unwrap();
+                    assert_eq!(number(frontier, "size"), 0.0);
+                    assert!(matches!(field(frontier, "stack_bound"), Value::Null));
+                    assert_eq!(number(frontier, "unresolved_count"), 1.0);
+                    assert_eq!(Some(number(frontier, "unresolved_bound")), result.bound);
+                    assert_eq!(Some(number(frontier, "combined_bound")), result.bound);
+                    let node = trace
+                        .events
+                        .iter()
+                        .find(|e| {
+                            e.kind == "node" && e.fields.iter().any(|(k, _)| *k == "actual_bound")
+                        })
+                        .unwrap();
+                    assert!(matches!(field(node, "actual_bound"), Value::Null));
+                }
+            }
+        }
+    }
+    #[test]
+    fn noncheckpoint_frontier_does_not_evaluate_or_scan() {
+        reset(1);
+        frontier(
+            Sense::Minimize,
+            2,
+            false,
+            None,
+            None,
+            || panic!("非采样节点不能聚合生产前沿"),
+            std::iter::from_fn(|| -> Option<(f64, u32)> {
+                panic!("非采样节点不能扫描栈")
+            }),
+        );
+        frontier(
+            Sense::Minimize,
+            64,
+            false,
+            None,
+            None,
+            || Some(3.0),
+            std::iter::once((3.0, 1)),
+        );
+        frontier(
+            Sense::Minimize,
+            64,
+            false,
+            None,
+            None,
+            || panic!("重复节点数不能重复采样"),
+            std::iter::empty(),
+        );
+        let trace = take();
+        assert_eq!(
+            trace.events.iter().filter(|e| e.kind == "frontier").count(),
+            1
+        );
     }
 }

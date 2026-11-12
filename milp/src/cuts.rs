@@ -2462,17 +2462,20 @@ pub fn cut_loop_recorded<E: LpEngine>(
             ));
             #[cfg(feature = "proof_profile")]
             let profile_chunk_iterations = s.iterations();
+            #[cfg(feature = "proof_profile")]
+            let profile_chunk_start = std::time::Instant::now();
             status = {
                 let result = s.resolve(bounds);
                 #[cfg(all(test, feature = "proof_profile"))]
                 let result = crate::proof_profile::test_cut_result(result,1);
                 #[cfg(feature = "proof_profile")]
                 {
+                    let profile_seconds = profile_chunk_start.elapsed().as_secs_f64();
                     crate::proof_profile::lp_failure("cut_chunk",&result,s);
                     profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
                     crate::proof_profile::record("cut_chunk",vec![
                         ("round",(_round as u64).into()),("chunk_start",chunk_start.into()),("attempted",(chunk_end-chunk_start).into()),
-                        ("applied_before",applied_before.into()),("status",crate::proof_profile::status(result.status).into()),
+                        ("applied_before",applied_before.into()),("status",crate::proof_profile::status(result.status).into()),("seconds",profile_seconds.into()),
                         ("bound",crate::proof_profile::bound(&result)),("iterations",s.iterations().saturating_sub(profile_chunk_iterations).into()),
                         ("committed_optimal",(result.status==LpStatus::Optimal).into()),("rolled_back",(result.status==LpStatus::IterationLimit).into()),
                     ]);
@@ -2513,16 +2516,19 @@ pub fn cut_loop_recorded<E: LpEngine>(
                 }
                 #[cfg(feature = "proof_profile")]
                 let profile_rebuild_iterations = rebuilt.iterations();
+                #[cfg(feature = "proof_profile")]
+                let profile_rebuild_start = std::time::Instant::now();
                 let st = {
                     let result = rebuilt.resolve(bounds);
                     #[cfg(all(test, feature = "proof_profile"))]
                     let result = crate::proof_profile::test_cut_result(result,2);
                     #[cfg(feature = "proof_profile")]
                     {
+                        let profile_seconds = profile_rebuild_start.elapsed().as_secs_f64();
                         crate::proof_profile::lp_failure("cut_rollback",&result,&rebuilt);
                         crate::proof_profile::record("cut_rollback",vec![
                             ("round",(_round as u64).into()),("discarded",(chunk_end-chunk_start).into()),
-                            ("retained_cuts",applied.into()),("status",crate::proof_profile::status(result.status).into()),
+                            ("retained_cuts",applied.into()),("status",crate::proof_profile::status(result.status).into()),("seconds",profile_seconds.into()),
                             ("bound",crate::proof_profile::bound(&result)),("iterations",rebuilt.iterations().saturating_sub(profile_rebuild_iterations).into()),
                         ]);
                     }

@@ -593,8 +593,6 @@ fn sequential_bb(
 
     // —— 根 LP（计 1 节点）——
     #[cfg(feature = "proof_profile")]
-    let profile_root_start = Instant::now();
-    #[cfg(feature = "proof_profile")]
     crate::proof_profile::record("context", vec![
         ("work_variables", problem.vars.len().into()), ("work_rows", problem.constraints.len().into()),
         ("effective_engine", match crate::simplex_sparse::effective_engine(problem,opts.lp_engine) {
@@ -602,6 +600,8 @@ fn sequential_bb(
         ("resolved_branch", match opts.branch_rule {BranchRule::MostFractional=>"most_fractional",BranchRule::Pseudocost=>"pseudocost"}.into()),
         ("root_cuts_enabled",opts.root_cuts.into()),
     ]);
+    #[cfg(feature = "proof_profile")]
+    let profile_root_start = Instant::now();
     let mut sol = simplex.solve(&bounds);
     stats.nodes = 1;
     #[cfg(feature = "proof_profile")]
@@ -769,6 +769,8 @@ fn sequential_bb(
     }
 
     // —— 根割循环（可选；割行全局保留至树结束）——
+    #[cfg(feature = "proof_profile")]
+    let profile_cut_start = Instant::now();
     if opts.root_cuts {
         let (applied, st, _recorded) = cuts::cut_loop_recorded(
             &mut simplex,
@@ -883,7 +885,8 @@ fn sequential_bb(
     }
 
     #[cfg(feature = "proof_profile")]
-    crate::proof_profile::lp("root_after_cuts", &sol, base_lp_iterations.saturating_add(simplex.iterations()), None, stats.cuts);
+    crate::proof_profile::lp("root_after_cuts", &sol, base_lp_iterations.saturating_add(simplex.iterations()),
+        opts.root_cuts.then(||profile_cut_start.elapsed().as_secs_f64()), stats.cuts);
 
     // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
     if opts.heuristics {
@@ -1088,7 +1091,8 @@ fn sequential_bb(
 
     loop {
         #[cfg(feature = "proof_profile")]
-        crate::proof_profile::frontier(sense,stats.nodes,false,incumbent.as_ref().map(|(o,_)|*o),stack.iter().map(|p|(p.est,p.depth)));
+        crate::proof_profile::frontier(sense,stats.nodes,false,incumbent.as_ref().map(|(o,_)|*o),
+            unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
         // —— 受控扩展（默认全关 ⇒ 与原实现逐字节一致）。①/② 仅在栈非空时
         // 参与：空栈轮次直接落到下方 pop 的自然 break（Optimal/Infeasible），
         // 杜绝 incumbent=X bound=none gap=inf 矛盾周期行——
@@ -1433,7 +1437,8 @@ fn sequential_bb(
     }
 
     #[cfg(feature = "proof_profile")]
-    crate::proof_profile::frontier(sense,stats.nodes,true,incumbent.as_ref().map(|(o,_)|*o),stack.iter().map(|p|(p.est,p.depth)));
+    crate::proof_profile::frontier(sense,stats.nodes,true,incumbent.as_ref().map(|(o,_)|*o),
+        unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
 
     // —— 终态判定（与上限诚实性整合，禁止字面分裂）：gap 达标与上限触发
     // 一律 LimitReached（诚实：未证明最优），粘滞标记优先于完备判定——
