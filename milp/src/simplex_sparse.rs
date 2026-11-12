@@ -1050,6 +1050,19 @@ fn dual_ratio_bfrt(cands: &[(f64, usize, f64, f64, f64)], rem: f64) -> Option<(u
     None
 }
 
+/// 行积候选访问计数；仅诊断特性编译，不参与选择。
+#[cfg(feature = "sparse_row_products_stats")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RowProductStats {
+    pub calls: u64,
+    pub hits: u64,
+    pub column_entries: u64,
+    pub touched_entries: u64,
+    pub estimated_row_work: u64,
+    pub hit_column_entries: u64,
+    pub hit_touched_entries: u64,
+}
+
 /// 稀疏修正单纯形求解器（standalone v1；语义契约见模块文档）。
 ///
 /// `Clone`：全字段纯数据（CSC/LU/ETA/基），克隆即精确状态（W6 快照纪律
@@ -1069,6 +1082,14 @@ pub struct SparseSimplex {
     col_vals: Vec<f64>,
     /// 每表格行归一化结构系数（升序；x_B 重算的行主序视图）。
     row_terms: Vec<Vec<(usize, f64)>>,
+    #[cfg(feature = "sparse_row_products")]
+    row_products: Vec<f64>,
+    #[cfg(feature = "sparse_row_products")]
+    row_product_selected: Vec<bool>,
+    #[cfg(all(test, feature = "sparse_row_products"))]
+    row_products_disabled: bool,
+    #[cfg(feature = "sparse_row_products_stats")]
+    row_product_stats: RowProductStats,
     /// 每行归一化右端 b̂。
     row_rhs: Vec<f64>,
     /// 每行关系运算符。
@@ -1241,6 +1262,14 @@ impl SparseSimplex {
             col_rows: Vec::new(),
             col_vals: Vec::new(),
             row_terms: Vec::new(),
+            #[cfg(feature = "sparse_row_products")]
+            row_products: Vec::new(),
+            #[cfg(feature = "sparse_row_products")]
+            row_product_selected: Vec::new(),
+            #[cfg(all(test, feature = "sparse_row_products"))]
+            row_products_disabled: false,
+            #[cfg(feature = "sparse_row_products_stats")]
+            row_product_stats: RowProductStats::default(),
             row_rhs: Vec::new(),
             row_op: Vec::new(),
             row_slack: Vec::new(),
@@ -2770,6 +2799,90 @@ impl SparseSimplex {
 
     // ---- 内部：定价 / 比值测试 / 主元 ----
 
+    #[cfg(feature = "sparse_row_products_stats")]
+    pub fn row_product_stats(&self) -> RowProductStats {
+        self.row_product_stats
+    }
+
+    /// 仅以访问项数选择路径。复用已有行视图，不复制矩阵；割行与快照
+    /// 已维护该视图，缓冲每次按当前静态列数重置，不缓存基/界信息。
+    #[cfg(feature = "sparse_row_products")]
+    fn prepare_row_products(&mut self, multiplier: &[f64], pricing: bool, q: usize) -> bool {
+        #[cfg(test)]
+        if self.row_products_disabled {
+            return false;
+        }
+        // Bland 可在首个合格列早停，全列项数不能代表其旧路径成本。
+        if pricing && self.bland {
+            return false;
+        }
+        let ncs = self.ncols_static();
+        self.row_product_selected.resize(ncs, false);
+        let mut column_entries = 0usize;
+        for j in 0..ncs {
+            let (lb, ub) = self.col_bounds(j);
+            let selected =
+                !self.in_basis[j] && j != q && (!pricing || !(ub - lb <= self.tol.feasibility));
+            self.row_product_selected[j] = selected;
+            if selected {
+                column_entries += self.col_start[j + 1] - self.col_start[j];
+            }
+        }
+        // 行遍历会触及未选列的条目，故不能只统计最终乘加次数。
+        let mut touched_entries = 0usize;
+        for (i, &v) in multiplier.iter().enumerate() {
+            if v != 0.0 {
+                touched_entries +=
+                    self.row_terms[i].len() + usize::from(self.row_slack[i].is_some());
+            }
+        }
+        // 两遍乘子扫描、选列/清零/消费列扫描；单位是访问项，不是时间。
+        let row_work = touched_entries
+            .saturating_add(2 * multiplier.len())
+            .saturating_add(3 * ncs);
+        let use_rows = row_work < column_entries;
+        #[cfg(feature = "sparse_row_products_stats")]
+        {
+            self.row_product_stats.calls += 1;
+            self.row_product_stats.hits += u64::from(use_rows);
+            self.row_product_stats.column_entries += column_entries as u64;
+            self.row_product_stats.touched_entries += touched_entries as u64;
+            self.row_product_stats.estimated_row_work += row_work as u64;
+            if use_rows {
+                self.row_product_stats.hit_column_entries += column_entries as u64;
+                self.row_product_stats.hit_touched_entries += touched_entries as u64;
+            }
+        }
+        if !use_rows {
+            return false;
+        }
+        self.accumulate_row_products(multiplier);
+        true
+    }
+
+    /// 行号升序与 CSC 的逐列求和顺序完全相同。±0 均跳过；非有限
+    /// 乘子不跳过，保留旧路径 NaN/Inf 的传播与后续错误处理。
+    #[cfg(feature = "sparse_row_products")]
+    fn accumulate_row_products(&mut self, multiplier: &[f64]) {
+        self.row_products.resize(self.ncols_static(), 0.0);
+        self.row_products.fill(0.0);
+        for (i, &v) in multiplier.iter().enumerate() {
+            if v == 0.0 {
+                continue;
+            }
+            for &(j, a) in &self.row_terms[i] {
+                if self.row_product_selected[j] {
+                    self.row_products[j] += v * a;
+                }
+            }
+            if let Some(j) = self.row_slack[i] {
+                if self.row_product_selected[j] {
+                    self.row_products[j] += v * self.layout.slack[j - self.num_structural].sign;
+                }
+            }
+        }
+    }
+
     /// Devex/Dantzig/Bland 定价（**与 simplex.rs::price 的分叉点**：本
     /// 引擎构造期规模分档（m×(n+m) ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]）阈上
     /// Devex 打分、稠密引擎恒 Dantzig；阈下 Dantzig 与本引擎旧版逐字节
@@ -2792,6 +2905,8 @@ impl SparseSimplex {
             self.cb[i] = self.cost_of(self.basis[i], phase);
         }
         let y = self.btran_full(&self.cb);
+        #[cfg(feature = "sparse_row_products")]
+        let use_row_products = self.prepare_row_products(&y, true, usize::MAX);
         self.y_vec = y;
         let mut best_j = usize::MAX;
         let mut best_delta = 0.0;
@@ -2804,11 +2919,19 @@ impl SparseSimplex {
             if ub - lb <= self.tol.feasibility {
                 continue; // 固定列不可移动，不入基
             }
+            #[cfg(not(feature = "sparse_row_products"))]
+            let use_row_products = false;
             let mut dot = 0.0;
-            for k in self.col_start[j]..self.col_start[j + 1] {
-                let yr = self.y_vec[self.col_rows[k]];
-                if yr != 0.0 {
-                    dot += yr * self.col_vals[k];
+            #[cfg(feature = "sparse_row_products")]
+            if use_row_products {
+                dot = self.row_products[j];
+            }
+            if !use_row_products {
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let yr = self.y_vec[self.col_rows[k]];
+                    if yr != 0.0 {
+                        dot += yr * self.col_vals[k];
+                    }
                 }
             }
             let rc = self.cost_of(j, phase) - dot;
@@ -2892,6 +3015,10 @@ impl SparseSimplex {
         let mut e = vec![0.0f64; m];
         e[r] = 1.0;
         let rho = self.btran_full(&e);
+        #[cfg(feature = "sparse_row_products")]
+        let use_row_products = self.prepare_row_products(&rho, false, q);
+        #[cfg(not(feature = "sparse_row_products"))]
+        let use_row_products = false;
         let mut breach = false;
         for j in 0..ncs {
             if j == q || self.in_basis[j] {
@@ -2900,10 +3027,16 @@ impl SparseSimplex {
                 continue;
             }
             let mut a = 0.0;
-            for k in self.col_start[j]..self.col_start[j + 1] {
-                let rr = rho[self.col_rows[k]];
-                if rr != 0.0 {
-                    a += rr * self.col_vals[k];
+            #[cfg(feature = "sparse_row_products")]
+            if use_row_products {
+                a = self.row_products[j];
+            }
+            if !use_row_products {
+                for k in self.col_start[j]..self.col_start[j + 1] {
+                    let rr = rho[self.col_rows[k]];
+                    if rr != 0.0 {
+                        a += rr * self.col_vals[k];
+                    }
                 }
             }
             if a == 0.0 {
@@ -3560,6 +3693,167 @@ mod tests {
                     rhs,
                 })
                 .collect(),
+        }
+    }
+
+    #[cfg(feature = "sparse_row_products")]
+    fn row_product_problem() -> Problem {
+        prob(
+            Sense::Maximize,
+            (0..65)
+                .map(|j| var(&format!("x{j}"), 0.0, if j == 1 { 0.0 } else { 10.0 }))
+                .collect(),
+            vec![(0, 1.0), (2, 0.5)],
+            (0..64)
+                .map(|i| {
+                    let terms = (0..64)
+                        .map(|j| (j, if (i + j) % 3 == 0 { -0.5 } else { 1.0 }))
+                        .collect();
+                    (
+                        terms,
+                        if i % 7 == 0 { RelOp::Ge } else { RelOp::Le },
+                        if i % 7 == 0 { -20.0 } else { 20.0 },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "sparse_row_products")]
+    fn assert_row_product_bits(sp: &mut SparseSimplex, v: &[f64]) {
+        sp.row_product_selected = vec![true; sp.ncols_static()];
+        sp.accumulate_row_products(v);
+        for j in 0..sp.ncols_static() {
+            let mut expected = 0.0;
+            for k in sp.col_start[j]..sp.col_start[j + 1] {
+                let x = v[sp.col_rows[k]];
+                if x != 0.0 {
+                    expected += x * sp.col_vals[k];
+                }
+            }
+            assert_eq!(sp.row_products[j].to_bits(), expected.to_bits(), "列 {j}");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "sparse_row_products")]
+    fn row_products_bits_cuts_snapshot_and_gate() {
+        let mut sp = SparseSimplex::new(&row_product_problem(), Tolerances::default()).unwrap();
+        for dense in [false, true] {
+            let v: Vec<_> = (0..sp.row_terms.len())
+                .map(|i| {
+                    if dense || i == 3 {
+                        if i % 2 == 0 {
+                            -2.0
+                        } else {
+                            0.25
+                        }
+                    } else if i % 2 == 0 {
+                        -0.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            assert_row_product_bits(&mut sp, &v);
+            assert_eq!(sp.prepare_row_products(&v, true, usize::MAX), !dense);
+            assert!(!sp.row_product_selected[1]); // 固定列
+        }
+        let saved = sp.clone();
+        sp.add_row(&[(0, -2.0), (2, 1.0)], RelOp::Ge, -10.0)
+            .unwrap();
+        sp.add_row(&[(3, 1.0)], RelOp::Eq, 0.0).unwrap();
+        for special in [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ] {
+            let mut v = vec![0.0; sp.row_terms.len()];
+            v[0] = special;
+            v[64] = -0.25;
+            v[65] = 0.5;
+            assert_row_product_bits(&mut sp, &v);
+        }
+        sp = saved;
+        let v = vec![1.0; sp.row_terms.len()];
+        assert_row_product_bits(&mut sp, &v);
+        sp.bland = true;
+        assert!(!sp.prepare_row_products(&v, true, usize::MAX));
+        sp.bland = false;
+        let mut v = vec![0.0; sp.row_terms.len()];
+        v[0] = 1.0;
+        assert!(sp.prepare_row_products(&v, false, 2));
+        assert!(!sp.row_product_selected[2]);
+    }
+
+    #[test]
+    #[cfg(feature = "sparse_row_products")]
+    fn row_products_normalized_zero_preserves_nonfinite_products() {
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 1.0), var("y", 0.0, 1.0)],
+            vec![],
+            vec![(vec![(0, f64::MIN_POSITIVE), (1, f64::MAX)], RelOp::Eq, 0.0)],
+        );
+        let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        assert_eq!(sp.row_terms[0][0].1, 0.0);
+        for value in [0.0, -0.0, 1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_row_product_bits(&mut sp, &[value]);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "sparse_row_products")]
+    fn row_products_solver_switch_is_bitwise_identical() {
+        let p = row_product_problem();
+        let bounds = Bounds::from_problem(&p);
+        for devex in [false, true] {
+            let mut row = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            row.devex_active = devex;
+            let mut col = row.clone();
+            col.row_products_disabled = true;
+            for round in 0..3 {
+                let a = if round == 0 {
+                    row.solve(&bounds)
+                } else {
+                    row.resolve(&bounds)
+                };
+                let b = if round == 0 {
+                    col.solve(&bounds)
+                } else {
+                    col.resolve(&bounds)
+                };
+                assert_eq!(a.status, b.status);
+                assert_eq!(a.objective.to_bits(), b.objective.to_bits());
+                assert_eq!(
+                    a.x.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    b.x.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    a.duals.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    b.duals.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                );
+                assert_eq!(row.basis, col.basis);
+                assert_eq!(row.iterations_total, col.iterations_total);
+                assert_eq!(
+                    row.devex_w.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    col.devex_w.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                );
+                row.add_row(&[(0, 1.0), (2, 1.0)], RelOp::Le, 6.0 - round as f64)
+                    .unwrap();
+                col.add_row(&[(0, 1.0), (2, 1.0)], RelOp::Le, 6.0 - round as f64)
+                    .unwrap();
+            }
+            #[cfg(feature = "sparse_row_products_stats")]
+            {
+                assert!(row.row_product_stats().hits > 0);
+                assert_eq!(col.row_product_stats().calls, 0);
+                assert_eq!(col.row_product_stats().hits, 0);
+            }
         }
     }
 

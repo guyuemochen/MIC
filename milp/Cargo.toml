@@ -7,3 +7,6 @@ publish = false
 [features]
 # 诊断计时完全独立于求解决策，默认不编译。
 sparse_profile = []
+# 受影响行累加候选与独立访问计数，默认关闭。
+sparse_row_products = []
+sparse_row_products_stats = ["sparse_row_products"]

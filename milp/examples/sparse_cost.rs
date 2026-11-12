@@ -43,5 +43,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    #[cfg(feature = "sparse_row_products_stats")]
+    {
+        let counts = lp.row_product_stats();
+        println!(
+            "row_product_calls={} row_product_hits={} column_entries={} touched_entries={} estimated_row_work={} hit_column_entries={} hit_touched_entries={}",
+            counts.calls,
+            counts.hits,
+            counts.column_entries,
+            counts.touched_entries,
+            counts.estimated_row_work,
+            counts.hit_column_entries,
+            counts.hit_touched_entries,
+        );
+    }
     Ok(())
 }
