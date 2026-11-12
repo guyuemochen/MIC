@@ -15,7 +15,8 @@
 //!   失败保留 Phase-1 欠账并报告 IterationLimit，不得继续 Phase-2；
 //! - **同一比值测试语义**（F7 全部点名项）：基变量上下界阻挡 + 入基变量
 //!   自身界翻转；主元 |p| ≥ tol.pivot 才允许出基，方向阻挡但主元过小 ⇒
-//!   FilteredBlock（数值失败）；无任何阻挡（含翻转不可用）⇒ NoBlock ⇒
+//!   FilteredBlock（数值失败）；方向非有限同样先报数值失败，不得跳过；
+//!   无任何阻挡（含翻转不可用）⇒ NoBlock ⇒
 //!   Phase-2 报 Unbounded；并列带宽 `band = min(feas·(1+|t_min|), feas·
 //!   RATIO_BAND_CAP)`（simplex.rs:116-125 实测踩坑的封顶，本引擎同款）；
 //! - **同一反循环/上限纪律**（定价规则除外——本引擎阈上 Devex 与稠密
@@ -653,6 +654,32 @@ mod refactor_fault {
     }
 }
 
+/// 仅测试：真实 FTRAN 完成后污染一次方向，覆盖阶段循环的失败与重试。
+/// 线程局部配置和作用域回退保证并行测试之间互不干扰。
+#[cfg(test)]
+mod direction_fault {
+    std::thread_local! {
+        static VALUE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+    }
+    pub(super) struct Guard(Option<f64>);
+    impl Guard {
+        pub(super) fn new(value: f64) -> Self {
+            Self(VALUE.with(|v| v.replace(Some(value))))
+        }
+        pub(super) fn consumed(&self) -> bool {
+            VALUE.with(|v| v.get().is_none())
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            VALUE.with(|v| v.set(self.0));
+        }
+    }
+    pub(super) fn take() -> Option<f64> {
+        VALUE.with(|v| v.take())
+    }
+}
+
 /// Gilbert-Peierls 左视稀疏 LU（阈值主元 + 行填充代理破键）。
 ///
 /// 输入：`cols[k]` = 基矩阵第 k 列的 (原始行, 值) 列表（可乱序；零值忽略）。
@@ -992,7 +1019,7 @@ enum Step {
     Flip { t: f64 },
     /// 无任何阻挡 ⇒ 无界。
     NoBlock,
-    /// 存在被主元容差过滤的阻挡候选（数值不可靠）。
+    /// 方向非有限，或阻挡候选被主元容差过滤（数值不可靠）。
     FilteredBlock(String),
 }
 
@@ -2558,6 +2585,10 @@ impl SparseSimplex {
             alpha[eta.r] = t;
         }
         self.alpha = alpha;
+        #[cfg(test)]
+        if let Some(value) = direction_fault::take() {
+            self.alpha[0] = value;
+        }
     }
 
     /// BTRAN + ETA：解 Bᵀ y = c（c 稠密行位空间）→ y。
@@ -3159,6 +3190,11 @@ impl SparseSimplex {
         let mut filtered_block = false;
         for i in 0..m {
             let a = self.alpha[i];
+            // 必须先排除 NaN/Inf：无穷界可能跳过该行，Inf 也会伪造零步主元。
+            // 变量的合法无穷上界不受此检查影响。
+            if !a.is_finite() {
+                return Step::FilteredBlock(format!("列 {q} 行 {i} 的入基方向非有限"));
+            }
             if a == 0.0 {
                 continue;
             }
@@ -3794,6 +3830,145 @@ mod tests {
                     rhs,
                 })
                 .collect(),
+        }
+    }
+
+    fn assert_nonfinite_direction_phase_two(value: f64) {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            // 模型系数和右端均有限，最优值也有限；仅在 FTRAN 后模拟损坏方向。
+            let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let tol = Tolerances::default();
+            let expected = SparseSimplex::new(&p, tol).unwrap().solve(&bounds);
+            assert_eq!(expected.status, LpStatus::Optimal);
+            assert_eq!(expected.objective, cost);
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            let failed = {
+                let fault = direction_fault::Guard::new(value);
+                let result = sp.solve(&bounds);
+                assert!(fault.consumed());
+                result
+            };
+            assert_eq!(failed.status, LpStatus::IterationLimit,
+                "{sense:?} / {value:?}: {failed:?}");
+            assert!(failed.objective.is_nan());
+            assert_eq!(sp.iterations(), 0, "刚重构的方向仍无效时不得执行主元或再次重试");
+            assert!(sp.just_refactored);
+            assert!(sp.numerical_error.as_deref().unwrap().contains("入基方向非有限"));
+        }
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_nan() {
+        assert_nonfinite_direction_phase_two(f64::NAN);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_positive_infinity() {
+        assert_nonfinite_direction_phase_two(f64::INFINITY);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_negative_infinity() {
+        assert_nonfinite_direction_phase_two(f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_one_preserves_pending() {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                    vec![(vec![(0, 1.0)], RelOp::Eq, 1.0)]);
+                let bounds = Bounds::from_problem(&p);
+                let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                let failed = {
+                    let fault = direction_fault::Guard::new(value);
+                    let result = sp.solve(&bounds);
+                    assert!(fault.consumed());
+                    result
+                };
+                assert_eq!(failed.status, LpStatus::IterationLimit,
+                    "{sense:?} / {value:?}: {failed:?}");
+                assert!(failed.objective.is_nan());
+                assert!(sp.phase1_pending, "方向无效不能清除 Phase-1 欠账");
+                assert_eq!(sp.iterations(), 0);
+                assert!(sp.just_refactored);
+                assert!(sp.numerical_error.as_deref().unwrap().contains("入基方向非有限"));
+                let recovered = sp.resolve(&bounds);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, cost);
+            }
+        }
+    }
+
+    #[test]
+    fn nonfinite_direction_with_old_eta_recovers_once() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, f64::INFINITY)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            sp.bounds = Bounds::from_problem(&p);
+            sp.rebuild_initial_basis();
+            // 单位 ETA 不改变原基，只模拟已有更新、允许重构一次的状态。
+            sp.etas.push(Eta { r: 0, pivot: 1.0, nz: Vec::new() });
+            sp.just_refactored = false;
+            let status = {
+                let fault = direction_fault::Guard::new(value);
+                let result = sp.run_two_phase(false);
+                assert!(fault.consumed());
+                result
+            };
+            let recovered = sp.build_solution(status);
+            assert_eq!(recovered.status, LpStatus::Optimal, "{value:?}: {recovered:?}");
+            assert_eq!(recovered.objective, -1.0);
+            assert_eq!(recovered.x, vec![1.0]);
+            assert_eq!(sp.iterations(), 1, "重构重试本身不计为主元步");
+            assert!(sp.numerical_error.is_none());
+        }
+    }
+
+    #[test]
+    fn nonfinite_direction_can_overflow_from_finite_etas() {
+        for negative in [false, true] {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, f64::INFINITY)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            sp.bounds = Bounds::from_problem(&p);
+            sp.rebuild_initial_basis();
+            // 人工构造有限内部状态，证明有限输入不能保证 FTRAN 有限；
+            // 这不是声称该模型的正常换基会自然产生这串 ETA。
+            sp.etas = (0..35).map(|i| Eta {
+                r: 0,
+                pivot: if negative && i == 0 { -1e-9 } else { 1e-9 },
+                nz: Vec::new(),
+            }).collect();
+            sp.just_refactored = false;
+            assert!(!sp.eta_over_limit(), "不得靠周期重构阈值遮住此次溢出");
+            assert!(sp.etas.iter().all(|eta| eta.pivot.is_finite()
+                && eta.pivot.abs() >= sp.tol.pivot));
+            assert_eq!(sp.btran_full(&[0.0]), vec![0.0], "零基成本仍给出有限对偶价格");
+            assert!(matches!(sp.price(2), Pricing::Candidate(0, delta) if delta == 1.0));
+            sp.ftran_col(0);
+            assert_eq!(sp.alpha[0], if negative { f64::NEG_INFINITY } else { f64::INFINITY });
+            let status = sp.run_two_phase(false);
+            let recovered = sp.build_solution(status);
+            assert_eq!(recovered.status, LpStatus::Optimal, "{recovered:?}");
+            assert_eq!(recovered.objective, -1.0);
+            assert_eq!(recovered.x, vec![1.0]);
+            assert_eq!(sp.iterations(), 1);
+        }
+    }
+
+    #[test]
+    fn finite_direction_with_infinite_bounds_remains_unbounded() {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                vec![(vec![(0, -1.0)], RelOp::Le, 0.0)]);
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let result = sp.solve(&Bounds::from_problem(&p));
+            assert_eq!(result.status, LpStatus::Unbounded);
+            assert!(sp.numerical_error.is_none(), "合法无穷上界不能触发数值失败");
         }
     }
 

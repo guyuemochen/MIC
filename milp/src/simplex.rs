@@ -450,8 +450,34 @@ enum Step {
     Flip { t: f64 },
     /// 无任何阻挡（含自身界翻转不可用）⇒ 无界。
     NoBlock,
-    /// 存在被主元容差过滤掉的阻挡候选（数值不可靠）。
+    /// 方向非有限，或阻挡候选被主元容差过滤（数值不可靠）。
     FilteredBlock(String),
+}
+
+/// 仅测试：定价完成后污染一次入基方向，覆盖真实阶段循环的失败出口。
+/// 线程局部配置和作用域回退保证并行测试之间互不干扰。
+#[cfg(test)]
+mod direction_fault {
+    std::thread_local! {
+        static VALUE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+    }
+    pub(super) struct Guard(Option<f64>);
+    impl Guard {
+        pub(super) fn new(value: f64) -> Self {
+            Self(VALUE.with(|v| v.replace(Some(value))))
+        }
+        pub(super) fn consumed(&self) -> bool {
+            VALUE.with(|v| v.get().is_none())
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            VALUE.with(|v| v.set(self.0));
+        }
+    }
+    pub(super) fn take() -> Option<f64> {
+        VALUE.with(|v| v.take())
+    }
 }
 
 /// 对偶修复结果。
@@ -1585,6 +1611,11 @@ impl Simplex {
         let mut filtered_block = false;
         for i in 0..m {
             let a = self.matrix[i][q];
+            // 必须先排除 NaN/Inf：无穷界可能跳过该行，Inf 也会伪造零步主元。
+            // 变量的合法无穷上界不受此检查影响。
+            if !a.is_finite() {
+                return Step::FilteredBlock(format!("列 {q} 行 {i} 的入基方向非有限"));
+            }
             if a == 0.0 {
                 continue;
             }
@@ -2037,6 +2068,10 @@ impl Simplex {
                 Pricing::Optimal => return PhaseOutcome::Optimal,
                 Pricing::Candidate(q, delta) => (q, delta),
             };
+            #[cfg(test)]
+            if let Some(value) = direction_fault::take() {
+                self.matrix[0][q] = value;
+            }
             match self.ratio_test(q, delta) {
                 Step::FilteredBlock(msg) => return PhaseOutcome::Failed(msg),
                 Step::NoBlock => {
@@ -2810,6 +2845,84 @@ mod tests {
                     rhs,
                 })
                 .collect(),
+        }
+    }
+
+    fn assert_nonfinite_direction_phase_two(value: f64) {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            // 模型系数和右端均有限，最优值也有限；仅在定价后模拟损坏方向。
+            let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let expected = Simplex::new(&p, tol()).unwrap().solve(&bounds);
+            assert_eq!(expected.status, LpStatus::Optimal);
+            assert_eq!(expected.objective, cost);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            let failed = {
+                let fault = direction_fault::Guard::new(value);
+                let result = s.solve(&bounds);
+                assert!(fault.consumed());
+                result
+            };
+            assert_eq!(failed.status, LpStatus::IterationLimit,
+                "{sense:?} / {value:?}: {failed:?}");
+            assert!(failed.objective.is_nan());
+            assert_eq!(s.iterations(), 0, "方向无效时不得先执行主元");
+            assert!(s.numerical_error.as_deref().unwrap().contains("入基方向非有限"));
+        }
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_nan() {
+        assert_nonfinite_direction_phase_two(f64::NAN);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_positive_infinity() {
+        assert_nonfinite_direction_phase_two(f64::INFINITY);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_two_negative_infinity() {
+        assert_nonfinite_direction_phase_two(f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn nonfinite_direction_phase_one_preserves_pending() {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                    vec![(vec![(0, 1.0)], RelOp::Eq, 1.0)]);
+                let bounds = Bounds::from_problem(&p);
+                let mut s = Simplex::new(&p, tol()).unwrap();
+                let failed = {
+                    let fault = direction_fault::Guard::new(value);
+                    let result = s.solve(&bounds);
+                    assert!(fault.consumed());
+                    result
+                };
+                assert_eq!(failed.status, LpStatus::IterationLimit,
+                    "{sense:?} / {value:?}: {failed:?}");
+                assert!(failed.objective.is_nan());
+                assert!(s.phase1_pending, "方向无效不能清除 Phase-1 欠账");
+                assert_eq!(s.iterations(), 0);
+                assert!(s.numerical_error.as_deref().unwrap().contains("入基方向非有限"));
+                let recovered = s.solve(&bounds);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, cost);
+            }
+        }
+    }
+
+    #[test]
+    fn finite_direction_with_infinite_bounds_remains_unbounded() {
+        for (sense, cost) in [(Sense::Minimize, -1.0), (Sense::Maximize, 1.0)] {
+            let p = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
+                vec![(vec![(0, -1.0)], RelOp::Le, 0.0)]);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            let result = s.solve(&Bounds::from_problem(&p));
+            assert_eq!(result.status, LpStatus::Unbounded);
+            assert!(s.numerical_error.is_none(), "合法无穷上界不能触发数值失败");
         }
     }
 
