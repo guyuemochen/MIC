@@ -564,6 +564,438 @@ struct LuFactors {
     u_diag: Vec<f64>,
 }
 
+/// 首次LU失败的只读证据。须在构造求解器前显式reset；只采当前线程，take关闭采集。
+/// 诊断的重新分解必须由调用方显式调用，不参与求解器的恢复或选主元。
+#[cfg(feature = "lu_failure_diagnostics")]
+pub mod lu_failure_diagnostics {
+    use super::{factorize, LuFactors};
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::io::{self, Write};
+
+    #[derive(Clone, Debug)]
+    pub struct Pivot {
+        pub entering: usize,
+        pub row: usize,
+        pub leaving: usize,
+        pub alpha_r: f64,
+        pub step: f64,
+        pub eta_before: usize,
+        pub iterations_before: u64,
+        pub call_iterations_before: u64,
+        pub phase: &'static str,
+    }
+    #[derive(Clone, Debug)]
+    pub(super) struct EngineTrace {
+        pub last_basis: Vec<usize>,
+        pub pivots: Vec<Pivot>,
+        pub phase: &'static str,
+        pub reason: &'static str,
+        pub alpha_matches_last_pivot: bool,
+    }
+    impl Default for EngineTrace {
+        fn default() -> Self {
+            Self {
+                last_basis: Vec::new(),
+                pivots: Vec::new(),
+                phase: "unknown",
+                reason: "unspecified",
+                alpha_matches_last_pivot: false,
+            }
+        }
+    }
+    impl EngineTrace {
+        pub fn clear_basis_history(&mut self) {
+            self.last_basis.clear();
+            self.pivots.clear();
+            self.alpha_matches_last_pivot = false;
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct Column {
+        pub id: usize,
+        /// 原始表格行号；值已按求解器行尺度归一，精确零也保留以重放列排序。
+        pub entries: Vec<(usize, f64)>,
+    }
+    #[derive(Clone, Debug)]
+    pub struct Failure {
+        pub rows: usize,
+        pub structural_columns: usize,
+        pub static_columns: usize,
+        pub phase: &'static str,
+        pub reason: &'static str,
+        pub iterations: u64,
+        pub call_iterations: u64,
+        pub eta_count: usize,
+        pub pivot_floor: f64,
+        pub failed_column: Option<usize>,
+        pub max_candidate: Option<f64>,
+        pub error: String,
+        pub basis_after: Vec<usize>,
+        pub basis_last_refactor: Vec<usize>,
+        /// 因子位置→基位置；失败k映射到basis_after[factor_order[k]]。
+        pub factor_order: Vec<usize>,
+        pub pivots: Vec<Pivot>,
+        /// 只有当前alpha仍属于最后一次换基时才记录；否则明确缺失。
+        pub last_pivot_alpha: Option<Vec<f64>>,
+        /// 所有相关基列与换入/换出列的并集，只在首次失败时收集。
+        pub columns: Vec<Column>,
+    }
+    #[derive(Default)]
+    struct Capture {
+        enabled: bool,
+        failure: Option<Failure>,
+    }
+    thread_local! { static CAPTURE:RefCell<Capture> = RefCell::new(Capture::default()); }
+    pub fn reset() {
+        CAPTURE.with(|v| {
+            *v.borrow_mut() = Capture {
+                enabled: true,
+                failure: None,
+            }
+        });
+    }
+    pub fn take() -> Option<Failure> {
+        CAPTURE.with(|v| {
+            let mut c = v.borrow_mut();
+            c.enabled = false;
+            c.failure.take()
+        })
+    }
+    pub(super) fn active() -> bool {
+        CAPTURE.with(|v| {
+            let c = v.borrow();
+            c.enabled && c.failure.is_none()
+        })
+    }
+    pub(super) fn save(failure: Failure) {
+        CAPTURE.with(|v| {
+            let mut c = v.borrow_mut();
+            if c.enabled && c.failure.is_none() {
+                c.failure = Some(failure);
+            }
+        });
+    }
+
+    #[derive(Debug)]
+    pub struct FreshCheck {
+        pub name: &'static str,
+        pub error: Option<String>,
+        pub failed_column: Option<usize>,
+        pub max_candidate: Option<f64>,
+        pub alpha: Option<Vec<f64>>,
+        pub alpha_r: Option<f64>,
+        pub relative_residual: Option<f64>,
+    }
+    impl Failure {
+        pub fn basis_before_last_pivot(&self) -> Option<Vec<usize>> {
+            let p = self.pivots.last()?;
+            if self.basis_after.get(p.row) != Some(&p.entering) {
+                return None;
+            }
+            let mut before = self.basis_after.clone();
+            before[p.row] = p.leaving;
+            Some(before)
+        }
+        fn matrix(&self, basis: &[usize]) -> Result<Vec<Vec<(usize, f64)>>, String> {
+            if basis.len() != self.rows {
+                return Err("基维度不一致".into());
+            }
+            let columns: BTreeMap<_, _> = self.columns.iter().map(|c| (c.id, &c.entries)).collect();
+            basis
+                .iter()
+                .map(|id| {
+                    let entries = columns.get(id).ok_or_else(|| format!("缺少列{id}"))?;
+                    if entries
+                        .iter()
+                        .any(|(r, a)| *r >= self.rows || !a.is_finite())
+                    {
+                        return Err(format!("列{id}含越界行或非有限系数"));
+                    }
+                    Ok((*entries).clone())
+                })
+                .collect()
+        }
+        /// 原生产refactor列序；不修改主元门槛，不采用其它排序。
+        fn fresh_factor(
+            &self,
+            basis: &[usize],
+        ) -> Result<(LuFactors, Vec<Vec<(usize, f64)>>), super::LuError> {
+            let cols = self.matrix(basis).map_err(|message| super::LuError {
+                message,
+                failed_column: None,
+                max_candidate: None,
+            })?;
+            let mut units = Vec::new();
+            let mut multis = Vec::new();
+            for (bp, col) in cols.iter().enumerate() {
+                if col.len() == 1 {
+                    units.push((col[0].0, bp));
+                } else {
+                    multis.push((col.len(), bp));
+                }
+            }
+            units.sort_unstable();
+            multis.sort_unstable();
+            let order: Vec<_> = units
+                .iter()
+                .chain(multis.iter())
+                .map(|&(_, bp)| bp)
+                .collect();
+            let ordered: Vec<_> = order.iter().map(|&bp| cols[bp].clone()).collect();
+            let mut lu = factorize(&ordered, self.pivot_floor, self.rows)?;
+            lu.col_perm = order;
+            Ok((lu, cols))
+        }
+        /// 只做全新基分解和一个线性方程组，绝不进行LP迭代或推断模型状态。
+        pub fn recheck(&self) -> Vec<FreshCheck> {
+            let mut bases = vec![("failed_basis", self.basis_after.clone())];
+            if let Some(before) = self.basis_before_last_pivot() {
+                bases.push(("before_last_pivot", before));
+            }
+            if self.basis_last_refactor.len() == self.rows {
+                bases.push(("last_successful_refactor", self.basis_last_refactor.clone()));
+            }
+            bases
+                .into_iter()
+                .map(|(name, basis)| {
+                    self.check_basis(
+                        name,
+                        &basis,
+                        if name == "before_last_pivot" {
+                            self.pivots.last()
+                        } else {
+                            None
+                        },
+                    )
+                })
+                .collect()
+        }
+        /// 按真实换基日志逐步重新分解，定位首次不可分解的基；不假定失败单调。
+        /// 成功的第i个基同时计算第i+1个换基的进入列，供比较原alpha[r]。
+        pub fn recheck_history(&self) -> Vec<(usize, FreshCheck)> {
+            if self.basis_last_refactor.len() != self.rows {
+                return Vec::new();
+            }
+            let mut basis = self.basis_last_refactor.clone();
+            let mut checks = Vec::new();
+            // 最终失败基由recheck覆盖；这里至多复放日志长度次（通常<=64）。
+            for after in 0..self.pivots.len() {
+                let mut check = self.check_basis("history_basis", &basis, self.pivots.get(after));
+                check.alpha = None; // 历史只需主元与残差，不为每一步导出整条稠密向量。
+                checks.push((after, check));
+                if let Some(p) = self.pivots.get(after) {
+                    if basis.get(p.row) != Some(&p.leaving) {
+                        break;
+                    }
+                    basis[p.row] = p.entering;
+                }
+            }
+            checks
+        }
+        fn check_basis(
+            &self,
+            name: &'static str,
+            basis: &[usize],
+            next: Option<&Pivot>,
+        ) -> FreshCheck {
+            let mut check = FreshCheck {
+                name,
+                error: None,
+                failed_column: None,
+                max_candidate: None,
+                alpha: None,
+                alpha_r: None,
+                relative_residual: None,
+            };
+            match self.fresh_factor(&basis) {
+                Err(e) => {
+                    check.error = Some(e.message);
+                    check.failed_column = e.failed_column;
+                    check.max_candidate = e.max_candidate;
+                }
+                Ok((lu, cols)) => {
+                    if let Some(p) = next {
+                        if let Some(entering) = self.columns.iter().find(|c| c.id == p.entering) {
+                            let mut rhs = vec![0.0; self.rows];
+                            for &(r, a) in &entering.entries {
+                                rhs[r] += a;
+                            }
+                            let mut alpha = vec![0.0; self.rows];
+                            lu.ftran_dense(&rhs, &mut alpha);
+                            check.alpha_r = alpha.get(p.row).copied();
+                            check.relative_residual = Some(residual(&cols, &alpha, &rhs));
+                            check.alpha = Some(alpha);
+                        }
+                    }
+                }
+            }
+            check
+        }
+        pub fn write_json(&self, out: &mut impl Write) -> io::Result<()> {
+            write!(
+                out,
+                "{{\"rows\":{},\"structural_columns\":{},\"static_columns\":{},\"phase\":",
+                self.rows, self.structural_columns, self.static_columns
+            )?;
+            string(out, self.phase)?;
+            write!(out, ",\"reason\":")?;
+            string(out, self.reason)?;
+            write!(
+                out,
+                ",\"iterations\":{},\"call_iterations\":{},\"eta_count\":{},\"pivot_floor\":",
+                self.iterations, self.call_iterations, self.eta_count
+            )?;
+            number(out, self.pivot_floor)?;
+            write!(out, ",\"failed_column\":")?;
+            optional_usize(out, self.failed_column)?;
+            write!(out, ",\"max_candidate\":")?;
+            optional_number(out, self.max_candidate)?;
+            write!(out, ",\"error\":")?;
+            string(out, &self.error)?;
+            for (key, values) in [
+                ("basis_after", &self.basis_after),
+                ("basis_last_refactor", &self.basis_last_refactor),
+                ("factor_order", &self.factor_order),
+            ] {
+                write!(out, ",\"{key}\":")?;
+                array(out, values, |w, v| write!(w, "{v}"))?;
+            }
+            write!(out, ",\"last_pivot_alpha\":")?;
+            if let Some(v) = &self.last_pivot_alpha {
+                array(out, v, |w, v| number(w, *v))?;
+            } else {
+                write!(out, "null")?;
+            }
+            write!(out, ",\"pivots\":")?;
+            array(out, &self.pivots, |w, p| {
+                write!(
+                    w,
+                    "{{\"entering\":{},\"row\":{},\"leaving\":{},\"alpha_r\":",
+                    p.entering, p.row, p.leaving
+                )?;
+                number(w, p.alpha_r)?;
+                write!(w, ",\"step\":")?;
+                number(w, p.step)?;
+                write!(w,",\"eta_before\":{},\"iterations_before\":{},\"call_iterations_before\":{},\"phase\":",p.eta_before,p.iterations_before,p.call_iterations_before)?;
+                string(w, p.phase)?;
+                write!(w, "}}")
+            })?;
+            write!(out, ",\"columns\":")?;
+            array(out, &self.columns, |w, c| {
+                write!(w, "{{\"id\":{},\"entries\":", c.id)?;
+                array(w, &c.entries, |w, (r, a)| {
+                    write!(w, "[{r},")?;
+                    number(w, *a)?;
+                    write!(w, "]")
+                })?;
+                write!(w, "}}")
+            })?;
+            write!(out, "}}")
+        }
+    }
+    impl FreshCheck {
+        pub fn write_json(&self, out: &mut impl Write) -> io::Result<()> {
+            write!(out, "{{\"name\":")?;
+            string(out, self.name)?;
+            write!(out, ",\"error\":")?;
+            if let Some(e) = &self.error {
+                string(out, e)?;
+            } else {
+                write!(out, "null")?;
+            }
+            write!(out, ",\"failed_column\":")?;
+            optional_usize(out, self.failed_column)?;
+            for (key, value) in [
+                ("max_candidate", self.max_candidate),
+                ("alpha_r", self.alpha_r),
+                ("relative_residual", self.relative_residual),
+            ] {
+                write!(out, ",\"{key}\":")?;
+                optional_number(out, value)?;
+            }
+            write!(out, ",\"alpha\":")?;
+            if let Some(v) = &self.alpha {
+                array(out, v, |w, v| number(w, *v))?;
+            } else {
+                write!(out, "null")?;
+            }
+            write!(out, "}}")
+        }
+    }
+    fn residual(cols: &[Vec<(usize, f64)>], x: &[f64], rhs: &[f64]) -> f64 {
+        if x.iter().chain(rhs).any(|v| !v.is_finite()) {
+            return f64::NAN;
+        }
+        let mut ax = vec![0.0; rhs.len()];
+        let mut rows = vec![0.0; rhs.len()];
+        for (col, &v) in cols.iter().zip(x) {
+            for &(r, a) in col {
+                ax[r] += a * v;
+                rows[r] += a.abs();
+            }
+        }
+        let norm = |v: &[f64]| v.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        let residual: Vec<_> = ax.iter().zip(rhs).map(|(a, b)| a - b).collect();
+        let denominator = norm(&rows) * norm(x) + norm(rhs);
+        if !denominator.is_finite() || residual.iter().any(|v| !v.is_finite()) {
+            return f64::NAN;
+        }
+        if denominator == 0.0 {
+            norm(&residual)
+        } else {
+            norm(&residual) / denominator
+        }
+    }
+    fn array<T>(
+        out: &mut dyn Write,
+        values: &[T],
+        mut write_one: impl FnMut(&mut dyn Write, &T) -> io::Result<()>,
+    ) -> io::Result<()> {
+        write!(out, "[")?;
+        for (i, v) in values.iter().enumerate() {
+            if i > 0 {
+                write!(out, ",")?;
+            }
+            write_one(out, v)?;
+        }
+        write!(out, "]")
+    }
+    fn number(out: &mut (impl Write + ?Sized), v: f64) -> io::Result<()> {
+        if v.is_finite() {
+            write!(out, "{v:?}")
+        } else {
+            write!(out, "null")
+        }
+    }
+    fn optional_number(out: &mut impl Write, v: Option<f64>) -> io::Result<()> {
+        if let Some(v) = v {
+            number(out, v)
+        } else {
+            write!(out, "null")
+        }
+    }
+    fn optional_usize(out: &mut impl Write, v: Option<usize>) -> io::Result<()> {
+        if let Some(v) = v {
+            write!(out, "{v}")
+        } else {
+            write!(out, "null")
+        }
+    }
+    fn string(out: &mut (impl Write + ?Sized), s: &str) -> io::Result<()> {
+        write!(out, "\"")?;
+        for c in s.chars() {
+            match c {
+                '"' => write!(out, "\\\"")?,
+                '\\' => write!(out, "\\\\")?,
+                '\u{0}'..='\u{1f}' => write!(out, "\\u{:04x}", u32::from(c))?,
+                _ => write!(out, "{c}")?,
+            }
+        }
+        write!(out, "\"")
+    }
+}
+
 /// ETA（乘子形式基更新）：B_new = B_old·E，E = I 除第 r 列为该列
 ///（= 当时 B_old⁻¹·A_q 的**非零项**稀疏存储，行位空间；主元项单独存。
 /// S4：稠密 ETA 在长解（setcover 根 LP 10k+ 迭代 × m=300）下施加成本占
@@ -610,7 +1042,13 @@ impl LuScratch {
 
 /// 因子化失败原因（奇异基）。
 #[derive(Debug, Clone)]
-struct LuError(String);
+struct LuError {
+    message: String,
+    #[cfg(feature = "lu_failure_diagnostics")]
+    failed_column: Option<usize>,
+    #[cfg(feature = "lu_failure_diagnostics")]
+    max_candidate: Option<f64>,
+}
 
 /// 仅测试：在真实重构的破坏性写入后制造一次失败，复现调用间恢复纪律。
 /// 线程局部配置有作用域回退，不影响并行运行的其它测试。
@@ -692,7 +1130,7 @@ mod direction_fault {
 /// 任定序（取下标升序）计算）。
 /// 确定性：候选并列一律取最小原始行号；值计算升序单遍，与 DFS 遍历序无关。
 /// 一次性版（单元测试用；生产路径走 [`factorize_into`] 复用版）。
-#[cfg(test)]
+#[cfg(any(test, feature = "lu_failure_diagnostics"))]
 fn factorize(
     cols: &[Vec<(usize, f64)>],
     pivot_floor: f64,
@@ -761,7 +1199,13 @@ fn factorize_into(
 
     #[cfg(test)]
     if refactor_fault::take(refactor_fault::Kind::Lu) {
-        return Err(LuError("测试注入：因子化清空旧因子后失败".to_string()));
+        return Err(LuError {
+            message: "测试注入：因子化清空旧因子后失败".to_string(),
+            #[cfg(feature = "lu_failure_diagnostics")]
+            failed_column: None,
+            #[cfg(feature = "lu_failure_diagnostics")]
+            max_candidate: None,
+        });
     }
 
     for k in 0..m {
@@ -834,9 +1278,14 @@ fn factorize_into(
             }
         }
         if !(vmax >= pivot_floor) {
-            return Err(LuError(format!(
+            return Err(LuError { message: format!(
                 "LU 第 {k} 列未分配候选最大 |v| = {vmax:e} 低于主元下限 {pivot_floor:e}（奇异基）"
-            )));
+            ),
+                #[cfg(feature = "lu_failure_diagnostics")]
+                failed_column: Some(k),
+                #[cfg(feature = "lu_failure_diagnostics")]
+                max_candidate: Some(vmax),
+            });
         }
         let cut = LU_THRESHOLD * vmax;
         let mut pick: Option<(usize, f64, usize)> = None; // (填充代理, |v|, 行)
@@ -1235,6 +1684,8 @@ pub struct SparseSimplex {
     /// resolve先按当前完整矩阵与新界冷重建。与add_row的待重构标记分开：
     /// dirty仍有合法旧基，broken则连旧因子都不可读取。Clone保留此状态。
     factorization_broken: bool,
+    #[cfg(feature = "lu_failure_diagnostics")]
+    lu_trace: lu_failure_diagnostics::EngineTrace,
     /// 上次 Phase-1 未清理即收场 / add_row 新建人工列（resolve 必须重跑
     /// Phase-1 的欠账记账，语义同 simplex.rs）。
     phase1_pending: bool,
@@ -1410,6 +1861,8 @@ impl SparseSimplex {
             etas: Vec::new(),
             factorization_dirty: false,
             factorization_broken: true,
+            #[cfg(feature = "lu_failure_diagnostics")]
+            lu_trace: lu_failure_diagnostics::EngineTrace::default(),
             phase1_pending: false,
             has_run: false,
             infeasible_flag: false,
@@ -1737,6 +2190,8 @@ impl SparseSimplex {
         // 热状态可用：add_row 脏标记或 ETA 越限 ⇒ 先整基重因子化 + 重算
         // x_B（基保持，等价『随后重构』纪律）。
         if self.factorization_dirty || self.eta_over_limit() {
+            #[cfg(feature = "lu_failure_diagnostics")]
+            { self.lu_trace.phase="resolve_entry";self.lu_trace.reason="resolve_entry"; }
             if let Err(msg) = self.refactor() {
                 self.numerical_error = Some(msg);
                 return self.build_solution(LpStatus::IterationLimit);
@@ -1993,6 +2448,8 @@ impl SparseSimplex {
     /// 非有限 / 主元过小 / 重因子化失败）⇒ GiveUp 回退整基重建——快路径
     /// 只加速、绝不改变结果。
     fn dual_repair(&mut self) -> DualRepair {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        {self.lu_trace.phase="dual_repair";self.lu_trace.reason="dual_repair";}
         const BUDGET_BASE: u32 = 2_000;
         const DEGEN_BLAND: u32 = 32;
         if !self.dual_feasible() {
@@ -2118,6 +2575,8 @@ impl SparseSimplex {
             if self.alpha[r].abs() < self.tol.pivot {
                 // 数值边缘：先重因子化重算再试一次（确定性的单次重试）。
                 if !self.just_refactored {
+                    #[cfg(feature = "lu_failure_diagnostics")]
+                    {self.lu_trace.reason="dual_repair_retry";}
                     if self.refactor().is_err() {
                         return DualRepair::GiveUp;
                     }
@@ -2184,6 +2643,8 @@ impl SparseSimplex {
     /// 参数，确定性单测以极小预算直接驱动「预算耗尽 ⇒ Fallthrough ⇒
     /// 回退链仍给出正确解」的诚实回退路径。
     fn dual_main_loop(&mut self, budget: u32) -> DualResolveOutcome {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        {self.lu_trace.phase="dual_main";self.lu_trace.reason="dual_main";}
         self.dual_main_calls += 1;
         // 入口对偶可行性 rc 扫描红线：对偶不可行基不跑主循环（对偶单纯形
         // 的前提），回退第二层 dual_repair——其入口同款 dual_feasible 复查
@@ -2384,6 +2845,8 @@ impl SparseSimplex {
                 //   dual_feasible 复查的修复/续跑路径——那会在对偶不可行
                 //   基上跑对偶算法，静默产生错误结果。
                 if !self.just_refactored {
+                    #[cfg(feature = "lu_failure_diagnostics")]
+                    {self.lu_trace.reason="dual_main_retry";}
                     if self.refactor().is_err() {
                         return DualResolveOutcome::FactorizationBroken; // refactor 出错（因子化损坏态）
                     }
@@ -2526,14 +2989,18 @@ impl SparseSimplex {
                 col.push((row, sigma));
             }
         }
-        factorize_into(
+        let factorized = factorize_into(
             &self.refactor_cols,
             self.tol.pivot,
             m,
             &mut self.lu,
             &mut self.lu_scratch,
-        )
-        .map_err(|e| e.0)?;
+        );
+        if let Err(error) = factorized {
+            #[cfg(feature = "lu_failure_diagnostics")]
+            self.capture_lu_failure(&error, &order);
+            return Err(error.message);
+        }
         self.lu.col_perm = order;
         self.etas.clear();
         // x_B = B⁻¹(b̂ − N·x_N)：非基结构列贴界、非基松弛/人工贴 0
@@ -2571,11 +3038,76 @@ impl SparseSimplex {
         self.just_refactored = true;
         self.factorization_dirty = false;
         self.factorization_broken = false;
+        #[cfg(feature = "lu_failure_diagnostics")]
+        if lu_failure_diagnostics::active() {
+            self.lu_trace.last_basis.clone_from(&self.basis);
+            self.lu_trace.pivots.clear();
+            self.lu_trace.alpha_matches_last_pivot = false;
+        }
         Ok(())
+    }
+
+    /// 失败时才构造列并集。正常主元只记录小元数据；矩阵不在热路径复制。
+    #[cfg(feature = "lu_failure_diagnostics")]
+    fn capture_lu_failure(&self, error: &LuError, order: &[usize]) {
+        use lu_failure_diagnostics::{Column, Failure};
+        if !lu_failure_diagnostics::active() {
+            return;
+        }
+        let ids: std::collections::BTreeSet<usize> = self
+            .basis
+            .iter()
+            .copied()
+            .chain(self.lu_trace.last_basis.iter().copied())
+            .chain(
+                self.lu_trace
+                    .pivots
+                    .iter()
+                    .flat_map(|p| [p.entering, p.leaving]),
+            )
+            .collect();
+        let ncs = self.ncols_static();
+        let columns = ids
+            .into_iter()
+            .map(|id| {
+                let entries = if id < ncs {
+                    (self.col_start[id]..self.col_start[id + 1])
+                        .map(|k| (self.col_rows[k], self.col_vals[k]))
+                        .collect()
+                } else {
+                    vec![self.art_info[id - ncs]]
+                };
+                Column { id, entries }
+            })
+            .collect();
+        lu_failure_diagnostics::save(Failure {
+            rows: self.basis.len(),
+            structural_columns: self.num_structural,
+            static_columns: ncs,
+            phase: self.lu_trace.phase,
+            reason: self.lu_trace.reason,
+            iterations: self.iterations_total,
+            call_iterations: self.iter_call,
+            eta_count: self.etas.len(),
+            pivot_floor: self.tol.pivot,
+            failed_column: error.failed_column,
+            max_candidate: error.max_candidate,
+            error: error.message.clone(),
+            basis_after: self.basis.clone(),
+            basis_last_refactor: self.lu_trace.last_basis.clone(),
+            factor_order: order.to_vec(),
+            pivots: self.lu_trace.pivots.clone(),
+            last_pivot_alpha: (self.lu_trace.alpha_matches_last_pivot
+                && !self.lu_trace.pivots.is_empty())
+            .then(|| self.alpha.clone()),
+            columns,
+        });
     }
 
     /// FTRAN：α = B⁻¹A_q（含 ETA 顺序施加 E⁻¹）→ self.alpha。
     fn ftran_col(&mut self, q: usize) {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        { self.lu_trace.alpha_matches_last_pivot = false; }
         #[cfg(feature = "sparse_profile")]
         let _cost_guard = cost_profile::enter(2);
         for v in self.ftran_in.iter_mut() {
@@ -2687,6 +3219,8 @@ impl SparseSimplex {
         let m = self.basis.len();
         let ncs_old = self.ncols_static();
         let ncols_old_total = ncs_old + self.num_art;
+        #[cfg(feature = "lu_failure_diagnostics")]
+        { self.lu_trace.clear_basis_history(); }
         // 基列位置映射 + 割行对结构基列的系数 w。
         let mut pos_in_basis = vec![usize::MAX; ncols_old_total];
         for (i, &c) in self.basis.iter().enumerate() {
@@ -2855,6 +3389,12 @@ impl SparseSimplex {
     /// 统一残差规则重建初始基（同 simplex.rs::rebuild_initial_basis 的
     /// 选基与 σ 规则；修正单纯形下 B = diag(σ_basic)，LU 平凡非奇异）。
     fn rebuild_initial_basis(&mut self) {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        {
+            self.lu_trace.clear_basis_history();
+            self.lu_trace.phase = "initial_basis";
+            self.lu_trace.reason = "initial_basis";
+        }
         let n = self.num_structural;
         let ncs = self.ncols_static();
         let m = self.row_terms.len();
@@ -3311,6 +3851,15 @@ impl SparseSimplex {
         }
         self.x_b[r] = entering_old + delta * t;
         let leaving = self.basis[r];
+        #[cfg(feature = "lu_failure_diagnostics")]
+        if lu_failure_diagnostics::active() {
+            self.lu_trace.pivots.push(lu_failure_diagnostics::Pivot {
+                entering: q, row: r, leaving, alpha_r: self.alpha[r], step: t,
+                eta_before: self.etas.len(), iterations_before: self.iterations_total,
+                call_iterations_before: self.iter_call, phase: self.lu_trace.phase,
+            });
+            self.lu_trace.alpha_matches_last_pivot = true;
+        }
         // Devex 权重更新：须在 ETA 追加与基交换之前（αr 为主元前基的
         // 表格行，见 `devex_update` 文档）。
         self.devex_update(q, r, leaving);
@@ -3338,6 +3887,8 @@ impl SparseSimplex {
         #[cfg(test)]
         let refactor_due = refactor_due || refactor_fault::after_pivot();
         if refactor_due {
+            #[cfg(feature = "lu_failure_diagnostics")]
+            {self.lu_trace.reason="pivot_eta_limit";}
             self.refactor()?;
         }
         Ok(())
@@ -3430,6 +3981,8 @@ impl SparseSimplex {
     }
 
     fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        { self.lu_trace.phase = if phase == 1 { "phase1" } else { "phase2" }; }
         let m = self.basis.len();
         let n = self.num_structural;
         let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
@@ -3596,6 +4149,8 @@ impl SparseSimplex {
     /// 无循环）；刚重因子化仍异常 / 重因子化失败 ⇒ Failed。
     fn numerical_retry_or_fail(&mut self, msg: String) -> PhaseOutcome {
         if !self.just_refactored {
+            #[cfg(feature = "lu_failure_diagnostics")]
+            {self.lu_trace.reason="numerical_retry";}
             return match self.refactor() {
                 Ok(()) => PhaseOutcome::Retry,
                 Err(m) => PhaseOutcome::Failed(m),
@@ -3645,6 +4200,8 @@ impl SparseSimplex {
     /// Phase-1 后处理（与 simplex.rs 同款）：残基人工变量值清零并尽力以
     /// t=0 主元驱赶出基（最小下标候选）；无候选的人工变量留基值恒 0。
     fn cleanup_after_phase1(&mut self) -> std::result::Result<(), String> {
+        #[cfg(feature = "lu_failure_diagnostics")]
+        { self.lu_trace.phase = "phase1_cleanup"; }
         let ncs = self.ncols_static();
         for i in 0..self.basis.len() {
             if self.basis[i] < ncs {
@@ -4336,6 +4893,75 @@ mod tests {
             assert_eq!(result.status, LpStatus::Unbounded);
             assert!(sp.numerical_error.is_none(), "合法无穷上界不能触发数值失败");
         }
+    }
+
+    #[cfg(feature = "lu_failure_diagnostics")]
+    #[test]
+    fn lu_diagnostic_first_failure_has_replayable_basis_and_fresh_alpha() {
+        let p=prob(Sense::Maximize,vec![var("x",0.0,2.0)],vec![(0,1.0)],
+            vec![(vec![(0,1.0)],RelOp::Le,1.0)]);
+        let bounds=Bounds::from_problem(&p);
+        lu_failure_diagnostics::reset();
+        let mut sp=SparseSimplex::new(&p,Tolerances::default()).unwrap();
+        let old_basis=sp.basis.clone();
+        {
+            let fault=refactor_fault::Guard::new(refactor_fault::Kind::Lu,true);
+            let _=sp.solve(&bounds);
+            assert!(fault.consumed());
+        }
+        // 首次失败之后的另一错误不得覆盖已保存证据。
+        {
+            let fault=refactor_fault::Guard::new(refactor_fault::Kind::Lu,false);
+            assert!(sp.refactor().is_err());
+            assert!(fault.consumed());
+        }
+        let capture=lu_failure_diagnostics::take().expect("必须捕获第一次失败");
+        assert_eq!(capture.phase,"phase2");
+        assert_eq!(capture.reason,"pivot_eta_limit");
+        assert_eq!(capture.basis_last_refactor,old_basis);
+        assert_eq!(capture.basis_before_last_pivot(),Some(old_basis));
+        assert_eq!(capture.basis_after,vec![0]);
+        assert_eq!(capture.eta_count,1);
+        assert_eq!(capture.pivots.len(),1);
+        assert_eq!(capture.pivots[0].entering,0);
+        assert_eq!(capture.pivots[0].alpha_r,1.0);
+        assert_eq!(capture.last_pivot_alpha,Some(vec![1.0]));
+        assert!(!lu_failure_diagnostics::active());
+        let checks=capture.recheck();
+        assert!(checks.iter().all(|c|c.error.is_none()),"注入失败不代表矩阵真的奇异");
+        let previous=checks.iter().find(|c|c.name=="before_last_pivot").unwrap();
+        assert_eq!(previous.alpha_r,Some(1.0));
+        assert_eq!(previous.relative_residual,Some(0.0));
+        let history=capture.recheck_history();
+        assert_eq!(history.len(),1);
+        assert_eq!(history[0].0,0);
+        assert_eq!(history[0].1.alpha_r,Some(1.0));
+        assert!(history[0].1.alpha.is_none());
+        let mut json=Vec::new();capture.write_json(&mut json).unwrap();
+        let text=String::from_utf8(json).unwrap();
+        assert!(text.contains("\"failed_column\":null"));
+        assert!(text.contains("\"basis_after\":[0]"));
+    }
+
+    #[cfg(feature = "lu_failure_diagnostics")]
+    #[test]
+    fn lu_diagnostic_typed_failure_and_enabled_path_are_honest() {
+        let cols=vec![vec![(0,1.0)],vec![(0,1.0)]];
+        let failure=factorize(&cols,1e-9,2).unwrap_err();
+        assert_eq!(failure.failed_column,Some(1));
+        assert_eq!(failure.max_candidate,Some(0.0));
+        let p=prob(Sense::Maximize,vec![var("x",0.0,2.0)],vec![(0,1.0)],
+            vec![(vec![(0,1.0)],RelOp::Le,1.0)]);
+        let bounds=Bounds::from_problem(&p);
+        lu_failure_diagnostics::reset();
+        let mut observed=SparseSimplex::new(&p,Tolerances::default()).unwrap();
+        let a=observed.solve(&bounds);
+        assert!(lu_failure_diagnostics::take().is_none());
+        let mut baseline=SparseSimplex::new(&p,Tolerances::default()).unwrap();
+        let b=baseline.solve(&bounds);
+        assert_eq!(a.status,b.status);assert_eq!(a.objective,b.objective);assert_eq!(a.x,b.x);
+        assert_eq!(observed.iterations(),baseline.iterations());
+        assert_eq!(observed.basis,baseline.basis);
     }
 
     /// 重试中的LU失败既可能清空perm，也可能把整个lu重置；两者都不能

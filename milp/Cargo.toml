@@ -26,3 +26,10 @@ binary_coefficient_strengthening = []
 
 # 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
 risk_pivot_refresh = []
+
+# 首次LU失败的基/换基证据捕获；只供显式诊断，不改变算法和默认路径。
+lu_failure_diagnostics = []
+
+[[example]]
+name = "lu_failure_probe"
+required-features = ["lu_failure_diagnostics"]
