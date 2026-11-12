@@ -1,0 +1,154 @@
+{
+  "source": "https://miplib.zib.de/",
+  "benchmark_count": 240,
+  "prefix": "MIC-MIPLIB2017-R6-20261112:",
+  "per_tier": 2,
+  "small_caps": {
+    "variables": 10000,
+    "rows": 10000,
+    "nonzeros": 200000
+  },
+  "large_caps": {
+    "variables": 50000,
+    "rows": 50000,
+    "nonzeros": 500000
+  },
+  "assets": {
+    "benchmark_list": {
+      "url": "https://miplib.zib.de/downloads/benchmark-v2.test",
+      "file": "benchmark-v2.test",
+      "sha256": "0ee9758dba64bb1689cc121c794ee547992a046bcabe1cce9ea79158375dabd5"
+    },
+    "benchmark_metadata": {
+      "url": "https://miplib.zib.de/tag_benchmark.html",
+      "file": "tag_benchmark.html",
+      "sha256": "7ee849b8649e0c82db900c7123a0c40f2aa94ee0e3e7abeba7ece6b2b28d737f"
+    },
+    "solution_file": {
+      "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+      "file": "miplib2017-v37.solu",
+      "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+      "release_date": "2026-09-24"
+    }
+  },
+  "eligible_counts": {
+    "small_binary": 12,
+    "small_mixed_binary": 53,
+    "small_general_integer": 25,
+    "large": 67
+  },
+  "instances": [
+    {
+      "instance": "bnatt500",
+      "tier": "small_binary",
+      "selection_sha256": "168748d9c6aeae10f72e93c369efdc4f16b4ff304ec835a6689caacf3c8293b1",
+      "official_metadata": {
+        "variables": 4500,
+        "binaries": 4500,
+        "integers": 0,
+        "continuous": 0,
+        "rows": 7029,
+        "nonzeros": 27203,
+        "detail_url": "https://miplib.zib.de/instance_details_bnatt500.html"
+      }
+    },
+    {
+      "instance": "seymour",
+      "tier": "small_binary",
+      "selection_sha256": "1ff2fca1f6f50609e5f14223997b290f7cc44d66cd014e1240d05248d2d250c5",
+      "official_metadata": {
+        "variables": 1372,
+        "binaries": 1372,
+        "integers": 0,
+        "continuous": 0,
+        "rows": 4944,
+        "nonzeros": 33549,
+        "detail_url": "https://miplib.zib.de/instance_details_seymour.html"
+      }
+    },
+    {
+      "instance": "neos17",
+      "tier": "small_mixed_binary",
+      "selection_sha256": "040d737b596b6e7d12ffa156e3fa802a787500296d13355247696ae460484b3b",
+      "official_metadata": {
+        "variables": 535,
+        "binaries": 300,
+        "integers": 0,
+        "continuous": 235,
+        "rows": 486,
+        "nonzeros": 4931,
+        "detail_url": "https://miplib.zib.de/instance_details_neos17.html"
+      }
+    },
+    {
+      "instance": "neos-4954672-berkel",
+      "tier": "small_mixed_binary",
+      "selection_sha256": "0579e4a4bf3a631b8e3af68fcf99d5c0d9922320a2da920adddfede8cccd3790",
+      "official_metadata": {
+        "variables": 1533,
+        "binaries": 630,
+        "integers": 0,
+        "continuous": 903,
+        "rows": 1848,
+        "nonzeros": 8007,
+        "detail_url": "https://miplib.zib.de/instance_details_neos-4954672-berkel.html"
+      }
+    },
+    {
+      "instance": "gen-ip054",
+      "tier": "small_general_integer",
+      "selection_sha256": "0957c3a2a004a5cbd772ec2ebad4826de689d0f95893e6a0d05243e5db0da75a",
+      "official_metadata": {
+        "variables": 30,
+        "binaries": 0,
+        "integers": 30,
+        "continuous": 0,
+        "rows": 27,
+        "nonzeros": 532,
+        "detail_url": "https://miplib.zib.de/instance_details_gen-ip054.html"
+      }
+    },
+    {
+      "instance": "icir97_tension",
+      "tier": "small_general_integer",
+      "selection_sha256": "0e2c67992ead978cb34386179074605e4a5a1ad3aa9e2babaa98e940af7ec81c",
+      "official_metadata": {
+        "variables": 2494,
+        "binaries": 262,
+        "integers": 573,
+        "continuous": 1659,
+        "rows": 1203,
+        "nonzeros": 22333,
+        "detail_url": "https://miplib.zib.de/instance_details_icir97_tension.html"
+      }
+    },
+    {
+      "instance": "drayage-100-23",
+      "tier": "large",
+      "selection_sha256": "0471a73c1f92de3bcda0da021de2119321f1a88ef8e79c20a0f13c6a5e473fd6",
+      "official_metadata": {
+        "variables": 11090,
+        "binaries": 11025,
+        "integers": 0,
+        "continuous": 65,
+        "rows": 4630,
+        "nonzeros": 41550,
+        "detail_url": "https://miplib.zib.de/instance_details_drayage-100-23.html"
+      }
+    },
+    {
+      "instance": "drayage-25-23",
+      "tier": "large",
+      "selection_sha256": "0be120a16bc2f2d50b79ac0d2c8999ffa670ddb0f9839fd596169b70640f8f79",
+      "official_metadata": {
+        "variables": 11090,
+        "binaries": 11025,
+        "integers": 0,
+        "continuous": 65,
+        "rows": 4630,
+        "nonzeros": 41550,
+        "detail_url": "https://miplib.zib.de/instance_details_drayage-25-23.html"
+      }
+    }
+  ]
+}
