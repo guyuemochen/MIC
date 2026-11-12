@@ -9,7 +9,7 @@
 //! (b) Unbounded：根节点 → 整树终止返回 [`SolveStatus::Unbounded`]；非根节点
 //!     （父有界时理论不发生，数值异常时可能出现）⇒ 立即整树终止返回
 //!     `Err(MilpError::Numerical)`，不得静默继续；
-//! (c) IterationLimit ⇒ 剪枝并置 limit_hit 标记；
+//! (c) IterationLimit ⇒ 暂停该子树、保留旧界并置 limit_hit，继续其它子树；
 //! (d) LP bound 不优于 incumbent 的有效剪枝界（[`effective_prune_bound`]：
 //!     整数目标门控 [`crate::model::objective_is_integral`] 时取整数 cutoff
 //!     与普通容差的更激进者——Max: max(inc+1−ε, inc+prune_abs+prune_rel·|inc|)、
@@ -386,7 +386,7 @@ pub struct BbResult {
     pub stats: BbStats,
     /// 求解结束时的对偶界（原始 sense + obj_offset 口径）。gap 终止 =
     /// 触发时刻证据 db（粘滞快照，不依赖后续栈态）；截断（上限触发）= 剩余
-    /// 待处理子树的 est 聚合（栈空时可 None）；完备且有 incumbent =
+    /// 待处理与 LP 未完成子树的旧 est 聚合（执行栈空也不能漏掉后者）；完备且有 incumbent =
     /// best_objective；Infeasible/Unbounded = None。
     pub bound: Option<f64>,
     /// 是否因达到 mipgap 阈值提前终止（true 时 status 必为 LimitReached，
@@ -974,6 +974,10 @@ fn sequential_bb(
     let mut stack: Vec<Pending> = Vec::new();
     let mut trail: Vec<TrailEntry> = Vec::new();
     let mut limit_hit = false;
+    // LP 未解完的子树不重试，但仍属于证明前沿。只需保存方向极值：
+    // 各旧est都是对应子树的乐观界；与可执行栈及incumbent一起聚合才能
+    // 覆盖整棵树。即使后来incumbent支配此界，limit_hit仍保持粘滞。
+    let mut unresolved_bound = None;
     // 策略级自动降级触发标记（与 gap_hit 同径终止，报告侧另附原因）。
     let mut degraded = false;
     // 伪代价分支统计（仅 Pseudocost 规则读写；MostFractional 下为零开销
@@ -1038,7 +1042,7 @@ fn sequential_bb(
     // incumbent（gap=0），杜绝 incumbent=X bound=none gap=inf 矛盾行）——
     if let Some(h) = hooks {
         let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-        let bound = frontier_bound(sense, &stack, inc_obj);
+        let bound = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
         emit_progress(h, &start, stats.nodes, inc_obj, bound, sense);
         last_log = Some(start.elapsed().as_secs_f64());
     }
@@ -1053,7 +1057,7 @@ fn sequential_bb(
                 let now = start.elapsed().as_secs_f64();
                 if period > 0.0 && last_log.is_some_and(|t| now - t >= period) {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
                     emit_progress(h, &start, stats.nodes, inc_obj, db, sense);
                     last_log = Some(now);
                 }
@@ -1063,7 +1067,7 @@ fn sequential_bb(
             if let Some(p) = ctrl.mipgap_percent {
                 if p > 0.0 {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
                     if let (Some(inc), Some(db)) = (inc_obj, db) {
                         if let Some(g) = gap_percent(sense, inc, db) {
                             if g <= p {
@@ -1083,7 +1087,8 @@ fn sequential_bb(
             if let (Some(state), Some(budget)) = (adaptive.as_mut(), budget_progress_cap) {
                 let now = progress_units(&start, stats.nodes, budget_mode);
                 if AutoDegrade::eligible(state.degrade.cfg(), now, Some(budget)) {
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound,
+                        incumbent.as_ref().map(|(obj, _)| *obj));
                     let snap = DegradeSnapshot {
                         sense,
                         elapsed_secs: now,
@@ -1215,6 +1220,8 @@ fn sequential_bb(
             }
         }
         let mut sol = simplex.resolve(&bounds);
+        #[cfg(test)]
+        test_node_lp_interrupt::apply(p.var, p.tighten_lb, p.depth, &mut sol);
         stats.nodes += 1;
         // 伪代价观测：子节点 LP 目标相对父 LP 目标的方向化增益 ÷ 方向分数
         // 距离（非 Optimal 子节点不记——不可行=无穷增益语义留空，保守）。
@@ -1232,13 +1239,15 @@ fn sequential_bb(
         match classify_node(sol.status, false) {
             NodeAction::Prune => continue,
             NodeAction::PruneLimit => {
+                remember_unresolved(sense, &mut unresolved_bound, p.est);
                 limit_hit = true;
                 continue;
             }
-            // W2：节点内墙钟超限 ⇒ 与 PruneLimit 同处置（剪枝 + limit_hit
+            // W2：节点内墙钟超限 ⇒ 与 PruneLimit 同处置（保留旧界 + limit_hit
             // 粘滞），下一轮顶部的节点/时间上限检查立即停树 ⇒ 诚实
             // LimitReached。
             NodeAction::TruncateTime => {
+                remember_unresolved(sense, &mut unresolved_bound, p.est);
                 limit_hit = true;
                 continue;
             }
@@ -1362,13 +1371,13 @@ fn sequential_bb(
     } else {
         SolveStatus::Infeasible
     };
-    // —— bound 口径：gap 终止 = 触发时刻证据 db；截断 = 剩余栈 est 聚合
-    //（可 None）；完备有 incumbent = best_objective；Infeasible = None——
+    // —— 截断界必须覆盖剩余栈与所有未解完LP子树；不能因执行栈空就丢界。
+    // incumbent也参与方向极值，避免已被它支配的旧子树界越过已知可行值。
     let best_objective = incumbent.as_ref().map(|(o, _)| *o);
     let bound = if gap_hit {
         gap_evidence
     } else if limit_hit {
-        aggregate_bound(sense, stack.iter().map(|q| q.est))
+        frontier_bound(sense, &stack, unresolved_bound, best_objective)
     } else if status == SolveStatus::Optimal {
         best_objective
     } else {
@@ -1396,10 +1405,10 @@ fn sequential_bb(
 enum NodeAction {
     /// (a) LP 不可行 ⇒ 剪枝回溯。
     Prune,
-    /// (c) 迭代上限 ⇒ 剪枝并置 limit_hit 标记。
+    /// (c) 迭代上限 ⇒ 保留子树旧界并置 limit_hit，继续其它子树。
     PruneLimit,
     /// (c') 内部墙钟超限（W2，[`LpStatus::TimeLimit`]）⇒ 诚实截断：树节点
-    /// 侧与 PruneLimit 同处置（剪枝 + limit_hit 粘滞，随后节点边界检查立即
+    /// 侧与 PruneLimit 同处置（保留旧界 + limit_hit 粘滞，随后节点边界检查立即
     /// 停树）；**根侧刻意与 PruneLimit 分离**——割循环据此走「直接
     /// LimitReached 终态」而非 R8 回滚（回滚重建+重放是又一次整段根 LP，
     /// 会把超限点再拖过 deadline，见 cuts.rs 回滚语义注）。
@@ -2671,11 +2680,194 @@ fn finish(
 // 受控口径的纯辅助（进度行与对偶界聚合；gap 统一走 search_ctrl::gap_percent）
 // ===========================================================================
 
-/// 首行进度的 bound 口径：栈非空 ⇒ 剩余聚合（每个开放子树的最优值不会优于
-/// 其有效界 est，证据复用可将父 LP 目标收紧为子界）；栈空且已有 incumbent ⇒ 搜索事实上完备，
-/// bound = incumbent（gap=0）。
-fn frontier_bound(sense: Sense, stack: &[Pending], incumbent: Option<f64>) -> Option<f64> {
-    aggregate_bound(sense, stack.iter().map(|p| p.est)).or(incumbent)
+/// 全部未关闭子树的方向极值：待执行栈与未完成 LP 的旧界必须一起计入。
+/// incumbent 也参加聚合，避免已被可行解支配的子树界越过全局最优值。
+/// 两类子树均空且有 incumbent 时才退化为 incumbent（gap=0）。
+fn frontier_bound(
+    sense: Sense,
+    stack: &[Pending],
+    unresolved: Option<f64>,
+    incumbent: Option<f64>,
+) -> Option<f64> {
+    aggregate_bound(sense, stack.iter().map(|p| p.est).chain(unresolved).chain(incumbent))
+}
+
+/// 未完成子树只保留旧的已证界，不读取中断LP返回的目标。极值压缩不丢信息。
+pub(crate) fn remember_unresolved(sense: Sense, saved: &mut Option<f64>, bound: f64) {
+    *saved = aggregate_bound(sense, saved.iter().copied().chain(std::iter::once(bound)));
+}
+
+/// 已知可行解属于全局可行集；旧子树界被它支配时，全局界不能越过它。
+/// None表示缺乏界证据，不得仅凭一个可行解把None变成最优性证明。
+pub(crate) fn bound_with_incumbent(
+    sense: Sense,
+    bound: Option<f64>,
+    incumbent: Option<f64>,
+) -> Option<f64> {
+    bound.and_then(|bound| aggregate_bound(sense, std::iter::once(bound).chain(incumbent)))
+}
+
+/// 测试只替换真实节点resolve的返回状态，不改LP内核。线程局部作用域避免
+/// 其它测试受到影响；并行测试在spawn时显式复制配置到各worker。
+#[cfg(test)]
+pub(crate) mod test_node_lp_interrupt {
+    use super::{LpSolution, LpStatus};
+    #[derive(Clone, Copy)]
+    pub(crate) struct Spec {
+        pub var: usize,
+        pub up: Option<bool>,
+        pub depth: u32,
+        pub status: LpStatus,
+        pub remaining: usize,
+    }
+    std::thread_local! {
+        static SPEC: std::cell::Cell<Option<Spec>> = const { std::cell::Cell::new(None) };
+    }
+    pub(crate) struct Guard(Option<Spec>);
+    impl Guard {
+        pub(crate) fn install(spec: Option<Spec>) -> Self {
+            Self(SPEC.with(|state| state.replace(spec)))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { SPEC.with(|state| state.set(self.0)); }
+    }
+    pub(crate) fn capture() -> Option<Spec> { SPEC.with(|state| state.get()) }
+    pub(crate) fn apply(var: usize, up: bool, depth: u32, sol: &mut LpSolution) {
+        SPEC.with(|state| {
+            let Some(mut spec) = state.get() else { return; };
+            if spec.remaining == 0 || spec.var != var || spec.depth != depth
+                || spec.up.is_some_and(|expected| expected != up) { return; }
+            spec.remaining -= 1;
+            state.set(Some(spec));
+            sol.status = spec.status;
+            sol.objective = f64::NAN;
+            sol.x.clear();
+            sol.duals.clear();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod unresolved_bound_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+    use test_node_lp_interrupt::{Guard, Spec};
+
+    pub(crate) fn options(engine: LpEngineKind) -> BbOptions {
+        BbOptions {
+            binary_row_propagation: BinaryPropagationMode::Off,
+            branch_rule_auto: false, branch_rule: BranchRule::MostFractional,
+            root_cuts: false, local_cuts: false, root_rc_fixing: false, heuristics: false,
+            lp_engine: engine, ..BbOptions::default()
+        }
+    }
+
+    /// 根LP为b=z=1/2、y=w=0。整数b两侧成本分别10/20，z另加1。
+    /// 真最优11；中断成本10侧后，其余侧仍能给出21的可行解。
+    pub(crate) fn model(sense: Sense, reverse: bool) -> Problem {
+        let mut p = Problem::new("未完成子树仍需保界", sense);
+        p.add_var("b", VarType::Binary).unwrap();
+        p.add_var("z", VarType::Binary).unwrap();
+        p.add_var("y", VarType::Continuous).unwrap();
+        p.add_var("w", VarType::Continuous).unwrap();
+        p.set_var_bounds(2, 0.0, 30.0).unwrap();
+        p.set_var_bounds(3, 0.0, 1.0).unwrap();
+        let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+        p.set_objective(vec![(2, sign), (3, sign)], 0.25).unwrap();
+        let (left, right) = if reverse { (20.0, 10.0) } else { (10.0, 20.0) };
+        p.add_constraint(None, vec![(0, 2.0 * left), (2, 1.0)], RelOp::Ge, left).unwrap();
+        p.add_constraint(None, vec![(0, -2.0 * right), (2, 1.0)], RelOp::Ge, -right).unwrap();
+        p.add_constraint(None, vec![(1, 2.0), (3, 1.0)], RelOp::Ge, 1.0).unwrap();
+        p.add_constraint(None, vec![(1, -2.0), (3, 1.0)], RelOp::Ge, -1.0).unwrap();
+        p
+    }
+
+    pub(crate) fn interrupt(status: LpStatus, var: usize, depth: u32) -> Spec {
+        Spec { var, up: Some(false), depth, status, remaining: 1 }
+    }
+
+    pub(crate) fn assert_valid_bound(sense: Sense, bound: f64, optimum: f64) {
+        match sense {
+            Sense::Minimize => assert!(bound <= optimum + 1e-8, "下界{bound}越过真最优{optimum}"),
+            Sense::Maximize => assert!(bound >= optimum - 1e-8, "上界{bound}越过真最优{optimum}"),
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_only_child_keeps_bound_with_empty_execution_stack() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut p = Problem::new("唯一未完成孩子", sense);
+            p.add_var("b", VarType::Binary).unwrap();
+            p.set_objective(vec![(0, if sense == Sense::Minimize { -1.0 } else { 1.0 })], 0.25).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                    let opts = BbOptions { branch_rule: BranchRule::Pseudocost,
+                        reuse_probe_evidence: true, ..options(engine) };
+                    let result = {
+                        let _guard = Guard::install(Some(interrupt(status, 0, 1)));
+                        branch_and_bound(&p, &opts, Tolerances::default()).unwrap()
+                    };
+                    assert_eq!(result.status, SolveStatus::LimitReached);
+                    assert_eq!(result.best_objective, None);
+                    assert_eq!(result.stats.nodes, 2, "根探测排掉另一支，只展开一个孩子");
+                    assert_eq!(result.bound, Some(0.25), "空执行栈仍有未完成证明前沿");
+                    let restored = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+                    assert_eq!(restored.status, SolveStatus::Optimal, "测试注入离开作用域必须清除");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_continues_siblings_without_false_gap_or_progress_bound() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = model(sense, false);
+            let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                    let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                    let captured = progress.clone();
+                    let hooks = SearchHooks { progress: std::sync::Arc::new(move |info| {
+                        captured.lock().unwrap().push(info.bound);
+                    }) };
+                    let ctrl = SearchControl { mipgap_percent: Some(6.0),
+                        log_period_secs: Some(f64::MIN_POSITIVE), ..SearchControl::default() };
+                    let result = {
+                        let _guard = Guard::install(Some(interrupt(status, 0, 1)));
+                        branch_and_bound_controlled(&p, &options(engine), &ctrl, Tolerances::default(), Some(&hooks)).unwrap()
+                    };
+                    assert_eq!(result.status, SolveStatus::LimitReached);
+                    assert!((result.best_objective.unwrap() - (0.25 + 21.0 * sign)).abs() < 1e-8,
+                        "保留继续探索兄弟以寻找可行解的行为");
+                    assert_eq!(result.bound, Some(0.25));
+                    assert!(!result.gap_terminated, "漏掉未完成根孩子会伪报约5%的gap");
+                    assert!(result.stats.nodes >= 5, "其余子树须继续探索到底");
+                    let events = progress.lock().unwrap();
+                    assert!(events.len() > 2);
+                    for bound in events.iter().flatten() { assert_valid_bound(sense, *bound, 0.25 + 11.0 * sign); }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_dominated_bound_does_not_clear_limit_status() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = model(sense, true);
+            let optimum = 0.25 + if sense == Sense::Minimize { 11.0 } else { -11.0 };
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                let result = {
+                    let _guard = Guard::install(Some(interrupt(LpStatus::IterationLimit, 1, 2)));
+                    branch_and_bound(&p, &options(engine), Tolerances::default()).unwrap()
+                };
+                assert_eq!(result.status, SolveStatus::LimitReached);
+                assert!((result.best_objective.unwrap() - optimum).abs() < 1e-8);
+                assert_eq!(result.bound, result.best_objective, "旧子树界被更好incumbent支配时不能越过它");
+            }
+        }
+    }
 }
 
 /// 组装并发射一行进度（字段口径与并行引擎一致；gap 由展示层经

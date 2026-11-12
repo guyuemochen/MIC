@@ -42,12 +42,12 @@
 //!   resolve 已证实节点 LP 可行/最优）——Infeasible/IterationLimit 弃用
 //!   结果继续分支（绝不 closed 丢子树，见 [`dive_back_action`]），
 //!   Unbounded 诚实 Err；
-//! - stop 粘滞（CAS 一次性置位）与 LP 迭代上限剪枝标记 limit_hit（镜像
-//!   顺序 limit_hit：剪枝 + 粘滞 + 树继续，终态诚实 LimitReached）：截断
+//! - stop 粘滞（CAS 一次性置位）与 LP 迭代上限标记 limit_hit（镜像
+//!   顺序 limit_hit：保存旧界 + 粘滞 + 树继续，终态诚实 LimitReached）：截断
 //!   绝不冒充完备；gap 触发用触发时刻证据快照（粘滞、clamp 后非负有限）。
 //!
 //! gap 保守性：聚合 db 取『全部本地队列的全部节点 est ∪ 窃取池全部 est ∪
-//! 在处理槽 est』（**全量口径**， [`pool_db_aggregate`] 唯一实现）的方向
+//! 在处理槽 est ∪ 未完成子树旧界』（**全量口径**， [`pool_db_aggregate`] 唯一实现）的方向
 //! 极值，est 为父谱系 LP 目标（对子树有效）；快照后 db 沿谱系只可能变严、
 //! incumbent 只可能更优 ⇒ 计算得到的 gap ≥ 真实 gap（N1 的 clamp 只把负
 //! gap 提到 0，而 db ≤ inc 蕴含最优 ≤ inc，0% 触发诚实）⇒ 触发只推迟、
@@ -75,7 +75,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::branch_bound::{
-    bound_no_better, capture_root_rc_cache, incumbent_improved, is_integral, probe_reliability,
+    bound_no_better, bound_with_incumbent, capture_root_rc_cache, incumbent_improved, is_integral,
+    probe_reliability, remember_unresolved,
     BbOptions, BbStats, BinaryPropagationMode, BranchRule, NodeRule, RcRefixState,
 };
 use crate::cuts::{self, CutOptions};
@@ -131,11 +132,11 @@ pub struct ParallelConfig {
 
 /// 停止原因（粘滞：一旦置位终态按此判定，即使池随后排空也不得报完备——
 /// 镜像 branch_bound 的 limit_hit 粘滞语义；节点 LP 迭代上限经独立粘滞
-/// 标记 limit_hit 剪枝续搜、不截断树，终局经 [`effective_stop_code`] 同样
+/// 标记 limit_hit 保留旧界并续搜、不截断树，终局经 [`effective_stop_code`] 同样
 /// 映射到 NodeLimit ⇒ LimitReached，见 M3）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParallelStop {
-    /// 节点上限（含节点 LP 迭代上限：剪枝续搜，探索完备后仍诚实 LimitReached）。
+    /// 节点上限（含节点 LP 迭代上限：保界续搜，执行池空后仍诚实 LimitReached）。
     NodeLimit,
     /// 时间上限。
     TimeLimit,
@@ -151,7 +152,7 @@ pub struct ParallelOutcome {
     /// 根终局捷径直返；None = 进入过树搜索。
     pub root_terminal: Option<SolveStatus>,
     /// 停止原因；None = 树探索完备（池空 ∧ active == 0 且从未置 stop，也
-    /// 从未置 LP 迭代上限剪枝标记 limit_hit——置位时按 NodeLimit 类截断
+    /// 从未置 LP 迭代上限标记 limit_hit——置位时按 NodeLimit 类截断
     /// 诚实报告 LimitReached，不冒充完备）。
     pub stop: Option<ParallelStop>,
     /// 最优目标（原始 sense + obj_offset 口径）。
@@ -163,8 +164,8 @@ pub struct ParallelOutcome {
     pub stats: BbStats,
     /// 终局对偶界（原始 sense 口径）：
     /// - Some(Gap)：触发时刻证据 db（粘滞、有限）；
-    /// - Some(NodeLimit|TimeLimit)：剩余池 est 聚合（可 None：截断不可知的
-    ///   诚实 None）；
+    /// - Some(NodeLimit|TimeLimit)：剩余池 est 与未完成子树旧界聚合；
+    ///   与 incumbent 取方向极值，不能越过已知可行值；
     /// - None（完备）：有 incumbent ⇒ best_objective、Infeasible ⇒ None；
     /// - root_terminal：纯 LP Optimal ⇒ Some(objective)。
     pub bound: Option<f64>,
@@ -221,6 +222,9 @@ struct PoolState {
     /// Some(est) = worker w 在处理节点（est 为该节点父谱系目标）；
     /// None = 空闲（聚合时剔除，无哨兵毒化）。
     inflight: Vec<Option<f64>>,
+    /// 因LP中断或停止而退出执行容器的子树，其旧界仍属于证明前沿。
+    /// 方向极值是完整界集合的充分汇总；不重新派发，保持原续搜行为。
+    unresolved: Option<f64>,
 }
 
 impl PoolState {
@@ -306,8 +310,8 @@ struct Shared {
     last_improve_node: AtomicU64,
     /// 最近一次 incumbent 改进的时刻（毫秒；降级停滞信号）。
     last_improve_millis: AtomicU64,
-    /// LP 迭代上限剪枝的粘滞标记（镜像顺序路径 limit_hit）：worker 节点
-    /// resolve 迭代上限 ⇒ 剪枝该节点并置位，**不终止树搜索**；终局若 stop
+    /// LP 迭代上限的粘滞标记（镜像顺序路径 limit_hit）：worker 节点
+    /// resolve 迭代上限 ⇒ 保存旧界并置位，**不终止树搜索**；终局若 stop
     /// 仍为 NONE 且本标记置位 ⇒ 诚实映射 NodeLimit 类截断（LimitReached）。
     limit_hit: AtomicBool,
     /// 0=None 1=NodeLimit 2=TimeLimit 3=Gap 4=Degrade（CAS 一次性置位，粘滞）。
@@ -348,6 +352,7 @@ impl Shared {
                 active: 0,
                 done: false,
                 inflight: vec![None; threads],
+                unresolved: None,
             }),
             cv_workers: Condvar::new(),
             cv_progress: Condvar::new(),
@@ -569,7 +574,8 @@ impl Shared {
             }
             if pool.active == 0 {
                 // 全部容器空（take 失败已蕴含本地队列与窃取池皆空）且无在
-                // 处理节点：搜索完备。done 与（门控开启时的）空聚合同临界区。
+                // 处理节点：执行任务耗尽。未完成 LP 仍由 unresolved 保留界，
+                // limit_hit 保留截断状态，done 不代表已经证完所有子树。
                 pool.done = true;
                 self.notify_all();
                 return AcquireOutcome::Finished;
@@ -630,7 +636,7 @@ impl Shared {
             pool.active -= 1;
             pool.inflight[w] = None;
             if pool.all_empty() && pool.active == 0 {
-                // 全部容器空且无在处理节点：搜索完备。done 与上方（门控开启
+                // 全部容器空且无在处理节点：执行任务耗尽。done 与上方（门控开启
                 // 时的）空聚合同临界区，进度线程要么在窗口前快照（容器/在
                 // 处理非空 ⇒ bound 必非空聚合），要么看到 done 直接退出——
                 // 矛盾行窗口被关闭。
@@ -661,6 +667,7 @@ impl Shared {
         let (Some(db), Some(inc)) = (db, self.read_incumbent_obj()) else {
             return;
         };
+        let Some(db) = bound_with_incumbent(sense, Some(db), Some(inc)) else { return; };
         let Some(gap) = gap_percent(sense, inc, db) else {
             return;
         };
@@ -692,11 +699,13 @@ impl Shared {
         if !AutoDegrade::eligible(self.degrade_cfg, now, Some(budget)) {
             return;
         }
+        let incumbent = self.read_incumbent_obj();
+        let db = bound_with_incumbent(sense, db, incumbent);
         let snap = DegradeSnapshot {
             sense,
             elapsed_secs: now,
             budget_secs: Some(budget),
-            has_incumbent: self.read_incumbent_obj().is_some(),
+            has_incumbent: incumbent.is_some(),
             last_improvement_secs: self.last_improve_millis.load(Ordering::SeqCst) as f64 / 1000.0,
             bound: db,
         };
@@ -714,6 +723,7 @@ impl Shared {
             .is_ok()
         {
             let inc = self.read_incumbent_obj();
+            let db = bound_with_incumbent(sense, Some(db), inc).unwrap_or(db);
             *self.lock_gap_evidence() = Some(GapEvidence {
                 db,
                 incumbent: inc.unwrap_or(f64::NAN),
@@ -723,13 +733,23 @@ impl Shared {
         }
     }
 
-    /// 退出路径：仍持有则释放（active−1、inflight=None）；
+    /// LP中断前先保存inflight旧界。保存和之后complete_node释放之间可能
+    /// 暂时重复，但极值聚合幂等，任何并发快照都不会出现漏界窗口。
+    fn retain_inflight_bound(&self, w: usize, sense: Sense) {
+        let mut pool = self.lock_pool();
+        if let Some(est) = pool.inflight[w] {
+            remember_unresolved(sense, &mut pool.unresolved, est);
+        }
+    }
+
+    /// 退出路径：仍持有则先保存旧界再释放（active−1、inflight=None）；
     /// stop ≠ 0 或（全部容器空且 active == 0）⇒ done + 双 cv notify_all；
     /// 否则窃取池非空 ⇒ cv_workers.notify_one（本地队列不为空不唤醒——
     /// 等待 worker 经 wait_timeout 自调度窃取）。
-    fn worker_release(&self, w: usize) {
+    fn worker_release(&self, w: usize, sense: Sense) {
         let mut pool = self.lock_pool();
-        if pool.inflight[w].is_some() {
+        if let Some(est) = pool.inflight[w] {
+            remember_unresolved(sense, &mut pool.unresolved, est);
             pool.active -= 1;
             pool.inflight[w] = None;
         }
@@ -756,7 +776,7 @@ impl Shared {
 
 /// 池对偶界聚合（**全量口径**，complete_node（门控后）与截断终界/进度行
 /// 共用的唯一实现）：**所有本地队列的全部节点 est ∪ 窃取池全部 est ∪
-/// inflight Some 槽**，先滤除非有限值，取方向极值。全量扫描保证不低估
+/// inflight Some 槽 ∪ 未完成子树旧界**，先滤除非有限值，取方向极值。全量扫描保证不低估
 /// 开放节点极值（gap 判定只可能被推迟、不偏提前终止——保守方向）；任何
 /// 『只看各容器尾』的口径都漏掉容器内部节点与窃取池，属禁止项。
 fn pool_db_aggregate(pool: &PoolState, sense: Sense) -> Option<f64> {
@@ -777,14 +797,98 @@ fn pool_db_aggregate(pool: &PoolState, sense: Sense) -> Option<f64> {
                     .iter()
                     .filter_map(|slot| *slot)
                     .filter(|e| e.is_finite()),
-            ),
+            )
+            .chain(pool.unresolved),
     )
 }
 
-/// 终局停止码合成（M3，纯函数）：`limit_hit` 是 LP 迭代上限剪枝的粘滞标记
-/// （镜像顺序 limit_hit），**不**截断树搜索；探索完备（stop 仍 NONE）而标记
+#[cfg(test)]
+mod unresolved_bound_tests {
+    use super::*;
+    use crate::branch_bound::{test_node_lp_interrupt::{Guard, Spec}, unresolved_bound_tests as fixture};
+    use crate::simplex_sparse::LpEngineKind;
+
+    #[test]
+    fn unresolved_lp_parallel_keeps_failed_child_and_continues_other_work() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let problem = fixture::model(sense, false);
+            let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+            for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                let config = ParallelConfig { threads: 2, mipgap_percent: Some(6.0),
+                    adaptive_heuristics: false, degrade: DegradePolicy::disabled(),
+                    log_period_secs: None, progress: None };
+                let result = {
+                    let _guard = Guard::install(Some(fixture::interrupt(status, 0, 1)));
+                    parallel_branch_and_bound(&problem, &fixture::options(LpEngineKind::Tableau),
+                        &config, Tolerances::default()).unwrap()
+                };
+                assert!(matches!(result.stop, Some(ParallelStop::NodeLimit)));
+                assert_eq!(result.best_objective, Some(0.25 + 21.0 * sign));
+                assert_eq!(result.bound, Some(0.25));
+                fixture::assert_valid_bound(sense, result.bound.unwrap(), 0.25 + 11.0 * sign);
+                assert!(result.stats.nodes >= 5);
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_parallel_all_children_interrupted_is_not_infeasible() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let problem = fixture::model(sense, false);
+            let config = ParallelConfig { threads: 2, mipgap_percent: None,
+                adaptive_heuristics: false, degrade: DegradePolicy::disabled(),
+                log_period_secs: None, progress: None };
+            let result = {
+                let _guard = Guard::install(Some(Spec { var: 0, up: None, depth: 1,
+                    status: LpStatus::IterationLimit, remaining: usize::MAX }));
+                parallel_branch_and_bound(&problem, &fixture::options(LpEngineKind::Tableau),
+                    &config, Tolerances::default()).unwrap()
+            };
+            assert!(matches!(result.stop, Some(ParallelStop::NodeLimit)));
+            assert_eq!(result.best_objective, None);
+            assert_eq!(result.bound, Some(0.25));
+            assert_eq!(result.stats.nodes, 3);
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_parallel_inflight_transfer_preserves_gap_and_stop_bounds() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+            let shared = Shared::new(1, DegradePolicy::disabled(), None, Instant::now(), None);
+            *shared.incumbent.write().unwrap() = Some((21.0 * sign, Vec::new()));
+            {
+                let mut pool = shared.lock_pool();
+                pool.active = 1;
+                pool.inflight[0] = Some(10.0 * sign);
+            }
+            shared.limit_hit.store(true, Ordering::SeqCst);
+            shared.retain_inflight_bound(0, sense);
+            shared.complete_node(0, Vec::new(), sense, Some(6.0), false);
+            assert_eq!(shared.stop_code(), STOP_NONE, "未完成子树不能被伪gap排除");
+            assert_eq!(pool_db_aggregate(&shared.lock_pool(), sense), Some(10.0 * sign));
+            assert_eq!(effective_stop_code(shared.stop_code(), true), STOP_NODE);
+            // 模拟另一个节点已被取走，但尚未resolve就撞上节点/时间上限。
+            {
+                let mut pool = shared.lock_pool();
+                pool.active = 1;
+                pool.inflight[0] = Some(5.0 * sign);
+            }
+            shared.set_stop(STOP_TIME);
+            shared.worker_release(0, sense);
+            let pool = shared.lock_pool();
+            assert_eq!(pool.active, 0);
+            assert!(pool.inflight[0].is_none() && pool.all_empty());
+            assert_eq!(pool_db_aggregate(&pool, sense), Some(5.0 * sign));
+            assert_eq!(shared.performed.load(Ordering::SeqCst), 0, "未resolve不能计LP节点");
+        }
+    }
+}
+
+/// 终局停止码合成（M3，纯函数）：`limit_hit` 是 LP 迭代上限的粘滞标记
+/// （镜像顺序 limit_hit），**不**截断树搜索；执行任务耗尽（stop 仍 NONE）而标记
 /// 置位 ⇒ 映射 STOP_NODE（NodeLimit 类 ⇒ 终态诚实 LimitReached，bound 取
-/// 剩余池聚合——完备后为空 ⇒ None，与顺序侧栈空聚合同口径）。粘滞 stop
+/// 剩余池及未完成LP子树旧界聚合；执行池空不代表证明前沿空）。粘滞 stop
 /// （Gap/Degrade/NodeLimit/TimeLimit）优先于 limit_hit。
 fn effective_stop_code(stop: u8, limit_hit: bool) -> u8 {
     if stop == STOP_NONE && limit_hit {
@@ -1289,11 +1393,15 @@ pub fn parallel_branch_and_bound(
     let int_vars_ref = &int_vars;
     let cuts_ref = &recorded_cuts;
     let shared_ref = &shared;
+    #[cfg(test)]
+    let test_interrupt = crate::branch_bound::test_node_lp_interrupt::capture();
 
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(config.threads);
         for w in 0..config.threads {
             handles.push(scope.spawn(move || {
+                #[cfg(test)]
+                let _interrupt_guard = crate::branch_bound::test_node_lp_interrupt::Guard::install(test_interrupt);
                 worker_run(
                     w,
                     problem_ref,
@@ -1377,7 +1485,8 @@ pub fn parallel_branch_and_bound(
             } else {
                 ParallelStop::TimeLimit
             });
-            let bound = pool_db_aggregate(&shared.lock_pool(), sense);
+            let bound = bound_with_incumbent(sense,
+                pool_db_aggregate(&shared.lock_pool(), sense), best_objective);
             (
                 stop,
                 bound,
@@ -1438,7 +1547,7 @@ fn worker_run(
         }
     };
     // W2：worker 的节点 resolve 同受内部墙钟时限（超限 ⇒ LpStatus::TimeLimit
-    // ⇒ 剪枝 + limit_hit，随后节点边界的 wall_exceeded 检查置 STOP_TIME）。
+    // ⇒ 保存旧界 + limit_hit，随后节点边界的 wall_exceeded 检查置 STOP_TIME）。
     simplex.set_time_deadline(crate::branch_bound::bb_time_deadline(&start, &opts));
     // 按序重放根阶段记录的割清单（与根线程 add_row 顺序一致）。
     for (terms, rhs) in cuts {
@@ -1460,7 +1569,7 @@ fn worker_run(
         let mut node = match shared.acquire_node(w, &mut steal_rng) {
             AcquireOutcome::Node(node) => node,
             AcquireOutcome::Finished => {
-                shared.worker_release(w);
+                shared.worker_release(w, sense);
                 return simplex.iterations();
             }
         };
@@ -1495,21 +1604,24 @@ fn worker_run(
                 }
             }
         }
-        // —— 预约制上限检查（成功弹出后；触发即丢节点：不 resolve、不计
-        //    performed——镜像顺序『pop 后检查、触发即丢』语义）——
+        // —— 预约制上限检查：不resolve、不计performed，但释放前必须保留
+        //    已pop节点的旧界，不能把尚未检查的子树从终态界中漏掉。——
         let reserve = shared.reserved.fetch_add(1, Ordering::SeqCst) + 1;
         if opts.node_limit != 0 && reserve > opts.node_limit {
             shared.set_stop(STOP_NODE);
-            shared.worker_release(w);
+            shared.worker_release(w, sense);
             return simplex.iterations();
         }
         if opts.time_limit_ms != 0 && wall_exceeded(&start, opts.time_limit_ms) {
             shared.set_stop(STOP_TIME);
-            shared.worker_release(w);
+            shared.worker_release(w, sense);
             return simplex.iterations();
         }
         // —— resolve（计 1 performed）——
-        let sol = simplex.resolve(&node.bounds);
+        #[allow(unused_mut)] // 测试注入状态；正式构建不改返回值。
+        let mut sol = simplex.resolve(&node.bounds);
+        #[cfg(test)]
+        crate::branch_bound::test_node_lp_interrupt::apply(node.var, node.tighten_lb, node.depth, &mut sol);
         let node_no = shared.performed.fetch_add(1, Ordering::SeqCst) + 1;
         match sol.status {
             // (a) Infeasible ⇒ 剪枝。
@@ -1521,18 +1633,18 @@ fn worker_run(
             LpStatus::Unbounded => {
                 shared.record_error(nonroot_unbounded_error());
                 shared.set_stop(STOP_NODE);
-                shared.worker_release(w);
+                shared.worker_release(w, sense);
                 return simplex.iterations();
             }
-            // (c) IterationLimit ⇒ 剪枝本节点 + 置 limit_hit 粘滞标记（镜像
-            //     顺序 PruneLimit ⇒ {limit_hit = true; continue}）：树继续
+            // (c) IterationLimit ⇒ 保存本节点旧界 + 置 limit_hit 粘滞标记：树继续
             //     探索其余节点，终态仍诚实映射 LimitReached——两路径终态与
             //     探索范围一致，不再以粘滞 stop 截断整树。
-            // (c') TimeLimit（W2）⇒ 同处置（剪枝 + limit_hit）；超限后
+            // (c') TimeLimit（W2）⇒ 同处置（保存旧界 + limit_hit）；超限后
             //     worker 下一节点边界的 wall_exceeded 检查立即置 STOP_TIME，
             //     终态经 TimeLimit 诚实映射 LimitReached。
             LpStatus::IterationLimit | LpStatus::TimeLimit => {
                 shared.limit_hit.store(true, Ordering::SeqCst);
+                shared.retain_inflight_bound(w, sense);
                 shared.complete_node(w, Vec::new(), sense, mipgap, false);
                 continue;
             }
@@ -1617,7 +1729,7 @@ fn worker_run(
                     DiveBackAction::Fail => {
                         shared.record_error(nonroot_unbounded_error());
                         shared.set_stop(STOP_NODE);
-                        shared.worker_release(w);
+                        shared.worker_release(w, sense);
                         return simplex.iterations();
                     }
                 }
@@ -1696,12 +1808,13 @@ fn progress_loop(
             //（回调期间不持有求解器任何锁）。
             let db = pool_db_aggregate(&pool, sense);
             drop(pool);
+            let incumbent = shared.read_incumbent_obj().filter(|v| v.is_finite());
             let info = ProgressInfo {
                 sense,
                 elapsed_secs: elapsed,
                 nodes: shared.performed.load(Ordering::SeqCst),
-                incumbent: shared.read_incumbent_obj().filter(|v| v.is_finite()),
-                bound: db,
+                incumbent,
+                bound: bound_with_incumbent(sense, db, incumbent),
             };
             // 回调 panic 不得外泄（scope 闭包内）：诚实记 error 并终止。
             if catch_unwind(AssertUnwindSafe(|| callback(&info))).is_err() {
@@ -1971,6 +2084,7 @@ mod tests {
             active,
             done: false,
             inflight,
+            unresolved: None,
         }
     }
 
@@ -2435,7 +2549,7 @@ mod tests {
                     loop {
                         match shared.acquire_node(w, &mut rng) {
                             AcquireOutcome::Finished => {
-                                shared.worker_release(w);
+                                shared.worker_release(w, Sense::Maximize);
                                 break;
                             }
                             AcquireOutcome::Node(node) => {
@@ -3038,8 +3152,8 @@ mod tests {
         assert_eq!(shared.last_improve_node.load(Ordering::SeqCst), 7);
     }
 
-    /// （M3）终局停止码合成：LP 迭代上限剪枝标记（limit_hit，镜像顺序
-    /// PruneLimit 的 limit_hit）在树探索完备（stop 仍 NONE）时映射
+    /// （M3）终局停止码合成：LP 迭代上限标记（limit_hit，镜像顺序
+    /// PruneLimit 的 limit_hit）在执行任务耗尽（stop 仍 NONE）时映射
     /// STOP_NODE ⇒ 终态诚实 LimitReached，不冒充完备；粘滞 stop 优先。
     #[test]
     fn effective_stop_code_limit_hit_composition() {
@@ -3047,7 +3161,7 @@ mod tests {
         assert_eq!(
             effective_stop_code(STOP_NONE, true),
             STOP_NODE,
-            "迭代上限剪枝后探索完备 ⇒ NodeLimit 类诚实截断"
+            "迭代上限中断后执行任务耗尽 ⇒ NodeLimit 类诚实截断"
         );
         assert_eq!(effective_stop_code(STOP_GAP, true), STOP_GAP, "粘滞 stop 优先");
         assert_eq!(effective_stop_code(STOP_DEGRADE, true), STOP_DEGRADE);
