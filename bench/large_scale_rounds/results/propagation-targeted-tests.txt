@@ -1,0 +1,17 @@
+    Finished `release` profile [optimized] target(s) in 0.00s
+     Running unittests src/lib.rs (milp/target/release/deps/milp-d659a10446665ce9)
+
+running 10 tests
+test binary_propagation::tests::cascade_rollback_conflict_queue_and_deadline_are_isolated ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_rejects_both_parallel_public_entries ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_replays_unchanged_rc_overlay_after_dfs_and_hybrid_restore ... ok
+test binary_propagation::tests::deadline_mid_scan_preserves_only_proved_fixes_and_cleans_queue ... ok
+test binary_propagation::tests::grid_certificate_rejects_uncertain_or_invalid_rows ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_root_children_scan_unrelated_rows_and_skip_conflict_lp ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_scaling_presolve_probe_local_cut_and_budget_paths ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_large_hybrid_frontier_keeps_known_optimum ... ok
+test branch_bound::binary_propagation_tests::binary_propagation_matches_enumeration_across_engines_domains_and_rc ... ok
+test binary_propagation::tests::every_small_domain_preserves_all_feasible_completions ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 361 filtered out; finished in 0.09s
+
