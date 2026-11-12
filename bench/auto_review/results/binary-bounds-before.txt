@@ -1,0 +1,29 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.28s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-9902ccbad09493e3)
+
+running 2 tests
+test model::tests::binary_public_bounds_are_validated ... FAILED
+test solver::tests::binary_public_bounds_cannot_produce_out_of_domain_solution ... FAILED
+
+failures:
+
+---- model::tests::binary_public_bounds_are_validated stdout ----
+
+thread 'model::tests::binary_public_bounds_are_validated' (88047) panicked at src/model.rs:729:13:
+非法二元界[-1, 1]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- solver::tests::binary_public_bounds_cannot_produce_out_of_domain_solution stdout ----
+
+thread 'solver::tests::binary_public_bounds_cannot_produce_out_of_domain_solution' (88048) panicked at src/solver.rs:296:13:
+非法二元界应在求解前拒绝，实际Ok(SolveReport { status: Optimal, objective: Some(2.0), values: Some([2.0]), stats: BbStats { nodes: 1, lp_iterations: 0, cuts: 0, time_ms: 0, rc_fixed: 0, rc_reapplies: 0, rc_refixed: 0 }, presolve_reductions: 1 })
+
+
+failures:
+    model::tests::binary_public_bounds_are_validated
+    solver::tests::binary_public_bounds_cannot_produce_out_of_domain_solution
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 340 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

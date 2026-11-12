@@ -1,0 +1,28 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-9902ccbad09493e3)
+
+running 2 tests
+test model::tests::binary_public_bounds_are_validated ... ok
+test solver::tests::binary_public_bounds_cannot_produce_out_of_domain_solution ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 340 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-0bb0010cc9d32f34)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-9cc11cae4693781c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-e2383a1b7053e5f4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
