@@ -1,0 +1,30 @@
+{
+  "baseline_solver_commit": "22efddd",
+  "candidate_solver_commit": "b3c0fed",
+  "probe_and_plan_commit": "a9809c5",
+  "platform": "macOS arm64 / Apple M4",
+  "rss_unit": "bytes",
+  "node_limits": [
+    50000,
+    200000
+  ],
+  "threads": 1,
+  "wall_time_limit": 0,
+  "adaptive_heuristics": false,
+  "local_cuts": {
+    "dfs": true,
+    "hybrid": false,
+    "hybrid_rc": false
+  },
+  "root_rc_fixing": {
+    "dfs": true,
+    "hybrid": false,
+    "hybrid_rc": true
+  },
+  "notes": "固定节点预算与相同搜索轨迹对照，不是完成求解速度；原自动配置21例已作为回归集，未重新声称独立验证。",
+  "binary_sha256": {
+    "baseline": "b6d0cfbc03ad42db2b5f3499b52132c25de88cc38c5a7b0ac00543c82fbd9475",
+    "candidate": "69fc3f7f4b5181568df78bf550232d02527d422cca53588b16438fd739bd81b6"
+  },
+  "probe_sha256": "e72281c1944a3abf0cb2d056d6b38701f280429692aab7ca86e006d4fa2d70de"
+}

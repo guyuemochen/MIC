@@ -63,7 +63,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
 | `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
-| `--node-rule dfs\|hybrid` | 节点选择；`dfs` 为原深度优先，`hybrid` 每64节点选择当前最好界，其余深搜。混合策略保存完整父域快照，可能增加内存；收益依问题而异，不自动启用 | `dfs` | 未知值 / 缺参 / 重复出现报错；`hybrid` 必须显式 `--local-cuts off` 且 `--threads 1`，否则报错；支持等号/空格两式 |
+| `--node-rule dfs\|hybrid` | 节点选择；`dfs` 为原深度优先，`hybrid` 每64节点选择当前最好界，其余深搜。混合策略以不可变共享块保存完整父域，未变化的块不重复复制；仍可能比DFS多用内存，收益依问题而异，不自动启用 | `dfs` | 未知值 / 缺参 / 重复出现报错；`hybrid` 必须显式 `--local-cuts off` 且 `--threads 1`，否则报错；支持等号/空格两式 |
 | `--local-cuts on\|off` | 树内局部割开关；`off` 不影响根割开关，用于混合策略及同口径对照 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
