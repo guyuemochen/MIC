@@ -417,6 +417,8 @@ fn error_paths_all_codes() {
     expect(set_param_int(m, "Threads", 0), ERR_ARG);
     expect(set_param_int(m, "Threads", 1025), ERR_ARG);
     expect(set_param_str(m, "HeuristicMode", "fast"), ERR_ARG);
+    expect(set_param_real(m, "BinaryPropagation", 0.0), ERR_ARG);
+    expect(set_param_int(m, "BinaryPropagation", 0), ERR_ARG);
     expect(set_param_real(m, "Nope", 1.0), ERR_UNKNOWN_PARAM);
     expect(set_param_int(m, "TimeLimit", 5), ERR_ARG); // 存在但类型不符
     // 未求解 → 11；get_status 未求解 → 0。
@@ -642,6 +644,7 @@ fn param_setters_happy_paths() {
     expect(set_param_int(m, "Threads", 1024), OK);
     for v in ["auto", "on", "off"] {
         expect(set_param_str(m, "HeuristicMode", v), OK);
+        expect(set_param_str(m, "BinaryPropagation", v), OK);
     }
     milp_ffi_model_destroy(m);
 }
@@ -654,6 +657,32 @@ fn threads_two_parallel_path_still_exact() {
     solve(m);
     assert_eq!(status(m), 1);
     assert!((objective(m) - 21.0).abs() < 1e-9);
+    milp_ffi_model_destroy(m);
+}
+
+#[test]
+fn binary_propagation_modes_follow_thread_count() {
+    let m = build_hard12();
+    expect(set_param_str(m, "BinaryPropagation", "on"), OK);
+    solve(m);
+    assert_eq!(status(m), 1);
+    assert!((objective(m) - 523.0).abs() < 1e-9);
+
+    expect(set_param_int(m, "Threads", 2), OK);
+    expect(set_param_str(m, "BinaryPropagation", "On"), ERR_ARG);
+    let error = last_error_full();
+    assert!(error.contains("BinaryPropagation"));
+    assert_eq!(status(m), 1);
+    assert_eq!(last_error_full(), error, "成功调用保留粘滞错误");
+    // 非法值未覆盖先前的 on，求解因此拒绝当前配置。
+    expect(milp_ffi_solve(m), ERR_INVALID_MODEL);
+
+    for v in ["auto", "off"] {
+        expect(set_param_str(m, "BinaryPropagation", v), OK);
+        solve(m);
+        assert_eq!(status(m), 1);
+        assert!((objective(m) - 523.0).abs() < 1e-9);
+    }
     milp_ffi_model_destroy(m);
 }
 

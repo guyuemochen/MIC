@@ -164,6 +164,7 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 | `Threads` | int | 1..=1024 | 1 | `milp_ffi_set_param_int` → `SearchControl.threads`（1=纯顺序，≥2 并行引擎） |
 | `MIPGap` | float（**小数**） | ≥0；0 = 关闭 | 0.0 | 小数 ×100 → 百分比经 FFI → `SearchControl.mipgap_percent` |
 | `HeuristicMode` | str | `auto`/`on`/`off` | `'on'` | `milp_ffi_set_param_str`（off ⇒ heuristics=false；on/auto ⇒ true；auto 另置 adaptive_heuristics=true） |
+| `BinaryPropagation` | str | `auto`/`on`/`off`（大小写敏感） | `'auto'` | `milp_ffi_set_param_str` → `BbOptions.binary_row_propagation` |
 | `LogPeriodSecs` | float（秒） | ≥0；0 = 关 | 0.0 | `>0` 时注入 stdout 进度钩子（镜像 milp CLI `--log-secs`） |
 
 - **MIPGap 单位换算**：`setParam('MIPGap', 0.20)` 即 FFI 的 20.0 百分比
@@ -181,13 +182,17 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
   `SearchControl::default` 的库语义，避免 `auto` + `TimeLimit` 组合在
   双停滞时意外自动降级为 `LIMIT_REACHED`。需要自适应行为请显式
   `setParam('HeuristicMode', 'auto')`。
+- `BinaryPropagation` 是 MIC 自有参数，控制是否用通过精确性检查的纯二元约束推断变量的取值。
+  `'auto'` 在 `Threads=1` 时启用，在 `Threads>=2` 时关闭。`'on'` 要求 `Threads=1`，
+  否则 `optimize()` 抛出 `ModelError`。
+  可用 `setParam('BinaryPropagation', 'off')` 始终关闭。
 - **getParam 返回镜像原值且被拒值不更新镜像**：`setParam` 流程 = 路由表
   类型强制 → INF/单位翻译 → **恒调 FFI setter** → rc==0 才写本地镜像
   `_params[name] = 原始 Python 值`。被 FFI 拒绝的值（如 `Threads=0` →
   `ArgumentError`）不污染镜像；`getParam('MIPGap')` 精确回读 setParam 时
   的小数（0.07 回读 0.07，不做 ÷100 逆运算）。初始镜像：
   `{TimeLimit: INF, Threads: 1, MIPGap: 0.0, HeuristicMode: 'on',
-  LogPeriodSecs: 0.0}`。`getParam` 只读本地镜像、不触碰 FFI。
+  BinaryPropagation: 'auto', LogPeriodSecs: 0.0}`。`getParam` 只读本地镜像、不触碰 FFI。
 
 ## 生命周期
 

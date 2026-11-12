@@ -14,6 +14,7 @@ from micpython import (
     INF,
     MAXIMIZE,
     Model,
+    ModelError,
     NoSolutionError,
     Status,
     UnknownParameterError,
@@ -57,6 +58,7 @@ class ParamMirrorTests(unittest.TestCase):
         self.assertEqual(m.getParam('Threads'), 1)
         self.assertEqual(m.getParam('MIPGap'), 0.0)
         self.assertEqual(m.getParam('HeuristicMode'), 'on')
+        self.assertEqual(m.getParam('BinaryPropagation'), 'auto')
         self.assertEqual(m.getParam('LogPeriodSecs'), 0.0)
 
     def test_mipgap_exact_readback(self):
@@ -178,6 +180,24 @@ class ParamBehaviorTests(unittest.TestCase):
         self.assertEqual(m.optimize(), Status.OPTIMAL)
         self.assertAlmostEqual(m.ObjVal, 17.0, delta=TOL)
 
+    def test_binary_propagation_modes_follow_thread_count(self):
+        m = build_hard_knapsack_12()
+        self.addCleanup(m.dispose)
+        m.setParam('BinaryPropagation', 'on')
+        self.assertEqual(m.getParam('BinaryPropagation'), 'on')
+        self.assertEqual(m.optimize(), Status.OPTIMAL)
+        self.assertAlmostEqual(m.ObjVal, 523.0, delta=TOL)
+
+        m.setParam('Threads', 2)
+        with self.assertRaises(ModelError):
+            m.optimize()
+        for value in ('auto', 'off'):
+            with self.subTest(value=value):
+                m.setParam('BinaryPropagation', value)
+                self.assertEqual(m.getParam('BinaryPropagation'), value)
+                self.assertEqual(m.optimize(), Status.OPTIMAL)
+                self.assertAlmostEqual(m.ObjVal, 523.0, delta=TOL)
+
 
 class ParamRejectionTests(unittest.TestCase):
     """非法值逐一断言异常类型（FFI 码 9 → ArgumentError；未知名 → 10）。"""
@@ -205,6 +225,14 @@ class ParamRejectionTests(unittest.TestCase):
     def test_heuristic_mode_invalid_string_raises_argument_error(self):
         with self.assertRaises(ArgumentError):
             self.m.setParam('HeuristicMode', 'fast')
+
+    def test_binary_propagation_rejected_values_preserve_mirror(self):
+        self.m.setParam('BinaryPropagation', 'off')
+        for value in ('On', 1, 'on\x00off'):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ArgumentError, 'BinaryPropagation'):
+                    self.m.setParam('BinaryPropagation', value)
+                self.assertEqual(self.m.getParam('BinaryPropagation'), 'off')
 
     def test_unknown_parameter_name_raises_unknown_parameter_error(self):
         with self.assertRaises(UnknownParameterError):

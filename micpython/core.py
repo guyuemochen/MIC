@@ -523,6 +523,7 @@ _PARAM_TYPES = {
     'Threads': int,
     'MIPGap': float,
     'HeuristicMode': str,
+    'BinaryPropagation': str,
     'LogPeriodSecs': float,
 }
 
@@ -531,6 +532,7 @@ _DEFAULT_PARAMS = {
     'Threads': 1,
     'MIPGap': 0.0,
     'HeuristicMode': 'on',
+    'BinaryPropagation': 'auto',
     'LogPeriodSecs': 0.0,
 }
 
@@ -845,11 +847,11 @@ class Model(object):
         elif name == 'Threads':
             v = _as_int(value, 'Threads')
             self._call(lib.milp_ffi_set_param_int, name_b, v)
-        else:  # HeuristicMode（'auto'/'on'/'off'，非法值交 FFI 拒绝→9）
+        else:  # 字符串参数的值域由 FFI 校验。
             if not isinstance(value, str):
-                raise ArgumentError("HeuristicMode 需为 str（'auto'/'on'/'off'），"
-                                    '收到 %r' % (value,))
-            _check_no_nul(value, "参数 HeuristicMode 的值 value")
+                raise ArgumentError("%s 需为 str（'auto'/'on'/'off'），收到 %r"
+                                    % (name, value))
+            _check_no_nul(value, "参数 %s 的值 value" % name)
             self._call(lib.milp_ffi_set_param_str, name_b, value.encode('utf-8'))
         # 仅 FFI 返回 0（_call 未抛）后到达：镜像写入原始 Python 值。
         self._params[name] = value
