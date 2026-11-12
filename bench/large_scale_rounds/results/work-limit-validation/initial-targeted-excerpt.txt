@@ -1,0 +1,35 @@
+摘录说明：下文从本任务留存的工具输出转录，只包含警告、失败断言与结果汇总，省略编译进度和通过项目逐行输出。最初的 /tmp/mic-work-limit-targeted.log 已被后续同名测试覆盖；本文件不是原始完整日志。
+命令：cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --lib work_limit -- --nocapture > /tmp/mic-work-limit-targeted.log 2>&1
+工作目录：/tmp/mic-heuristic-work-limit
+退出码：101
+源码：当时尚未提交的开发中状态；没有保存该状态的精确内容哈希，不能绑定最终通过的 0a41dde 源码。
+
+warning: method `run_phase` is never used
+    --> src/simplex_sparse.rs:4075:8
+     |
+1784 | impl SparseSimplex {
+     | ------------------ method in this implementation
+...
+4075 |     fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
+     |        ^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `milp` (lib test) generated 1 warning
+
+running 13 tests
+
+thread 'simplex_sparse::tests::work_limit_tests::bfrt_failure_before_pivot_only_charges_completed_flip' (525944) panicked at src/simplex_sparse.rs:4724:13:
+assertion failed: sp.just_refactored
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+
+failures:
+    simplex_sparse::tests::work_limit_tests::bfrt_failure_before_pivot_only_charges_completed_flip
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 404 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+
+原因与处理：测试错误地假定初始求解后 just_refactored 必为真。测试准备阶段改为显式成功执行 sp.refactor().unwrap()，再收紧界，建立故障注入要求的前置条件；没有为测试修改生产数学逻辑。run_phase 测试包装仅供 risk_pivot_refresh 使用，cfg 收紧后消除无用函数警告。之后补入纯界翻转与零预算不可伪造证明的反例，最终 14 项全部通过，见 targeted.log。
