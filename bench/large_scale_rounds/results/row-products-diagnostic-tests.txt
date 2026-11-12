@@ -1,0 +1,29 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `release` profile [optimized] target(s) in 5.26s
+     Running unittests src/lib.rs (milp/target/release/deps/milp-a45c5624a32ac746)
+
+running 3 tests
+test simplex_sparse::tests::row_products_normalized_zero_preserves_nonfinite_products ... ok
+test simplex_sparse::tests::row_products_bits_cuts_snapshot_and_gate ... ok
+test simplex_sparse::tests::row_products_solver_switch_is_bitwise_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 361 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/release/deps/milp-27fd836c032550ba)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/release/deps/acceptance-d93bca1cb17305ed)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/release/deps/warm_cold_parity-c74c7d2e2ce44793)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
