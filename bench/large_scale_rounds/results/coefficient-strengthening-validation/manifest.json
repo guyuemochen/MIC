@@ -1,0 +1,345 @@
+{
+  "schema": 1,
+  "working_directory": "/private/tmp/mic-negative-coeff",
+  "source_commit": "58449cd687f3f646b569bd09aa5e95912ea9aab4",
+  "milp_tree": "66fea9a090ba7358a2f69a8b564433ad114ff027",
+  "audit_tools_commit": "ce01a05904fdc64a59229b282ef3a28b4845b43e",
+  "reproduction": "在审计工具提交的仓库根目录执行命令。该提交与构建提交的 milp 树哈希一致。日志重定向路径位于 target 内，归档日志位于 results 内。",
+  "tests": [
+    {
+      "name": "focused",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "binary_coefficient_strengthening",
+        "--lib",
+        "binary_strengthening_tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "stdout_stderr_redirect": "milp/target/r8-validation/focused.log",
+      "log": {
+        "path": "bench/large_scale_rounds/results/coefficient-strengthening-validation/focused.log",
+        "sha256": "f0fca82fc27047c15546489229140984e25357638669b8de42b3238fe296da5f"
+      },
+      "suites": {
+        "lib": {
+          "status": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 405
+        }
+      }
+    },
+    {
+      "name": "default-debug",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--",
+        "--test-threads=1"
+      ],
+      "stdout_stderr_redirect": "milp/target/r8-validation/default-debug.log",
+      "log": {
+        "path": "bench/large_scale_rounds/results/coefficient-strengthening-validation/default-debug.log",
+        "sha256": "f65060de21a4652698def829cc137f08f24e0d094789a013f83b02b7a9fc9dac"
+      },
+      "suites": {
+        "lib": {
+          "status": "ok",
+          "passed": 401,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "cli": {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "acceptance": {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "warm_cold_parity": {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "doc": {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      }
+    },
+    {
+      "name": "candidate-debug",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "binary_coefficient_strengthening",
+        "--",
+        "--test-threads=1"
+      ],
+      "stdout_stderr_redirect": "milp/target/r8-validation/candidate-debug.log",
+      "log": {
+        "path": "bench/large_scale_rounds/results/coefficient-strengthening-validation/candidate-debug.log",
+        "sha256": "8347dfb3d2f1a49f89caedf79a3dcf4ee45c2605638d6a00c68c6d4f8fd49653"
+      },
+      "suites": {
+        "lib": {
+          "status": "ok",
+          "passed": 408,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "cli": {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "acceptance": {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "warm_cold_parity": {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        "doc": {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      }
+    },
+    {
+      "name": "default-release",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored",
+        "--test-threads=1"
+      ],
+      "stdout_stderr_redirect": "milp/target/r8-validation/default-release.log",
+      "log": {
+        "path": "bench/large_scale_rounds/results/coefficient-strengthening-validation/default-release.log",
+        "sha256": "b5866113393a7d724b2a2839374c1a3c5c88c5f4e9512ee33aa77f52942c4b2c"
+      },
+      "suites": {
+        "acceptance": {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      }
+    },
+    {
+      "name": "candidate-release",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--features",
+        "binary_coefficient_strengthening",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored",
+        "--test-threads=1"
+      ],
+      "stdout_stderr_redirect": "milp/target/r8-validation/candidate-release.log",
+      "log": {
+        "path": "bench/large_scale_rounds/results/coefficient-strengthening-validation/candidate-release.log",
+        "sha256": "c849d77972f6f287d085afa956c354b5303aa98727adc3a1148514966778ba55"
+      },
+      "suites": {
+        "acceptance": {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      }
+    }
+  ],
+  "builds": {
+    "base": {
+      "commands": [
+        [
+          "cargo",
+          "build",
+          "--manifest-path",
+          "milp/Cargo.toml",
+          "--release",
+          "--lib",
+          "--example",
+          "round_probe"
+        ],
+        [
+          "cp",
+          "milp/target/release/examples/round_probe",
+          "milp/target/r8-validation/round_probe-base"
+        ],
+        [
+          "rustc",
+          "--edition=2021",
+          "bench/large_scale_rounds/coefficient_certification_probe.rs",
+          "--extern",
+          "milp=milp/target/release/libmilp.rlib",
+          "-L",
+          "dependency=milp/target/release/deps",
+          "-O",
+          "-o",
+          "milp/target/r8-validation/certification-base"
+        ]
+      ],
+      "round_probe": {
+        "path": "milp/target/r8-validation/round_probe-base",
+        "sha256": "12412086d4c2859357152b738117c0cd729610fe875316eb354de5bdd6cdbad2"
+      },
+      "certification_probe": {
+        "path": "milp/target/r8-validation/certification-base",
+        "sha256": "32c28ce918bf9ea21901705c7f7e16360bc31186756c48d7aa18ad11c8c8f743"
+      }
+    },
+    "candidate": {
+      "commands": [
+        [
+          "cargo",
+          "build",
+          "--manifest-path",
+          "milp/Cargo.toml",
+          "--release",
+          "--lib",
+          "--example",
+          "round_probe",
+          "--features",
+          "binary_coefficient_strengthening"
+        ],
+        [
+          "cp",
+          "milp/target/release/examples/round_probe",
+          "milp/target/r8-validation/round_probe-candidate"
+        ],
+        [
+          "rustc",
+          "--edition=2021",
+          "bench/large_scale_rounds/coefficient_certification_probe.rs",
+          "--extern",
+          "milp=milp/target/release/libmilp.rlib",
+          "-L",
+          "dependency=milp/target/release/deps",
+          "-O",
+          "-o",
+          "milp/target/r8-validation/certification-candidate"
+        ]
+      ],
+      "round_probe": {
+        "path": "milp/target/r8-validation/round_probe-candidate",
+        "sha256": "b269103c55c4b60749f6d0c6c5f1023091f61ef4c9918b68cbdd421528737661"
+      },
+      "certification_probe": {
+        "path": "milp/target/r8-validation/certification-candidate",
+        "sha256": "bdade91f44c5fd281ce43c60465a2b9794de861e4db489103fec98f418d6ebe7"
+      }
+    }
+  },
+  "audit": {
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "argv": [
+      "python3",
+      "bench/large_scale_rounds/audit_coefficient_strengthening.py",
+      "--baseline",
+      "milp/target/r8-validation/round_probe-base",
+      "--candidate",
+      "milp/target/r8-validation/round_probe-candidate",
+      "--baseline-certification",
+      "milp/target/r8-validation/certification-base",
+      "--candidate-certification",
+      "milp/target/r8-validation/certification-candidate",
+      "--legacy-public-dir",
+      "/tmp/mic-rounds-public",
+      "--miplib-manifest",
+      "/tmp/mic-rounds-miplib2017/sources.json"
+    ],
+    "stdout_redirect": "milp/target/r8-validation/results.jsonl",
+    "model_count": 20,
+    "legacy_baseline": {
+      "path": "bench/large_scale_rounds/results/external-baseline.jsonl",
+      "sha256": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292"
+    },
+    "legacy_public_sources": {
+      "path": "bench/large_scale_rounds/results/public-sources.json",
+      "sha256": "66ba320c393be0692ad9145eca8de97a85b21b101314db02eb475f23afb67d8a"
+    },
+    "modern_manifest": {
+      "path": "/tmp/mic-rounds-miplib2017/sources.json",
+      "sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6"
+    },
+    "modern_manifest_archive": {
+      "path": "bench/large_scale_rounds/results/miplib2017-sources.json",
+      "sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6"
+    },
+    "result": {
+      "path": "bench/large_scale_rounds/results/coefficient-strengthening-audit.jsonl",
+      "sha256": "d051bc7a99ecb26cae18397e29c804c3d10163b6578c1af5e2b86605d5ed0bf1"
+    }
+  }
+}
