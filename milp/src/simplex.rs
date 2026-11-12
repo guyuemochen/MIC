@@ -648,8 +648,16 @@ impl Simplex {
         Ok(s)
     }
 
+    /// 读取最近一次LP调用的诊断字段，不改变任何求解状态。
+    #[cfg(feature = "proof_profile")]
+    pub(crate) fn proof_diagnostics(&self) -> crate::simplex_sparse::LpDiagnostics {
+        crate::simplex_sparse::LpDiagnostics { numerical_error:self.numerical_error.clone(),phase1_pending:Some(self.phase1_pending) }
+    }
+
     /// 两阶段冷启动求解（当前 bounds；完全忽略此前内部状态）。
     pub fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        #[cfg(feature = "proof_profile")]
+        { self.numerical_error = None; }
         self.start_call();
         if self.infeasible_flag {
             return self.build_solution(LpStatus::Infeasible);
@@ -668,6 +676,8 @@ impl Simplex {
 
     /// 热启动求解：非基双向 snap+传播 → 必要时 Phase-1 修复 → Phase-2。
     pub fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        #[cfg(feature = "proof_profile")]
+        { self.numerical_error = None; }
         self.start_call();
         if self.infeasible_flag {
             return self.build_solution(LpStatus::Infeasible);

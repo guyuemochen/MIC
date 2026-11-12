@@ -163,6 +163,8 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
     if ctrl.threads == 0 {
         return Err("线程数至少为 1".into());
     }
+    #[cfg(feature = "proof_profile")]
+    milp::proof_profile::reset(ctrl.threads);
     let start = Instant::now();
     let result = solve_controlled(problem, &opts, &ctrl, None)?;
     let elapsed = start.elapsed().as_secs_f64();
@@ -194,6 +196,11 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
         })?;
     } else {
         write!(out, "null")?;
+    }
+    #[cfg(feature = "proof_profile")]
+    {
+        write!(out, ",\"proof_profile\":")?;
+        milp::proof_profile::take().write_json(out)?;
     }
     let prop = stats.propagation;
     write!(out, ",\"prop_accepted_rows\":{},\"prop_skipped_rows\":{},\"prop_calls\":{},\"prop_row_visits\":{},\"prop_term_visits\":{},\"prop_fixes\":{},\"prop_conflicts\":{}",

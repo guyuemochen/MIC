@@ -592,8 +592,22 @@ fn sequential_bb(
         .then(|| AdaptiveState::new(HeuristicConfig::default(), ctrl.degrade));
 
     // —— 根 LP（计 1 节点）——
+    #[cfg(feature = "proof_profile")]
+    let profile_root_start = Instant::now();
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::record("context", vec![
+        ("work_variables", problem.vars.len().into()), ("work_rows", problem.constraints.len().into()),
+        ("effective_engine", match crate::simplex_sparse::effective_engine(problem,opts.lp_engine) {
+            LpEngineKind::Revised=>"revised", _=>"tableau" }.into()),
+        ("resolved_branch", match opts.branch_rule {BranchRule::MostFractional=>"most_fractional",BranchRule::Pseudocost=>"pseudocost"}.into()),
+        ("root_cuts_enabled",opts.root_cuts.into()),
+    ]);
     let mut sol = simplex.solve(&bounds);
     stats.nodes = 1;
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp("root_lp", &sol, simplex.iterations(), Some(profile_root_start.elapsed().as_secs_f64()), 0);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp_failure("root_lp",&sol,&*simplex);
 
     // 纯 LP 捷径：无整数变量 ⇒ 单次 LP 直接按其状态返回。
     if int_vars.is_empty() {
@@ -731,6 +745,10 @@ fn sequential_bb(
         simplex = new_engine(problem, tol, opts.lp_engine)?;
         simplex.set_time_deadline(time_deadline);
         sol = simplex.solve(&bounds);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp("root_restart", &sol, simplex.iterations(), None, stats.cuts);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp_failure("root_restart",&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             // 首行进度：根阶段终局汇合点（先发射再返回）。
             if let Some(h) = hooks {
@@ -769,12 +787,18 @@ fn sequential_bb(
             // 域 ⊇ 含割版本（有效割不切任何整数可行解）⇒ 回退后的完备搜索
             // 覆盖全部整数可行解，最坏等同于关割行为（不误终态、不误剪）。
             NodeAction::PruneLimit => {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::record("cut_outer_rollback_begin",vec![("discarded",applied.into()),("status",crate::proof_profile::status(st).into())]);
                 // 记账完整：重建前 Simplex 的累计迭代（根 LP + 割循环）不丢。
                 base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
                 stats.cuts = 0; // 割已随 Simplex 一起丢弃，如实清零
                 simplex = new_engine(problem, tol, opts.lp_engine)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp("cut_outer_rollback", &sol, simplex.iterations(), None, stats.cuts);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp_failure("cut_outer_rollback",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
                     // 首行进度：根阶段终局汇合点（先发射再返回）。
                     if let Some(h) = hooks {
@@ -828,6 +852,8 @@ fn sequential_bb(
                 }
                 // 取回割后的根 LP 解（记账性 resolve，不计节点）。
                 sol = simplex.resolve(&bounds);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp_failure("root_cut_final_resolve",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
                     // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
                     if let Some(h) = hooks {
@@ -855,6 +881,9 @@ fn sequential_bb(
             }
         }
     }
+
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp("root_after_cuts", &sol, base_lp_iterations.saturating_add(simplex.iterations()), None, stats.cuts);
 
     // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
     if opts.heuristics {
@@ -904,6 +933,8 @@ fn sequential_bb(
         // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
         // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。
         sol = simplex.resolve(&bounds);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp_failure("root_heuristic_restore",&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
             if let Some(h) = hooks {
@@ -1000,6 +1031,14 @@ fn sequential_bb(
     let local_cuts_on = opts.local_cuts && detect_pseudocost_favorable(problem);
 
     // 根节点按 (d)/(e)/(f) 判定（无界等已终局，此处的 Unbounded 恒为根语义）。
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::record("root_ready", vec![
+        ("inherited_lp_bound", crate::proof_profile::bound(&sol)),
+        ("incumbent", crate::proof_profile::optional(incumbent.as_ref().map(|(o,_)|*o))),
+        ("fractional_integer_count",int_vars.iter().filter(|&&j| (sol.x[j]-sol.x[j].round()).abs()>tol.integrality).count().into()),
+        ("root_rc_fixed",stats.rc_fixed.into()),
+        ("resolved_branch",match opts.branch_rule{BranchRule::MostFractional=>"most_fractional",BranchRule::Pseudocost=>"pseudocost"}.into()),
+    ]);
     let inc_before_root = incumbent.as_ref().map(|(o, _)| *o);
     branch_or_close(
         problem,
@@ -1048,6 +1087,8 @@ fn sequential_bb(
     }
 
     loop {
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::frontier(sense,stats.nodes,false,incumbent.as_ref().map(|(o,_)|*o),stack.iter().map(|p|(p.est,p.depth)));
         // —— 受控扩展（默认全关 ⇒ 与原实现逐字节一致）。①/② 仅在栈非空时
         // 参与：空栈轮次直接落到下方 pop 的自然 break（Optimal/Infeasible），
         // 杜绝 incumbent=X bound=none gap=inf 矛盾周期行——
@@ -1120,6 +1161,8 @@ fn sequential_bb(
         let Some(p) = pending else {
             break;
         };
+        #[cfg(feature = "proof_profile")]
+        let profile_node = crate::proof_profile::node(p.depth,p.var,p.tighten_lb,p.est,p.parent_lp_objective,selected.is_some());
         // W6：退出局部割作用域——弹出的 Pending 属祖先层（unwind_to 更短）
         // ⇒ 其施加点在作用域栈顶的割全部出域，恢复快照（栈序 = 深度序）。
         while let Some(&(scope_trail, _, _)) = cut_scopes.last() {
@@ -1147,6 +1190,8 @@ fn sequential_bb(
         if obj_integral || tighter_probe_bound {
             if let Some((obj, _)) = incumbent.as_ref() {
                 if bound_no_better(sense, p.est, *obj, obj_integral, opts.prune_abs, opts.prune_rel) {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"est_prune");
                     continue;
                 }
             }
@@ -1154,17 +1199,23 @@ fn sequential_bb(
         // 节点/时间上限：每次 resolve 前检查；0 = 不限。W3：budget 模式的
         // 时限语义 = 节点预算（确定性，零墙钟读点）；wall 模式照旧墙钟检查。
         if opts.node_limit != 0 && stats.nodes >= opts.node_limit {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"limit_requeued");
             stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
         }
         if let Some(cap) = budget_node_cap {
             if stats.nodes >= cap {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::node_outcome(profile_node,"limit_requeued");
                 stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
                 limit_hit = true;
                 break;
             }
         } else if opts.time_limit_ms != 0 && time_exceeded(&start, opts.time_limit_ms) {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"limit_requeued");
             stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
@@ -1191,10 +1242,14 @@ fn sequential_bb(
         // 都重施加覆盖层 ⇒ unwind 恢复旧值不丢固定（不漏）。与并行侧同口径
         //（PoolNode 快照在创建时已含分支界，弹出后仅做同一取交）。
         if !tighten_child(&mut bounds, &mut trail, p.var, p.tighten_lb, p.bound) {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"empty_or_unchanged_branch");
             continue;
         }
         if let Some(state) = rc_refix.as_ref() {
             if state.has_fixes() && !state.intersect(&mut bounds) {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::node_outcome(profile_node,"rc_conflict");
                 continue;
             }
         }
@@ -1209,8 +1264,14 @@ fn sequential_bb(
                 |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old }));
             stats.propagation = state.stats;
             match outcome {
-                PropagationOutcome::Conflict => continue,
+                PropagationOutcome::Conflict => {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"propagation_conflict");
+                    continue;
+                },
                 PropagationOutcome::Deadline => {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"propagation_deadline_requeued");
                     // 中断不是不可行证明：当前子树仍在前沿，终态必须限额退出。
                     stack.push(p);
                     limit_hit = true;
@@ -1219,9 +1280,18 @@ fn sequential_bb(
                 PropagationOutcome::Complete => {}
             }
         }
+        #[cfg(feature = "proof_profile")]
+        let profile_iterations = simplex.iterations();
         let mut sol = simplex.resolve(&bounds);
         #[cfg(test)]
         test_node_lp_interrupt::apply(p.var, p.tighten_lb, p.depth, &mut sol);
+        #[cfg(feature = "proof_profile")]
+        {
+            let iterations = simplex.iterations().saturating_sub(profile_iterations);
+            crate::proof_profile::node_lp(profile_node,&sol,iterations);
+            crate::proof_profile::lp_failure("tree_lp",&sol,&*simplex);
+            crate::proof_profile::tree_lp(&sol,sense,p.est,p.depth,iterations);
+        }
         stats.nodes += 1;
         // 伪代价观测：子节点 LP 目标相对父 LP 目标的方向化增益 ÷ 方向分数
         // 距离（非 Optimal 子节点不记——不可行=无穷增益语义留空，保守）。
@@ -1361,6 +1431,9 @@ fn sequential_bb(
             incumbent.as_ref().map(|(o, _)| *o),
         );
     }
+
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::frontier(sense,stats.nodes,true,incumbent.as_ref().map(|(o,_)|*o),stack.iter().map(|p|(p.est,p.depth)));
 
     // —— 终态判定（与上限诚实性整合，禁止字面分裂）：gap 达标与上限触发
     // 一律 LimitReached（诚实：未证明最优），粘滞标记优先于完备判定——
@@ -2242,6 +2315,8 @@ pub(crate) fn probe_reliability(
     if opts.pc_reliability_probes == 0 || depth > PC_PROBE_MAX_DEPTH {
         return Vec::new();
     }
+    #[cfg(feature = "proof_profile")]
+    let _profile_scope = crate::proof_profile::ProbeScope::new(depth);
     // 分数候选（与 Pseudocosts::select 同口径过滤）中的低观测者。
     let mut candidates: Vec<(usize, f64, f64)> = Vec::new(); // (var, LP 值, 得分)
     for &j in int_vars {
@@ -2332,7 +2407,13 @@ fn probe_one(
     } else {
         bounds.ub[j] = bound;
     }
+    #[cfg(feature = "proof_profile")]
+    let profile_start = (Instant::now(),simplex.iterations());
     let res = simplex.resolve(bounds);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::probe(&res,sense,est,simplex.iterations().saturating_sub(profile_start.1),profile_start.0.elapsed().as_secs_f64(),j);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp_failure("strong_branch_probe",&res,simplex);
     if res.status == LpStatus::Optimal {
         // 与主循环子节点被动观测完全同口径的方向化增益 ÷ 分数距离。
         let gain = match sense {
@@ -2462,6 +2543,8 @@ fn branch_or_close(
     // 分支选择前对低观测候选做 down+up 双向探测，为本地伪代价统计供应
     // 可靠初值。探测只读 LP 界并精确恢复（见 probe_reliability 正确性
     // 论证）——不记节点、不动 incumbent；试验只复用同一父域内的证明。
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::clear_probed();
     let evidence = if opts.branch_rule == BranchRule::Pseudocost {
         probe_reliability(
             problem.sense,
@@ -2487,6 +2570,8 @@ fn branch_or_close(
     let Some((var, val)) = selected else {
         return;
     };
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::chosen(depth,var,pc.n_obs(var));
     let floor = val.floor();
     let frac = val - floor;
     let unwind_to = trail.len();

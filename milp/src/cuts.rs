@@ -2318,7 +2318,20 @@ pub fn cut_loop_recorded<E: LpEngine>(
     // lifting 全程预算：根割循环一次配给，跨轮共享（耗尽即全程关闭提升）。
     let mut lift_budget = LiftBudget::new();
     // 防御性同步：确保表格与 bounds 一致且为 Optimal。
-    let mut status = s.resolve(bounds).status;
+    #[cfg(feature = "proof_profile")]
+    let mut profile_bound: Option<f64>;
+    #[cfg(feature = "proof_profile")]
+    let profile_initial_iterations = s.iterations();
+    let mut status = {
+        let result = s.resolve(bounds);
+        #[cfg(feature = "proof_profile")]
+        {
+            crate::proof_profile::lp_failure("cut_entry",&result,s);
+            profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
+            crate::proof_profile::lp("cut_entry",&result,s.iterations().saturating_sub(profile_initial_iterations),None,0);
+        }
+        result.status
+    };
     if status != LpStatus::Optimal {
         return Ok((0, status, recorded));
     }
@@ -2382,13 +2395,23 @@ pub fn cut_loop_recorded<E: LpEngine>(
         //（截断额度只花在过闸存活者上）。被闸丢弃的割不进入 add_row/
         // ledger/recorded——ledger 记账与 worker 按序重放始终与实际施加行
         // 逐字节一致。
+        #[cfg(feature = "proof_profile")]
+        let profile_generated = batch.len();
         batch = batch
             .into_iter()
             .filter_map(|cut| sanitize_cut(cut, bounds, x_bar.as_deref(), opts))
             .collect();
+        #[cfg(feature = "proof_profile")]
+        let profile_sanitized = batch.len();
         if batch.len() > opts.max_cuts_per_round {
             batch.truncate(opts.max_cuts_per_round);
         }
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::record("cut_round",vec![
+            ("round",(_round as u64).into()),("entry_bound",crate::proof_profile::optional(profile_bound)),
+            ("generated",profile_generated.into()),("sanitize_survived",profile_sanitized.into()),
+            ("truncated",profile_sanitized.saturating_sub(batch.len()).into()),("planned",batch.len().into()),
+        ]);
         if batch.is_empty() {
             break;
         }
@@ -2437,7 +2460,25 @@ pub fn cut_loop_recorded<E: LpEngine>(
             s.set_iter_limit_hint(Some(
                 3_000u64.max(12u64.saturating_mul((m_now + n_now) as u64)),
             ));
-            status = s.resolve(bounds).status;
+            #[cfg(feature = "proof_profile")]
+            let profile_chunk_iterations = s.iterations();
+            status = {
+                let result = s.resolve(bounds);
+                #[cfg(all(test, feature = "proof_profile"))]
+                let result = crate::proof_profile::test_cut_result(result,1);
+                #[cfg(feature = "proof_profile")]
+                {
+                    crate::proof_profile::lp_failure("cut_chunk",&result,s);
+                    profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
+                    crate::proof_profile::record("cut_chunk",vec![
+                        ("round",(_round as u64).into()),("chunk_start",chunk_start.into()),("attempted",(chunk_end-chunk_start).into()),
+                        ("applied_before",applied_before.into()),("status",crate::proof_profile::status(result.status).into()),
+                        ("bound",crate::proof_profile::bound(&result)),("iterations",s.iterations().saturating_sub(profile_chunk_iterations).into()),
+                        ("committed_optimal",(result.status==LpStatus::Optimal).into()),("rolled_back",(result.status==LpStatus::IterationLimit).into()),
+                    ]);
+                }
+                result.status
+            };
             s.set_iter_limit_hint(None);
             if status == LpStatus::Infeasible {
                 // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
@@ -2470,7 +2511,23 @@ pub fn cut_loop_recorded<E: LpEngine>(
                 for rec in ledger.iter() {
                     rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
                 }
-                let st = rebuilt.resolve(bounds).status;
+                #[cfg(feature = "proof_profile")]
+                let profile_rebuild_iterations = rebuilt.iterations();
+                let st = {
+                    let result = rebuilt.resolve(bounds);
+                    #[cfg(all(test, feature = "proof_profile"))]
+                    let result = crate::proof_profile::test_cut_result(result,2);
+                    #[cfg(feature = "proof_profile")]
+                    {
+                        crate::proof_profile::lp_failure("cut_rollback",&result,&rebuilt);
+                        crate::proof_profile::record("cut_rollback",vec![
+                            ("round",(_round as u64).into()),("discarded",(chunk_end-chunk_start).into()),
+                            ("retained_cuts",applied.into()),("status",crate::proof_profile::status(result.status).into()),
+                            ("bound",crate::proof_profile::bound(&result)),("iterations",rebuilt.iterations().saturating_sub(profile_rebuild_iterations).into()),
+                        ]);
+                    }
+                    result.status
+                };
                 *s = rebuilt;
                 status = st;
                 break 'rounds;

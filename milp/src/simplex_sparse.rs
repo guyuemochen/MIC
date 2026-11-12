@@ -236,12 +236,25 @@ pub fn effective_engine(problem: &Problem, kind: LpEngineKind) -> LpEngineKind {
     }
 }
 
+/// 特性开启时可读取的LP失败原因；缺失值只表示未知。
+#[cfg(feature = "proof_profile")]
+#[derive(Clone, Debug, Default)]
+pub struct LpDiagnostics {
+    /// 最近一次solve/resolve产生的数值错误；None不推断为纯迭代上限。
+    pub numerical_error: Option<String>,
+    /// 两阶段可行性修复是否尚未完成；未知实现返回None。
+    pub phase1_pending: Option<bool>,
+}
+
 /// LP 引擎统一接口：branch_bound / cuts / heuristics 的全部消费面。
 ///
 /// 对 [`Simplex`]（稠密）与 [`SparseSimplex`]（本模块）各有一份实现；
 /// B&B 持有 `Box<dyn LpEngine>`（W6 局部割的子树作用域快照经
 /// [`LpEngine::snapshot`]——Clone 的对象安全等价物）。
 pub trait LpEngine {
+    /// 只读诊断；没有实现的引擎返回未知，不参与求解决策。
+    #[cfg(feature = "proof_profile")]
+    fn proof_diagnostics(&self) -> LpDiagnostics { LpDiagnostics::default() }
     /// 两阶段冷启动求解（忽略此前内部状态）。
     fn solve(&mut self, bounds: &Bounds) -> LpSolution;
     /// 热启动求解（界变化 snap+传播 → 对偶修复快路径或整基重建 → 收尾；
@@ -315,6 +328,8 @@ pub fn new_engine(
 /// Box 透传实现（`&Box<dyn LpEngine>` → `&dyn LpEngine` 的去尺寸胁迫与
 /// 泛型 `E = Box<dyn LpEngine>` 的整箱替换 `*s = rebuilt` 都需要它）。
 impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
+    #[cfg(feature = "proof_profile")]
+    fn proof_diagnostics(&self) -> LpDiagnostics { (**self).proof_diagnostics() }
     fn solve(&mut self, bounds: &Bounds) -> LpSolution {
         (**self).solve(bounds)
     }
@@ -368,6 +383,8 @@ impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
 /// 稠密引擎的 trait 实现（方法名与固有方法同名：固有方法解析优先，
 /// 委托即一行）。
 impl LpEngine for Simplex {
+    #[cfg(feature = "proof_profile")]
+    fn proof_diagnostics(&self) -> LpDiagnostics { Simplex::proof_diagnostics(self) }
     fn solve(&mut self, bounds: &Bounds) -> LpSolution {
         self.solve(bounds)
     }
@@ -1565,6 +1582,8 @@ impl SparseSimplex {
 
     /// 两阶段冷启动求解（standalone：每次调用整基重建，忽略此前状态）。
     pub fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        #[cfg(feature = "proof_profile")]
+        { self.numerical_error = None; }
         self.start_call();
         if self.infeasible_flag {
             return self.build_solution(LpStatus::Infeasible);
@@ -1592,6 +1611,8 @@ impl SparseSimplex {
     /// 界；FTRAN/BTRAN 即时现算）；任何异常 GiveUp 回退 b)；
     /// b) 整基重建 + Phase-1（冷路径，语义与 simplex.rs 完全一致）。
     pub fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        #[cfg(feature = "proof_profile")]
+        { self.numerical_error = None; }
         self.start_call();
         if self.infeasible_flag {
             return self.build_solution(LpStatus::Infeasible);
@@ -3599,6 +3620,10 @@ impl SparseSimplex {
 
 /// 稀疏引擎的 trait 实现（方法名与固有方法同名：固有方法解析优先）。
 impl LpEngine for SparseSimplex {
+    #[cfg(feature = "proof_profile")]
+    fn proof_diagnostics(&self) -> LpDiagnostics {
+        LpDiagnostics { numerical_error:self.numerical_error.clone(),phase1_pending:Some(self.phase1_pending) }
+    }
     fn solve(&mut self, bounds: &Bounds) -> LpSolution {
         self.solve(bounds)
     }

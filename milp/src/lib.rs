@@ -44,3 +44,6 @@ pub mod scaling;
 pub mod simplex_sparse;
 
 mod binary_propagation;
+
+#[cfg(feature = "proof_profile")]
+pub mod proof_profile;
