@@ -63,17 +63,18 @@
 //!   ≤ inc−1）。此时 (d) 的有效剪枝界取整数 cutoff（inc+1−ε，ε=1e-6·(1+|inc|)
 //!   工程余量，见 [`effective_prune_bound`] 契约）与用户容差
 //!   prune_abs/prune_rel 的更激进者；同一门控下主循环弹出陈旧前沿
-//!   （父节点 LP 目标 est 已不优于有效剪枝界）直接跳过——不 resolve、
+//!   （子树有效界 est 已不优于有效剪枝界）直接跳过——不 resolve、
 //!   不计 nodes、不耗 node_limit（并行侧同口径：池弹出后、reserve 之前）。
-//!   非整数目标（连续变量入目标 / 分数系数 / 分数 offset）机制性零影响。
+//!   非整数目标不使用整数 cutoff；顺序证据复用仅对实际加强的子界按普通
+//!   容差弹出剪枝，无加强证据时保持原路径。
 //!
 //! # 受控扩展（默认全关 ⇒ 与原实现逐字节一致）
 //! [`branch_and_bound_controlled`] 经 [`SearchControl`]（threads / mipgap /
 //! adaptive_heuristics / log_period_secs）与 [`SearchHooks`]（进度回调）注入
 //! 新能力，既有 [`branch_and_bound`] 签名与行为完全不变：
-//! - 顺序路径（threads ≤ 1）全部改动门控：`Pending.est`（压栈时父节点 LP
-//!   目标）仅在整数目标门控下参与陈旧前沿弹出剪枝（见实现说明），否则为
-//!   纯数据不参与决策；首行进度在根阶段结束的汇合点发射（含纯 LP
+//! - 顺序路径（threads ≤ 1）全部改动门控：`Pending.est` 缺省继承父 LP
+//!   目标，证据复用试验可收紧为已证子界；整数目标或子界实际加强时参与
+//!   前沿弹出剪枝（见实现说明）。首行进度在根阶段结束的汇合点发射（含纯 LP
 //!   捷径与根终局，先发射再返回）；主循环每轮顶部（pop 之前）仅在栈非空时
 //!   ①发射周期行（bound = est 聚合，gap 经 [`crate::search_ctrl::gap_percent`]
 //!   clamp ≥ 0）与 ②做 mipgap 判定（达标即粘滞跳出并记触发时刻证据）；
@@ -170,6 +171,9 @@ pub struct BbOptions {
     /// 节点/迭代计、绝不按墙钟（确定性；深度 > 8 的节点不探测；根节点
     /// 按探测日程全量冷启动，见 [`probe_reliability`]）。
     pub pc_reliability_probes: usize,
+    /// 试验：复用当前节点强分支中最终选中变量的已证不可行方向与子节点界。
+    /// 默认 false；仅顺序路径。证据不跨节点/局部割作用域缓存，不复用 LP 解或基。
+    pub reuse_probe_evidence: bool,
     /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
     /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
     /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
@@ -248,6 +252,7 @@ impl Default for BbOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            reuse_probe_evidence: false,
             mitm_windows: 8,
             global_work_stack: false,
             work_stack_auto: true,
@@ -460,6 +465,9 @@ pub fn branch_and_bound_controlled(
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
+    if opts.reuse_probe_evidence && ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
+    }
     if opts.node_rule == NodeRule::HybridBestBound && (opts.local_cuts || ctrl.threads != 1) {
         return Err(MilpError::InvalidModel("混合节点策略仅支持单线程且 local_cuts=false".to_string()));
     }
@@ -1079,13 +1087,19 @@ fn sequential_bb(
                 break;
             }
         }
-        // est 弹出剪枝（仅整数目标启用，与 cutoff 同门控）：父节点 LP 目标
-        // est 已不优于 incumbent 的有效剪枝界 ⇒ 该子树不可能再出严格更优解，
+        // est 弹出剪枝（整数目标或探测子界实际加强）：子树有效界已不优于
+        // incumbent 的剪枝界 ⇒ 该子树不可能再出严格更优解，
         // 直接丢弃——不 unwind/tighten、不 resolve、不计 stats.nodes、不耗
         // node_limit（est 是子树最优值的方向性乐观界，判定与 (d) 同口径）。
-        if obj_integral {
+        // 非整数目标只消费真正加强的探测证据；无探测或界未加强时不引入
+        // 一般父界提前剪枝，使开关的测量收益只来自证据复用。
+        let tighter_probe_bound = opts.reuse_probe_evidence && match sense {
+            Sense::Maximize => p.est < p.parent_lp_objective,
+            Sense::Minimize => p.est > p.parent_lp_objective,
+        };
+        if obj_integral || tighter_probe_bound {
             if let Some((obj, _)) = incumbent.as_ref() {
-                if bound_no_better(sense, p.est, *obj, true, opts.prune_abs, opts.prune_rel) {
+                if bound_no_better(sense, p.est, *obj, obj_integral, opts.prune_abs, opts.prune_rel) {
                     continue;
                 }
             }
@@ -1139,12 +1153,12 @@ fn sequential_bb(
         }
         let mut sol = simplex.resolve(&bounds);
         stats.nodes += 1;
-        // 伪代价观测：子节点 LP 目标相对父 est 的方向化增益 ÷ 方向分数
+        // 伪代价观测：子节点 LP 目标相对父 LP 目标的方向化增益 ÷ 方向分数
         // 距离（非 Optimal 子节点不记——不可行=无穷增益语义留空，保守）。
         if opts.branch_rule == BranchRule::Pseudocost && sol.status == LpStatus::Optimal {
             let gain = match sense {
-                Sense::Maximize => p.est - sol.objective,
-                Sense::Minimize => sol.objective - p.est,
+                Sense::Maximize => p.parent_lp_objective - sol.objective,
+                Sense::Minimize => sol.objective - p.parent_lp_objective,
             };
             if gain.is_finite() && gain > 0.0 && p.frac_dir > tol.integrality {
                 pc.record(p.var, p.tighten_lb, gain / p.frac_dir);
@@ -2006,12 +2020,11 @@ struct Pending {
     bound: f64,
     /// 应用本决策前 trail 应回到的长度（即父路径的 trail 状态）。
     unwind_to: usize,
-    /// 压栈时父节点 LP 目标（该子树最优值的上界估计）。整数目标门控开启时
-    /// 参与陈旧前沿弹出剪枝（est 不优于有效剪枝界 ⇒ 弹出即弃，见主循环）；
-    /// 否则为纯数据，仅供受控口径（对偶界聚合
-    /// [`crate::search_ctrl::aggregate_bound`] / gap 判定 / 进度行）读取；
-    /// 伪代价分支也用它记录子节点增益。
+    /// 该子树的有效 LP 界：缺省继承父目标，试验可收紧为当前父域中已证的
+    /// 强分支子界。它只供前沿定界/剪枝，不能冒充该节点已经完成 LP 求解。
     est: f64,
+    /// 伪代价观测的父 LP 目标，不能被更紧的子节点 est 替代。
+    parent_lp_objective: f64,
     /// 该方向距被违反界的分数距离（下行 = x_j−⌊x_j⌋；上行 = ⌈x_j⌉−x_j），
     /// 伪代价观测用。非伪代价规则下不读。
     frac_dir: f64,
@@ -2080,6 +2093,45 @@ const PC_PROBE_MAX_DEPTH: usize = 8;
 /// 全树统计可靠；上限防止大实例（数百分数变量）根探测白烧。
 const PC_ROOT_PROBE_MAX_CANDIDATES: usize = 64;
 
+/// 单个强分支方向的证明信息。只有求解器明确证到最优/不可行才有证据；
+/// 迭代/时间上限、非有限目标、无界等异常均为 Unknown，绝不据此剪枝。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ProbeProof {
+    Unknown,
+    Infeasible,
+    OptimalBound(f64),
+}
+
+impl ProbeProof {
+    fn from_solution(sol: &LpSolution) -> Self {
+        match sol.status {
+            LpStatus::Infeasible => Self::Infeasible,
+            LpStatus::Optimal if sol.objective.is_finite() => Self::OptimalBound(sol.objective),
+            _ => Self::Unknown,
+        }
+    }
+
+    /// None 只表示该方向已经证明不可行；无证据时保留父界，不跳过节点 LP。
+    fn child_bound(self, sense: Sense, parent_bound: f64) -> Option<f64> {
+        match self {
+            Self::Infeasible => None,
+            Self::Unknown => Some(parent_bound),
+            Self::OptimalBound(bound) => Some(match sense {
+                Sense::Maximize => parent_bound.min(bound),
+                Sense::Minimize => parent_bound.max(bound),
+            }),
+        }
+    }
+}
+
+/// 证据只属于本次调用的父域和局部割集合；由 branch_or_close 立即消费，
+/// 不写入跨节点缓存。未选中变量的证据丢弃，不擅自修改其它方向的域。
+pub(crate) struct ProbeCandidate {
+    var: usize,
+    down: ProbeProof,
+    up: ProbeProof,
+}
+
 /// P1-4 可靠性强分支冷启动：对 `n_obs < η` 的分数候选（按当前伪代价得分
 /// 降序、并列最小下标——先探测规则认为最值得分支的变量）做 down+up 双向
 /// 探测：收紧分支界 → resolve → 按主循环子节点同口径 `pc.record` → 恢复
@@ -2099,8 +2151,10 @@ const PC_ROOT_PROBE_MAX_CANDIDATES: usize = 64;
 /// 正确性论证：探测只读取候选子节点的 LP 目标并精确恢复原界——不剪枝、
 /// 不更新 incumbent、不写 trail（界修改直接改写并逐条恢复，trail 长度
 /// 不变）⇒ 本节点的 (d)/(e) 判定与分支决策仍在原 LP 解 `sol` 上进行，
-/// 两分支域划分完备性不受影响，搜索完整性不变。非 Optimal 探测结果不记
-/// （与主循环子节点被动观测同口径：不可行 = 无穷增益语义留空，保守）。
+/// 两分支域划分完备性不受影响。伪代价仍只记录 Optimal 的正增益；试验
+/// 开关额外返回当前父域内已证的子界/不可行性，只允许用于同次调用选中的
+/// 两个子分支。局部割在该父域全体整数解上有效，所以证据对子树有效，
+/// 但不得外推给父域之外的兄弟子树。开关关闭不分配证据存储。
 pub(crate) fn probe_reliability(
     sense: Sense,
     bounds: &mut Bounds,
@@ -2112,9 +2166,9 @@ pub(crate) fn probe_reliability(
     pc: &mut Pseudocosts,
     simplex: &mut dyn LpEngine,
     depth: usize,
-) {
+) -> Vec<ProbeCandidate> {
     if opts.pc_reliability_probes == 0 || depth > PC_PROBE_MAX_DEPTH {
-        return;
+        return Vec::new();
     }
     // 分数候选（与 Pseudocosts::select 同口径过滤）中的低观测者。
     let mut candidates: Vec<(usize, f64, f64)> = Vec::new(); // (var, LP 值, 得分)
@@ -2146,6 +2200,7 @@ pub(crate) fn probe_reliability(
     } else {
         opts.pc_reliability_probes
     };
+    let mut evidence = Vec::new();
     for &(j, v, _) in &candidates {
         if budget < 2 {
             break; // 一个候选需 down+up 两次 resolve（方向对称成对探测）
@@ -2153,8 +2208,9 @@ pub(crate) fn probe_reliability(
         let floor = v.floor();
         let frac = v - floor;
         // down：ub → ⌊x⌋（frac_dir = f）；up：lb → ⌊x⌋+1（frac_dir = 1−f）。
-        budget -= probe_one(sense, bounds, simplex, j, false, floor, est, frac, pc, tol);
-        budget -= probe_one(
+        let (down_calls, down) = probe_one(sense, bounds, simplex, j, false, floor, est, frac, pc, tol);
+        budget -= down_calls;
+        let (up_calls, up) = probe_one(
             sense,
             bounds,
             simplex,
@@ -2166,12 +2222,17 @@ pub(crate) fn probe_reliability(
             pc,
             tol,
         );
+        budget -= up_calls;
+        if opts.reuse_probe_evidence {
+            evidence.push(ProbeCandidate { var: j, down, up });
+        }
     }
+    evidence
 }
 
 /// 单方向探测：收紧 → resolve →（Optimal 且严格正增益时）按方向记账 →
-/// 恢复原界。返回实际发生的 resolve 次数（0 = 分支界相对当前界无收缩/
-/// 区间空——与 [`tighten_child`] 同判定，跳过）。
+/// 恢复原界。返回实际发生的 resolve 次数与证明信息（0 = 分支界相对当前界
+/// 无收缩/区间空——与 [`tighten_child`] 同判定，保守返回 Unknown）。
 fn probe_one(
     sense: Sense,
     bounds: &mut Bounds,
@@ -2183,7 +2244,7 @@ fn probe_one(
     frac_dir: f64,
     pc: &mut Pseudocosts,
     tol: Tolerances,
-) -> usize {
+) -> (usize, ProbeProof) {
     // 与 tighten_child 同判定的可应用性（严格收缩且新区间非空）。
     let applicable = if tighten_lb {
         bound > bounds.lb[j] && bound <= bounds.ub[j]
@@ -2191,7 +2252,7 @@ fn probe_one(
         bound < bounds.ub[j] && bound >= bounds.lb[j]
     };
     if !applicable {
-        return 0;
+        return (0, ProbeProof::Unknown);
     }
     let old = if tighten_lb { bounds.lb[j] } else { bounds.ub[j] };
     if tighten_lb {
@@ -2216,7 +2277,7 @@ fn probe_one(
     } else {
         bounds.ub[j] = old;
     }
-    1
+    (1, ProbeProof::from_solution(&res))
 }
 
 // ===========================================================================
@@ -2328,8 +2389,8 @@ fn branch_or_close(
     // P1-4 可靠性强分支冷启动（仅 Pseudocost 且预算 > 0 时有实际动作）：
     // 分支选择前对低观测候选做 down+up 双向探测，为本地伪代价统计供应
     // 可靠初值。探测只读 LP 界并精确恢复（见 probe_reliability 正确性
-    // 论证）——不剪枝、不记节点、不动 incumbent，搜索完整性不变。
-    if opts.branch_rule == BranchRule::Pseudocost {
+    // 论证）——不记节点、不动 incumbent；试验只复用同一父域内的证明。
+    let evidence = if opts.branch_rule == BranchRule::Pseudocost {
         probe_reliability(
             problem.sense,
             bounds,
@@ -2341,8 +2402,10 @@ fn branch_or_close(
             pc,
             simplex,
             depth as usize,
-        );
-    }
+        )
+    } else {
+        Vec::new()
+    };
     // 分支：按规则选变量（MostFractional / Pseudocost）；无可分支变量为
     // 内部不可达防御（不剪枝即丢弃节点）。
     let selected = match opts.branch_rule {
@@ -2363,36 +2426,48 @@ fn branch_or_close(
     // 域划分的完备性，DFS 全覆盖不变。
     let explore_up_first = pc.n_obs(var) > 0
         && pc.est_gain(var, true, 1.0 - frac) < pc.est_gain(var, false, frac);
-    // est = 压栈时父节点 LP 目标；frac_dir = 该方向距界的分数距离
-    // （伪代价观测用）。
+    // 只消费本次探测、最终分支变量的证据。它是在当前父域和当前局部割下
+    // 证明的，因此只属于这两个孩子；未选变量和后续兄弟节点不能借用。
+    let proof = evidence.iter().find(|entry| entry.var == var);
+    let up_bound = proof.map_or(ProbeProof::Unknown, |entry| entry.up)
+        .child_bound(problem.sense, sol.objective);
+    let down_bound = proof.map_or(ProbeProof::Unknown, |entry| entry.down)
+        .child_bound(problem.sense, sol.objective);
+    if up_bound.is_none() && down_bound.is_none() {
+        return; // 两侧均有不可行证明，当前整数子树关闭。
+    }
+    // est 仅保存有效界；即使探测已解 LP，也不复用其解/基或整数性结论。
+    // parent_lp_objective 始终保留真正父目标，伪代价不能拿收紧后的子界作基准。
     let parent_bounds = (opts.node_rule == NodeRule::HybridBestBound)
         .then(|| Rc::new(DomainSnapshot::capture(bounds, parent_domain)));
-    let up = Pending {
+    let up = up_bound.map(|est| Pending {
         parent_bounds: parent_bounds.clone(),
         depth: depth + 1,
         var,
         tighten_lb: true,
         bound: floor + 1.0,
         unwind_to,
-        est: sol.objective,
+        est,
+        parent_lp_objective: sol.objective,
         frac_dir: 1.0 - frac,
-    };
-    let down = Pending {
+    });
+    let down = down_bound.map(|est| Pending {
         parent_bounds,
         depth: depth + 1,
         var,
         tighten_lb: false,
         bound: floor,
         unwind_to,
-        est: sol.objective,
+        est,
+        parent_lp_objective: sol.objective,
         frac_dir: frac,
-    };
+    });
     if explore_up_first {
-        stack.push(down);
-        stack.push(up); // 后压 ⇒ 先弹出探索
+        stack.extend(down);
+        stack.extend(up); // 后压 ⇒ 先弹出探索
     } else {
-        stack.push(up); // 现序：上行先压（后弹出）、下行先探索
-        stack.push(down);
+        stack.extend(up); // 现序：上行先压（后弹出）、下行先探索
+        stack.extend(down);
     }
 }
 
@@ -2534,7 +2609,7 @@ fn finish(
 // ===========================================================================
 
 /// 首行进度的 bound 口径：栈非空 ⇒ 剩余聚合（每个开放子树的最优值不会优于
-/// 其压栈时的父节点 LP 目标 est）；栈空且已有 incumbent ⇒ 搜索事实上完备，
+/// 其有效界 est，证据复用可将父 LP 目标收紧为子界）；栈空且已有 incumbent ⇒ 搜索事实上完备，
 /// bound = incumbent（gap=0）。
 fn frontier_bound(sense: Sense, stack: &[Pending], incumbent: Option<f64>) -> Option<f64> {
     aggregate_bound(sense, stack.iter().map(|p| p.est)).or(incumbent)
@@ -4621,6 +4696,339 @@ mod tests {
             9,
         );
         assert_eq!(pc2.n_obs(0), 0, "深度 9 > 8 ⇒ 不探测");
+    }
+
+    fn probe_evidence_options(engine: LpEngineKind) -> BbOptions {
+        BbOptions {
+            branch_rule: BranchRule::Pseudocost,
+            branch_rule_auto: false,
+            reuse_probe_evidence: true,
+            root_cuts: false,
+            local_cuts: false,
+            root_rc_fixing: false,
+            heuristics: false,
+            lp_engine: engine,
+            ..BbOptions::default()
+        }
+    }
+
+    /// 用真实引擎经过完整分支入口，检查证据消费后的前沿，避免只测辅助函数。
+    fn probe_evidence_children(
+        p: &Problem,
+        bounds: &mut Bounds,
+        sol: &LpSolution,
+        engine: &mut dyn LpEngine,
+        opts: &BbOptions,
+    ) -> Vec<Pending> {
+        let mut stack = Vec::new();
+        let mut trail = Vec::new();
+        let mut incumbent = None;
+        let mut pc = Pseudocosts::new(p.vars.len());
+        branch_or_close(
+            p, &p.integer_vars(), bounds, sol, tol(), opts, objective_is_integral(p),
+            &mut incumbent, &mut stack, &mut trail, engine, 1, 0.0, None,
+            &mut pc, None, None, 0,
+        );
+        stack
+    }
+
+    #[test]
+    fn probe_evidence_child_bounds_keep_parent_observation_and_limit_semantics() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut p = Problem::new("探测子界", sense);
+                p.add_var("a", VarType::Binary).unwrap();
+                p.add_var("b", VarType::Binary).unwrap();
+                // 非整数常数同时覆盖关闭整数目标剪枝时的前沿定界。
+                p.set_objective(vec![(0, sign * 10.0), (1, sign * 7.0)], 0.25).unwrap();
+                p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0).unwrap();
+                let opts = probe_evidence_options(kind);
+                let mut engine = new_engine(&p, tol(), kind).unwrap();
+                let mut bounds = Bounds::from_problem(&p);
+                let sol = engine.solve(&bounds);
+                assert_eq!(sol.status, LpStatus::Optimal);
+                assert_close(sol.objective, sign * 15.0 + 0.25);
+                let before = bounds.clone();
+                let pending = probe_evidence_children(&p, &mut bounds, &sol, &mut *engine, &opts);
+                assert_eq!(pending.len(), 2);
+                for node in &pending {
+                    assert_eq!(node.var, 0);
+                    assert_close(node.parent_lp_objective, sol.objective);
+                    let child_value = if node.tighten_lb { 44.0 / 3.0 } else { 7.0 };
+                    assert_close(node.est, sign * child_value + 0.25);
+                }
+                assert_eq!(bounds.lb, before.lb);
+                assert_eq!(bounds.ub, before.ub);
+                let limited = branch_and_bound(&p, &BbOptions { node_limit: 1, ..opts }, tol()).unwrap();
+                assert_eq!(limited.status, SolveStatus::LimitReached,
+                    "探测获得界不等于已经完成节点整数解与最优性判定");
+                assert!(limited.best_values.is_none());
+                assert_close(limited.bound.unwrap(), sign * (44.0 / 3.0) + 0.25);
+                let full = branch_and_bound(&p, &opts, tol()).unwrap();
+                assert_eq!(full.status, SolveStatus::Optimal);
+                assert_close(full.best_objective.unwrap(), sign * 10.0 + 0.25);
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_proved_infeasible_directions_close_without_extra_nodes() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let mut p = Problem::new("双向不可行证明", sense);
+                p.add_var("x", VarType::Integer).unwrap();
+                p.set_var_bounds(0, 0.0, 5.0).unwrap();
+                p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+                p.add_constraint(None, vec![(0, 1.0)], RelOp::Ge, 2.5).unwrap();
+                p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 2.6).unwrap();
+                let opts = probe_evidence_options(kind);
+                let off = branch_and_bound(&p, &BbOptions { reuse_probe_evidence: false, ..opts }, tol()).unwrap();
+                let on = branch_and_bound(&p, &opts, tol()).unwrap();
+                assert_eq!(off.status, SolveStatus::Infeasible);
+                assert_eq!(on.status, SolveStatus::Infeasible);
+                assert_eq!(off.stats.nodes, 3);
+                assert_eq!(on.stats.nodes, 1);
+                assert!(on.best_values.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_uses_selected_variable_instead_of_first_probe() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut p = Problem::new("选中变量与首探测不同", Sense::Maximize);
+            p.add_var("x", VarType::Binary).unwrap();
+            p.add_var("y", VarType::Binary).unwrap();
+            p.set_objective(vec![(0, 1.0), (1, 10.0)], 0.0).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+            let opts = probe_evidence_options(kind);
+            let mut engine = new_engine(&p, tol(), kind).unwrap();
+            let mut bounds = Bounds::from_problem(&p);
+            let sol = engine.solve(&bounds);
+            assert_eq!(sol.status, LpStatus::Optimal);
+            assert_close(sol.objective, 5.5);
+            // 两变量初始同分，先探测x；正增益更新后y得分更高，实际选y。
+            let mut pc = Pseudocosts::new(2);
+            let evidence = probe_reliability(p.sense, &mut bounds, &p.integer_vars(), &sol.x,
+                sol.objective, tol(), &opts, &mut pc, &mut *engine, 0);
+            assert_eq!(evidence[0].var, 0);
+            assert_eq!(pc.select(&p.integer_vars(), &sol.x, tol().integrality).unwrap().0, 1);
+            let nodes = probe_evidence_children(&p, &mut bounds, &sol, &mut *engine, &opts);
+            assert_eq!(nodes.len(), 1, "仅选中变量y的不可行上支被消去");
+            assert_eq!(nodes[0].var, 1);
+            assert!(!nodes[0].tighten_lb);
+            assert_close(nodes[0].est, 0.5);
+            assert_close(nodes[0].parent_lp_objective, 5.5);
+            assert_eq!(bounds.lb, vec![0.0, 0.0]);
+            assert_eq!(bounds.ub, vec![1.0, 1.0], "未选变量x的证据不能偷偷改变父域");
+        }
+    }
+
+    #[test]
+    fn probe_evidence_limits_and_nonfinite_results_never_close_a_direction() {
+        for status in [LpStatus::IterationLimit, LpStatus::TimeLimit, LpStatus::Unbounded] {
+            for objective in [f64::NAN, f64::INFINITY, -123.0, 123.0] {
+                let sol = LpSolution { status, objective, x: Vec::new(), duals: Vec::new() };
+                let proof = ProbeProof::from_solution(&sol);
+                assert_eq!(proof, ProbeProof::Unknown);
+                for sense in [Sense::Maximize, Sense::Minimize] {
+                    assert_eq!(proof.child_bound(sense, 17.0), Some(17.0));
+                }
+            }
+        }
+        for objective in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let sol = LpSolution { status: LpStatus::Optimal, objective, x: Vec::new(), duals: Vec::new() };
+            assert_eq!(ProbeProof::from_solution(&sol), ProbeProof::Unknown);
+        }
+    }
+
+    #[test]
+    fn probe_evidence_local_cut_does_not_leak_after_restoring_sibling_domain() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut p = Problem::new("局部割证据作用域", sense);
+                p.add_var("a", VarType::Binary).unwrap();
+                p.add_var("y", VarType::Integer).unwrap();
+                p.add_var("z", VarType::Integer).unwrap();
+                p.set_var_bounds(1, 0.0, 3.0).unwrap();
+                p.set_var_bounds(2, 0.0, 2.0).unwrap();
+                p.set_objective(vec![(1, sign), (2, sign)], 0.0).unwrap();
+                p.add_constraint(None, vec![(0, -2.0), (1, 1.0)], RelOp::Le, 1.5).unwrap();
+                p.add_constraint(None, vec![(2, 2.0)], RelOp::Le, 3.0).unwrap();
+                let opts = probe_evidence_options(kind);
+                let mut bounds = Bounds::from_problem(&p);
+                bounds.ub[0] = 0.0;
+                let mut engine = new_engine(&p, tol(), kind).unwrap();
+                assert_eq!(engine.solve(&bounds).status, LpStatus::Optimal);
+                let before_local_cut = engine.snapshot();
+                // a=0 时整数 y≤1 有效；对兄弟 a=1 并不有效，必须随作用域卸载。
+                engine.add_row(&[(1, 1.0)], RelOp::Le, 1.0).unwrap();
+                let local_sol = engine.resolve(&bounds);
+                assert_eq!(local_sol.status, LpStatus::Optimal);
+                let local = probe_evidence_children(&p, &mut bounds, &local_sol, &mut *engine, &opts);
+                assert_eq!(local.len(), 1, "z≥2 已由探测证明不可行");
+                assert_eq!(local[0].var, 2);
+                assert_close(local[0].est, sign * 2.0);
+                engine = before_local_cut;
+                bounds.lb[0] = 1.0;
+                bounds.ub[0] = 1.0;
+                let sibling_sol = engine.resolve(&bounds);
+                assert_eq!(sibling_sol.status, LpStatus::Optimal);
+                let sibling = probe_evidence_children(&p, &mut bounds, &sibling_sol, &mut *engine, &opts);
+                assert_eq!(sibling.len(), 1);
+                assert_eq!(sibling[0].var, 2);
+                assert_close(sibling[0].est, sign * 4.0);
+                assert_close(sibling[0].parent_lp_objective, sign * 4.5);
+                assert_close(local[0].est, sign * 2.0,);
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_small_binary_exhaustion_limits_and_determinism() {
+        for seed in 0..12u64 {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let mut state = seed + 1;
+                let mut next = || {
+                    state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    state >> 32
+                };
+                let mut p = Problem::new("探测证据穷举", sense);
+                for j in 0..5 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+                let obj = (0..5).map(|j| (j, (next() % 17) as f64 / 2.0 - 4.0)).collect();
+                p.set_objective(obj, 0.25).unwrap();
+                for row in 0..4 {
+                    let terms = (0..5).map(|j| (j, (next() % 9) as f64 - 3.0)).collect();
+                    let rhs = (next() % 13) as f64 - 3.0;
+                    let op = if row == 3 && seed % 3 == 0 { RelOp::Eq }
+                        else if row % 2 == 0 { RelOp::Le } else { RelOp::Ge };
+                    p.add_constraint(None, terms, op, rhs).unwrap();
+                }
+                let mut optimum: Option<f64> = None;
+                for bits in 0..32u32 {
+                    let x: Vec<f64> = (0..5).map(|j| ((bits >> j) & 1) as f64).collect();
+                    if !p.constraints.iter().all(|c| match c.op {
+                        RelOp::Le => c.expr.eval(&x) <= c.rhs,
+                        RelOp::Ge => c.expr.eval(&x) >= c.rhs,
+                        RelOp::Eq => c.expr.eval(&x) == c.rhs,
+                    }) { continue; }
+                    let value = p.obj.eval(&x) + p.obj_offset;
+                    optimum = Some(optimum.map_or(value, |old| match sense {
+                        Sense::Maximize => old.max(value), Sense::Minimize => old.min(value),
+                    }));
+                }
+                for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                    let opts = probe_evidence_options(kind);
+                    let first = branch_and_bound(&p, &opts, tol()).unwrap();
+                    let second = branch_and_bound(&p, &opts, tol()).unwrap();
+                    assert_eq!(first.status, second.status);
+                    assert_eq!(first.best_values, second.best_values);
+                    assert_eq!(first.stats.nodes, second.stats.nodes);
+                    assert_eq!(first.stats.lp_iterations, second.stats.lp_iterations);
+                    match optimum {
+                        Some(value) => {
+                            assert_eq!(first.status, SolveStatus::Optimal, "种子 {seed} 引擎 {kind:?}");
+                            assert_close(first.best_objective.unwrap(), value);
+                            for limit in [1, 2, 4] {
+                                let limited = branch_and_bound(&p, &BbOptions { node_limit: limit, ..opts }, tol()).unwrap();
+                                assert!(matches!(limited.status, SolveStatus::Optimal | SolveStatus::LimitReached));
+                                let bound = limited.bound.unwrap();
+                                assert!(match sense {
+                                    Sense::Maximize => bound + 1e-7 >= value,
+                                    Sense::Minimize => bound - 1e-7 <= value,
+                                }, "种子 {seed} 的限额前沿界漏掉真最优");
+                            }
+                        }
+                        None => assert_eq!(first.status, SolveStatus::Infeasible, "种子 {seed} 引擎 {kind:?}"),
+                    }
+                }
+            }
+        }
+    }
+
+    /// 两条路径都复用探测证据；仅整数目标启用 cutoff，且不会误剪更优整数解。
+    #[test]
+    fn probe_evidence_integral_cutoff_preserves_optimum_and_node_limits() {
+        let optimum = chain_knapsack_bruteforce(8, 0.0);
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut integral = chain_knapsack(8, 0.0);
+                integral.sense = sense;
+                for (_, coefficient) in &mut integral.obj.terms {
+                    *coefficient *= sign;
+                }
+                let mut fractional = integral.clone();
+                fractional.obj_offset = 0.25;
+                assert!(objective_is_integral(&integral));
+                assert!(!objective_is_integral(&fractional));
+                let opts = probe_evidence_options(kind);
+                let complete = branch_and_bound(&integral, &opts, tol()).unwrap();
+                let ordinary = branch_and_bound(&fractional, &opts, tol()).unwrap();
+                assert_eq!(complete.status, SolveStatus::Optimal);
+                assert_eq!(ordinary.status, SolveStatus::Optimal);
+                assert_close(complete.best_objective.unwrap(), sign * optimum);
+                assert_close(ordinary.best_objective.unwrap(), sign * optimum + 0.25);
+                assert!(complete.stats.nodes < ordinary.stats.nodes,
+                    "证据复用开启时仍须实际覆盖整数 cutoff 剪枝");
+                let limited_opts = BbOptions { node_limit: complete.stats.nodes, ..opts };
+                let exact = branch_and_bound(&integral, &limited_opts, tol()).unwrap();
+                let limited = branch_and_bound(&fractional, &limited_opts, tol()).unwrap();
+                assert_eq!(exact.status, SolveStatus::Optimal);
+                assert_close(exact.best_objective.unwrap(), sign * optimum);
+                assert_eq!(limited.status, SolveStatus::LimitReached);
+                assert_eq!(limited.stats.nodes, complete.stats.nodes);
+                assert!(match sense {
+                    Sense::Maximize => limited.bound.unwrap() + 1e-7 >= optimum + 0.25,
+                    Sense::Minimize => limited.bound.unwrap() - 1e-7 <= -optimum + 0.25,
+                }, "限额后的证据前沿必须仍包含真最优");
+            }
+        }
+    }
+
+    /// 没有探测证据时，开关不得夹带非整数目标的一般父界提前剪枝。
+    #[test]
+    fn probe_evidence_without_probes_keeps_nonintegral_search_unchanged() {
+        let p = chain_knapsack(8, 0.25);
+        assert!(!objective_is_integral(&p));
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for branch_rule in [BranchRule::MostFractional, BranchRule::Pseudocost] {
+                for node_limit in [0, 6] {
+                    let opts = BbOptions {
+                        branch_rule,
+                        pc_reliability_probes: 0,
+                        node_limit,
+                        ..probe_evidence_options(kind)
+                    };
+                    let off = branch_and_bound(&p, &BbOptions { reuse_probe_evidence: false, ..opts }, tol()).unwrap();
+                    let on = branch_and_bound(&p, &opts, tol()).unwrap();
+                    assert_eq!(on.status, off.status);
+                    assert_eq!(on.best_objective, off.best_objective);
+                    assert_eq!(on.best_values, off.best_values);
+                    assert_eq!(on.bound, off.bound);
+                    assert_eq!(on.stats.nodes, off.stats.nodes);
+                    assert_eq!(on.stats.lp_iterations, off.stats.lp_iterations);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_is_opt_in_and_rejected_by_parallel_entries() {
+        assert!(!BbOptions::default().reuse_probe_evidence);
+        let mut p = Problem::new("试验入口", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        let opts = probe_evidence_options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        assert!(branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).is_err());
+        let config = crate::parallel_bb::ParallelConfig {
+            threads: 2, mipgap_percent: None, adaptive_heuristics: false,
+            log_period_secs: None, degrade: DegradePolicy::default(), progress: None,
+        };
+        assert!(crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, tol()).is_err());
     }
 
     /// 受控默认（SearchControl::default + hooks=None）与既有

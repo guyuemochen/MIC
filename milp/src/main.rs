@@ -632,6 +632,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            reuse_probe_evidence: false,
             mitm_windows: if config.mitm { 8 } else { 0 },
             local_cuts: config.local_cuts,
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；

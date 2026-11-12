@@ -808,6 +808,9 @@ pub fn parallel_branch_and_bound(
     tol: Tolerances,
 ) -> Result<ParallelOutcome> {
     let start = Instant::now();
+    if opts.reuse_probe_evidence {
+        return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
+    }
     if config.threads < 2 {
         return Err(MilpError::Internal(format!(
             "parallel_branch_and_bound 前置失败：threads = {}（须 ≥ 2；threads = 1 由调用方走顺序路径）",
