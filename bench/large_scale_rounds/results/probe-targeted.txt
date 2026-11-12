@@ -1,0 +1,15 @@
+   Compiling milp v0.1.0 (/tmp/mic-probe-evidence/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.04s
+     Running unittests src/lib.rs (/tmp/mic-probe-evidence/milp/target/debug/deps/milp-9902ccbad09493e3)
+
+running 7 tests
+test branch_bound::tests::probe_evidence_limits_and_nonfinite_results_never_close_a_direction ... ok
+test branch_bound::tests::probe_evidence_is_opt_in_and_rejected_by_parallel_entries ... ok
+test branch_bound::tests::probe_evidence_uses_selected_variable_instead_of_first_probe ... ok
+test branch_bound::tests::probe_evidence_proved_infeasible_directions_close_without_extra_nodes ... ok
+test branch_bound::tests::probe_evidence_local_cut_does_not_leak_after_restoring_sibling_domain ... ok
+test branch_bound::tests::probe_evidence_child_bounds_keep_parent_observation_and_limit_semantics ... ok
+test branch_bound::tests::probe_evidence_small_binary_exhaustion_limits_and_determinism ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 342 filtered out; finished in 0.02s
+
