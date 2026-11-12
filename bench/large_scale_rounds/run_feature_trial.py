@@ -12,7 +12,9 @@ from run_root_work import NODE_LIMIT, error_row, execute, schedule, settings, st
 from run_row_products import source_info
 
 
-FEATURES = ('binary_coefficient_strengthening', 'risk_pivot_refresh')
+FEATURES = (
+    'binary_coefficient_strengthening', 'risk_pivot_refresh', 'root_heuristic_work_limit',
+)
 VARIANTS = ['base', 'candidate']
 WINDOWS = {(10, 1): 'screen', (30, 3): 'paired'}
 
