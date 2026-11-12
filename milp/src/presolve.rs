@@ -26,6 +26,10 @@
 //!   （最优解可同时取多个同权物品，knapsack 族目标全面错误）——详见
 //!   docs/parallel-profiling.md §14。
 //!
+//! 默认关闭的 binary_coefficient_strengthening 试验在完整 R1..R5 结束后，
+//! 仅加强 Le/Ge 行归一化后的自由二元负系数；不改右端，不重启界传播，
+//! 不处理等式或聚合 Integer 变量。活动度区间不能认证时保持原行。
+//!
 //! 最多迭代 5 轮，无 reductions 即停。数值防御：代入/换算产生非有限右端、
 //! 目标常数溢出或无穷收紧界时返回 `Err(MilpError::Numerical)`。
 
@@ -66,6 +70,98 @@ struct WorkRow {
     rhs: f64,
     /// 是否仍在缩减问题中。
     alive: bool,
+}
+
+/// 最后一次 R5 后执行；不重启传播，不触碰右端、目标或还原映射。
+/// 对归一化行 a·x≤b，M 是全局盒上最大活动度。若 D≥M−b>0 且 D<−a_j，
+/// 将自由二元列的负系数改成 −D：所有修改列都为 0 时原行不变；至少一个
+/// 为 1 时，新行左端至多 M−D≤b。新系数增大且 x_j≥0，故也不会新增可行点。
+#[cfg(feature = "binary_coefficient_strengthening")]
+fn strengthen_negative_binary_coefficients(p: &mut Problem, tol: &Tolerances) {
+    // 当前预处理尺度上的保守跳过门槛，宁可放弃微小系数或微小加强。
+    // 后续 LP 仍会按行归一化，因此这里不保证归一化后的系数大于主元阈值。
+    // 此门槛只影响是否尝试，有效性完全由下方的向外舍入区间证明。
+    let floor = 16.0 * tol.zero.max(tol.pivot).max(tol.feasibility);
+    if !floor.is_finite() || floor <= 0.0 {
+        return;
+    }
+    if !p.vars.iter().any(|v| v.var_type == VarType::Binary && v.lb == 0.0 && v.ub == 1.0) {
+        return;
+    }
+    for row in &mut p.constraints {
+        let sign = match row.op {
+            RelOp::Le => 1.0,
+            RelOp::Ge => -1.0,
+            RelOp::Eq => continue,
+        };
+        let rhs = sign * row.rhs;
+        if !rhs.is_finite() {
+            continue;
+        }
+        let mut lower = 0.0_f64;
+        let mut upper = 0.0_f64;
+        let mut valid = true;
+        for &(j, original) in &row.expr.terms {
+            let var = &p.vars[j];
+            let a = sign * original;
+            // 空界与任何非有限界均保守跳过；不借机判断不可行或传播新界。
+            if !a.is_finite() || !var.lb.is_finite() || !var.ub.is_finite() || var.lb > var.ub {
+                valid = false;
+                break;
+            }
+            let bound = if a >= 0.0 { var.ub } else { var.lb };
+            let product = a * bound;
+            if !product.is_finite() {
+                valid = false;
+                break;
+            }
+            // 乘零精确；其他乘积及每次求和各向外扩一格，包含真实实数活动度。
+            let (lo, hi) = if a == 0.0 || bound == 0.0 {
+                (0.0, 0.0)
+            } else {
+                (next_down(product), next_up(product))
+            };
+            lower = next_down(lower + lo);
+            upper = next_up(upper + hi);
+            if !lower.is_finite() || !upper.is_finite() {
+                valid = false;
+                break;
+            }
+        }
+        if !valid || lower <= rhs {
+            continue;
+        }
+        let delta = next_up(upper - rhs);
+        if !delta.is_finite() || delta <= floor {
+            continue;
+        }
+        for (j, original) in &mut row.expr.terms {
+            let var = &p.vars[*j];
+            let a = sign * *original;
+            if var.var_type == VarType::Binary && var.lb == 0.0 && var.ub == 1.0
+                && a < -delta && -a - delta > floor
+            {
+                *original = sign * -delta;
+            }
+        }
+    }
+}
+
+/// 有限双精度数的相邻外侧浮点数；兼容尚未提供 next_up/down 的工具链。
+#[cfg(feature = "binary_coefficient_strengthening")]
+fn next_up(value: f64) -> f64 {
+    if value.is_nan() || value == f64::INFINITY {
+        value
+    } else if value == 0.0 {
+        f64::from_bits(1)
+    } else {
+        f64::from_bits(if value > 0.0 { value.to_bits() + 1 } else { value.to_bits() - 1 })
+    }
+}
+
+#[cfg(feature = "binary_coefficient_strengthening")]
+fn next_down(value: f64) -> f64 {
+    -next_up(-value)
 }
 
 /// 变量类型是否要求取整（Integer/Binary）。
@@ -459,7 +555,8 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
             rhs: row.rhs,
         })
         .collect();
-    let reduced = Problem {
+    #[allow(unused_mut)]
+    let mut reduced = Problem {
         name: p.name.clone(),
         sense: p.sense,
         vars,
@@ -467,6 +564,8 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
         obj_offset,
         constraints,
     };
+    #[cfg(feature = "binary_coefficient_strengthening")]
+    strengthen_negative_binary_coefficients(&mut reduced, tol);
     Ok((
         reduced,
         PostsolveMap {
@@ -961,5 +1060,161 @@ mod tests {
         // 维度不符：缺失分量 NaN（示警而非 panic）。
         let bad = postsolve(&map, &[1.0], 3, &tol());
         assert!(bad[1].is_nan());
+    }
+}
+
+#[cfg(all(test, feature = "binary_coefficient_strengthening"))]
+mod binary_strengthening_tests {
+    use super::*;
+    use crate::model::Sense;
+
+    fn toy(op: RelOp) -> Problem {
+        let sign = if op == RelOp::Ge { -1.0 } else { 1.0 };
+        let mut p = Problem::new("负二元加强", Sense::Minimize);
+        p.vars = vec![
+            Variable { name: "x".into(), var_type: VarType::Binary, lb: 0.0, ub: 1.0 },
+            Variable { name: "y".into(), var_type: VarType::Continuous, lb: 0.0, ub: 4.0 },
+        ];
+        p.constraints.push(Constraint {
+            name: None, expr: LinearExpr { terms: vec![(0, -10.0 * sign), (1, sign)] },
+            op, rhs: 0.0,
+        });
+        p
+    }
+
+    fn feasible(p: &Problem, x: &[f64]) -> bool {
+        p.constraints.iter().all(|row| {
+            let lhs = row.expr.eval(x);
+            match row.op { RelOp::Le => lhs <= row.rhs, RelOp::Ge => lhs >= row.rhs,
+                RelOp::Eq => lhs == row.rhs }
+        })
+    }
+
+    fn bits(p: &Problem) -> Vec<u64> {
+        p.constraints.iter().flat_map(|r| std::iter::once(r.rhs.to_bits())
+            .chain(r.expr.terms.iter().map(|(_, a)| a.to_bits()))).collect()
+    }
+
+    #[test]
+    fn binary_both_branches_preserved_and_fractional_point_removed() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let original = toy(op);
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
+            let a = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(a >= 4.0 && a < 4.0 + 1e-12);
+            assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+            for x in [0.0, 1.0] {
+                for k in 0..=64 {
+                    let point = [x, k as f64 / 16.0];
+                    assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+                }
+            }
+            assert!(feasible(&original, &[0.4, 4.0]));
+            assert!(!feasible(&changed, &[0.4, 4.0]));
+        }
+    }
+
+    #[test]
+    fn several_negative_columns_preserve_every_binary_assignment() {
+        let mut original = toy(RelOp::Le);
+        original.vars.push(Variable { name: "z".into(), var_type: VarType::Binary, lb: 0.0, ub: 1.0 });
+        original.constraints[0].expr.terms.push((2, -9.0));
+        let mut changed = original.clone();
+        strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
+        assert!(changed.constraints[0].expr.terms[0].1 > -5.0);
+        assert!(changed.constraints[0].expr.terms[2].1 > -5.0);
+        for x in [0.0, 1.0] { for z in [0.0, 1.0] { for k in 0..=32 {
+            let point = [x, k as f64 / 8.0, z];
+            assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+        } } }
+    }
+
+    #[test]
+    fn unsupported_or_uncertain_cases_are_bitwise_unchanged() {
+        let mut cases = Vec::new();
+        let mut eq = toy(RelOp::Eq);
+        eq.constraints[0].expr.terms[0].1 = 10.0;
+        eq.constraints[0].rhs = 10.0;
+        cases.push(eq);
+        for kind in [VarType::Integer, VarType::Continuous] {
+            let mut p = toy(RelOp::Le); p.vars[0].var_type = kind; cases.push(p);
+        }
+        for (lb, ub) in [(0.0, 2.0), (0.5, 1.0), (1.0, 1.0), (2.0, 1.0)] {
+            let mut p = toy(RelOp::Le); p.vars[0].lb = lb; p.vars[0].ub = ub; cases.push(p);
+        }
+        for ub in [f64::INFINITY, f64::MAX] {
+            let mut p = toy(RelOp::Le); p.vars[1].ub = ub;
+            p.constraints[0].expr.terms[1].1 = 2.0; cases.push(p);
+        }
+        for rhs in [4.0, 5.0, -6.0] {
+            let mut p = toy(RelOp::Le); p.constraints[0].rhs = rhs; cases.push(p);
+        }
+        let mut tiny = toy(RelOp::Le); tiny.vars[1].ub = 1e-9; cases.push(tiny);
+        // 大量取消使 M 的区间跨过 rhs，必须放弃，而非以舍入中值假认证。
+        let mut cancellation = toy(RelOp::Le);
+        for j in 2..66 {
+            cancellation.vars.push(Variable { name: format!("c{j}"), var_type: VarType::Continuous,
+                lb: 1.0, ub: 1.0 });
+            cancellation.constraints[0].expr.terms.push((j, if j % 2 == 0 { 1e20 } else { -1e20 }));
+        }
+        cases.push(cancellation);
+        for mut p in cases {
+            let before = bits(&p);
+            strengthen_negative_binary_coefficients(&mut p, &Tolerances::default());
+            assert_eq!(before, bits(&p));
+        }
+    }
+
+    #[test]
+    fn deterministic_and_postsolve_mapping_unchanged() {
+        let p = toy(RelOp::Le);
+        let (a, map_a) = presolve(&p, &Tolerances::default()).unwrap();
+        let (b, map_b) = presolve(&p, &Tolerances::default()).unwrap();
+        assert_eq!(bits(&a), bits(&b));
+        assert_eq!(map_a.var_map, map_b.var_map);
+        assert_eq!(map_a.fixed, map_b.fixed);
+        assert_eq!(map_a.var_map, vec![0, 1]);
+        assert!(map_a.dropped_rows.is_empty() && map_a.aggregations.is_empty());
+        assert_eq!(a.obj.terms, p.obj.terms);
+        assert_eq!(a.obj_offset.to_bits(), p.obj_offset.to_bits());
+    }
+
+    #[test]
+    fn nonzero_rhs_negative_bounds_and_underflow_are_conservative() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let mut original = toy(op);
+            original.vars[1].lb = -2.0;
+            original.vars[1].ub = 3.0;
+            original.constraints[0].expr.terms[1].1 *= -1.0;
+            original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
+            let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+            for x in [0.0, 1.0] { for k in -16..=24 {
+                let point = [x, k as f64 / 8.0];
+                assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+            } }
+        }
+        let mut p = toy(RelOp::Le);
+        p.vars.push(Variable { name: "下溢项".into(), var_type: VarType::Continuous,
+            lb: 0.0, ub: f64::MIN_POSITIVE });
+        p.constraints[0].expr.terms.push((2, f64::MIN_POSITIVE));
+        strengthen_negative_binary_coefficients(&mut p, &Tolerances::default());
+        // 正的真实乘积虽然下溢为零，但外舍入仍覆盖它，不能低估 4。
+        assert!(p.constraints[0].expr.terms[0].1 < -4.0);
+    }
+
+    #[test]
+    fn directed_neighbors_cover_zero_and_extremes() {
+        assert!(next_down(0.0) < 0.0 && next_up(-0.0) > 0.0);
+        for x in [-f64::MAX, -1.0, -f64::MIN_POSITIVE, 0.0, f64::MIN_POSITIVE, 1.0, f64::MAX] {
+            assert!(next_down(x) < x && next_up(x) > x);
+        }
+        assert_eq!(next_down(f64::from_bits(1)), 0.0);
+        assert_eq!(next_up(-f64::from_bits(1)), -0.0);
+        assert_eq!(next_up(f64::MAX), f64::INFINITY);
+        assert_eq!(next_down(-f64::MAX), f64::NEG_INFINITY);
     }
 }

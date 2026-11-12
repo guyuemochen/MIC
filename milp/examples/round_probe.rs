@@ -1,4 +1,4 @@
-//! 单次求解探针与原模型导出。用于基准，不执行额外的根 LP。
+//! 单次求解探针、原模型及默认缩放后完整预处理模型导出。用于基准，不执行额外的根 LP。
 use milp::branch_bound::{BinaryPropagationMode, BranchRule, NodeRule, SearchControl};
 use milp::instance::{load_instance, write_instance};
 use milp::model::{Constraint, LinearExpr, Problem, RelOp, Sense, SolveStatus, VarType, Variable};
@@ -252,13 +252,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let mut out = io::BufWriter::new(io::stdout().lock());
     match args.as_slice() {
+        [command, path] if command == "export-presolved" => {
+            let model = load_instance(Path::new(path))?;
+            model.validate()?;
+            // 与默认求解入口保持相同的缩放及完整预处理顺序，不执行 LP。
+            let (scaled, _) = milp::scaling::scale_problem(&model);
+            let (reduced, _) = milp::presolve::presolve(&scaled, &milp::model::Tolerances::default())?;
+            export(&mut out, &reduced)?;
+        }
         [command, path] if command == "export" => export(&mut out, &load_instance(Path::new(path))?)?,
         [command, path, opts @ ..] if command == "solve" => solve(&mut out, &load_instance(Path::new(path))?, opts)?,
         [command, size, width, kind] if command == "generate" => {
             let model = generate(size.parse()?, width.parse()?, kind)?;
             out.write_all(write_instance(&model)?.as_bytes())?;
         }
-        _ => return Err("用法：round_probe solve <模型> [选项] | export <模型> | generate <维数> <每行项数> <类型>".into()),
+        _ => return Err("用法：round_probe solve <模型> [选项] | export <模型> | export-presolved <模型>（含默认缩放） | generate <维数> <每行项数> <类型>".into()),
     }
     out.flush()?;
     Ok(())
