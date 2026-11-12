@@ -1,0 +1,67 @@
+{
+  "source": "09574e83d2a3b2033799c6676f6ad8e3bb3f0f6d",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "feature": "lu_failure_diagnostics",
+  "options": [
+    "--threads",
+    "1",
+    "--lp-engine",
+    "revised",
+    "--time-limit-secs",
+    "0",
+    "--node-limit",
+    "500",
+    "--early-stop",
+    "off"
+  ],
+  "cases": [
+    {
+      "model": "p0033.milp",
+      "input_sha256": "18425217587af33fc001d1b3954a55de862b495b81452df386fcb25850ab40cb",
+      "status": "limit_reached",
+      "objective": 3089.0,
+      "bound": 3072.8424433323926,
+      "nodes": 500,
+      "lp_iterations": 22239,
+      "solution_length": 33,
+      "solution_sha256": "775ac3655e138b55c5af39c42b8c35f7e3d62118822aeb3e7e968a921c015423",
+      "lu_failure_captured": false
+    },
+    {
+      "model": "air03.milp",
+      "input_sha256": "fe79be75baac0c235e1771a7f3102507e93e264881e6973c221611aa2f35c3a5",
+      "status": "optimal",
+      "objective": 340160.0,
+      "bound": 340160.0,
+      "nodes": 1,
+      "lp_iterations": 5752,
+      "solution_length": 10757,
+      "solution_sha256": "a3a9514d29b0fcfbd6aa89f406ae2794c56673d000f7b6fe5b9e84091d131662",
+      "lu_failure_captured": false
+    },
+    {
+      "model": "p0282.milp",
+      "input_sha256": "fe34c7cf574f2027cc9e40a6e813f61b1db07144f8f2bb837225eed6272400a0",
+      "status": "limit_reached",
+      "objective": 317142.0,
+      "bound": 190130.4675160231,
+      "nodes": 500,
+      "lp_iterations": 65136,
+      "solution_length": 282,
+      "solution_sha256": "f03ca1caff16d203e7c739c900d340ad24fcdf7f700cfba4fcd51d09fe9d46bd",
+      "lu_failure_captured": false
+    },
+    {
+      "model": "lseu.milp",
+      "input_sha256": "18f55dbba8ee394a0bcb8dd24adc5163592b6d813846aff705adf45c1ac77854",
+      "status": "limit_reached",
+      "objective": 1845.0,
+      "bound": 1012.6900719296654,
+      "nodes": 500,
+      "lp_iterations": 7785,
+      "solution_length": 89,
+      "solution_sha256": "f4282bac1180677b4fa297df4c76d333e7c2e59223600600eecb86f2b08c29e9",
+      "lu_failure_captured": false
+    }
+  ]
+}
