@@ -12,6 +12,40 @@ use std::time::Instant;
 use crate::model::{Problem, RelOp, Tolerances, VarType};
 use crate::simplex::Bounds;
 
+// 测试在同一生产传播入口精确触发限时；线程隔离、离开作用域恢复旧状态。
+#[cfg(test)]
+std::thread_local! {
+    static TEST_DEADLINE: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestDeadlineGuard(Option<(usize, usize)>);
+
+#[cfg(test)]
+impl TestDeadlineGuard {
+    pub(crate) fn on_check(target: usize) -> Self {
+        Self(TEST_DEADLINE.with(|state| state.replace(Some((target, 0)))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDeadlineGuard {
+    fn drop(&mut self) {
+        TEST_DEADLINE.with(|state| state.set(self.0));
+    }
+}
+
+#[cfg(test)]
+fn test_deadline_expired() -> bool {
+    TEST_DEADLINE.with(|state| match state.get() {
+        Some((target, count)) => {
+            state.set(Some((target, count + 1)));
+            count + 1 >= target
+        }
+        None => false,
+    })
+}
+
 /// 整数绝对值总量封顶，使原尺度任意二元部分和保持精确可表示。
 const MAX_MAGNITUDE: i128 = 1 << 50;
 
@@ -239,7 +273,13 @@ impl BinaryPropagation {
             bounds,
             all_rows,
             seeds,
-            || deadline.is_some_and(|end| Instant::now() >= end),
+            || {
+                #[cfg(test)]
+                if test_deadline_expired() {
+                    return true;
+                }
+                deadline.is_some_and(|end| Instant::now() >= end)
+            },
             record,
         )
     }

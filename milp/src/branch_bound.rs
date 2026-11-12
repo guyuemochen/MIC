@@ -1097,6 +1097,8 @@ fn sequential_bb(
                 base_lp_iterations =
                     base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(snap_iters));
                 simplex = snap;
+                #[cfg(test)]
+                binary_propagation_tests::note_local_scope_restore();
             } else {
                 break;
             }
@@ -5874,6 +5876,24 @@ mod binary_propagation_tests {
     use crate::model::{RelOp, VarType};
     use crate::solver::{solve, SolveOptions};
 
+    std::thread_local! {
+        static LOCAL_SCOPE_RESTORES: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    }
+
+    struct LocalScopeAudit(Option<u64>);
+    impl LocalScopeAudit {
+        fn new() -> Self { Self(LOCAL_SCOPE_RESTORES.with(|state| state.replace(Some(0)))) }
+        fn count(&self) -> u64 { LOCAL_SCOPE_RESTORES.with(|state| state.get().unwrap()) }
+    }
+    impl Drop for LocalScopeAudit {
+        fn drop(&mut self) { LOCAL_SCOPE_RESTORES.with(|state| state.set(self.0)); }
+    }
+    pub(super) fn note_local_scope_restore() {
+        LOCAL_SCOPE_RESTORES.with(|state| {
+            if let Some(count) = state.get() { state.set(Some(count + 1)); }
+        });
+    }
+
     fn small_model(seed: u64, sense: Sense) -> Problem {
         let mut p = Problem::new("传播端到端穷举", sense);
         let mut rng = seed + 17;
@@ -6066,6 +6086,55 @@ mod binary_propagation_tests {
                 SolveStatus::LimitReached => assert!(r.bound.unwrap() >= 2331.0 - 1e-7),
                 other => panic!("已知可行实例不能被传播误报为{other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn binary_propagation_deadline_keeps_the_only_frontier_after_partial_fixes() {
+        let mut p = Problem::new("传播途中保留唯一前沿", Sense::Maximize);
+        for j in 0..300 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(300, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, (0..300).map(|j| (j, 1.0)).collect(), RelOp::Le, 0.0).unwrap();
+        p.add_constraint(None, vec![(300, 1.0)], RelOp::Le, 0.5).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = BbOptions { branch_rule: BranchRule::Pseudocost, reuse_probe_evidence: true,
+                ..options(engine) };
+            let interrupted = {
+                // 第一次为入口，第二次为活动度扫描，第三次已写入部分固定。
+                let _deadline = crate::binary_propagation::TestDeadlineGuard::on_check(3);
+                branch_and_bound(&p, &opts, Tolerances::default()).unwrap()
+            };
+            assert_eq!(interrupted.status, SolveStatus::LimitReached);
+            assert_eq!(interrupted.stats.nodes, 1, "传播未完成，不得调用孩子LP");
+            assert_eq!(interrupted.stats.propagation.calls, 1);
+            assert!(interrupted.stats.propagation.fixes > 0 && interrupted.stats.propagation.fixes < 300);
+            assert_eq!(interrupted.stats.propagation.conflicts, 0);
+            assert_eq!(interrupted.best_objective, None, "不能把部分固定当成整数可行解");
+            // 强分支已排除上支，仅剩下支est=0；漏push当前Pending会得到None。
+            assert_eq!(interrupted.bound, Some(0.0));
+            let completed = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert_eq!(completed.status, SolveStatus::Optimal, "注入必须在离开作用域后清除");
+            assert_eq!(completed.best_objective, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn binary_propagation_real_local_cuts_restore_outside_their_scope() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let audit = LocalScopeAudit::new();
+            let opts = BbOptions { binary_row_propagation: true, root_cuts: false,
+                local_cuts: true, lp_engine: engine, ..BbOptions::default() };
+            let result = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(2331.0));
+            assert!(result.stats.cuts > 0, "根割关闭，新增割必须来自真实树内局部割");
+            assert!(audit.count() > 0, "必须真的退出局部割作用域并恢复LP快照");
+            assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
+            assert_eq!(result.stats.propagation.accepted_rows, p.constraints.len() as u64,
+                "传播数据库只含工作模型静态行，不能把局部割纳入全局行");
         }
     }
 
