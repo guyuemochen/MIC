@@ -1,0 +1,121 @@
+{
+  "说明": "验证及单次功能对照；不是性能筛查，不包含二进制。",
+  "source_commit": "8fed85fdb941795f5515d41ed8f9c8a5a5f9c304",
+  "source_tree": "54035a570f3de9448b9fbe6da9b3bef31f58dfff",
+  "clean_source_tree": true,
+  "candidate_commit": "e3a194df9c2f1a6033d4e54cbf060cb2e9b96048",
+  "test_strengthening_commit": "777c2cf0d45bf3edd7a7442f4ac495e49d813d2c",
+  "nonfinite_guard_original_commit": "9894df90f77b7a86ca81400a0d028466bd7f9ea3",
+  "acceptance_maintenance_original_commit": "ff9a56639f929824fb47b8ab5ed8e6a8a1fbfbb9",
+  "binaries": {
+    "default": {
+      "sha256": "26c0ccb5c6c689dce3507d49da764e7c82b3b82851e27a6cfad16744e310431e",
+      "build_command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--example",
+        "round_probe"
+      ]
+    },
+    "feature": {
+      "sha256": "01aadca315a65f19544e434f9216ebf1d158b7611970c82da164ae979533d42a",
+      "build_command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--features",
+        "risk_pivot_refresh",
+        "--example",
+        "round_probe"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "risk_pivot_refresh",
+        "risk_pivot_",
+        "--",
+        "--nocapture"
+      ],
+      "log": "targeted.txt",
+      "passed": 7,
+      "failed": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "risk_pivot_refresh"
+      ],
+      "log": "milp-feature.txt",
+      "passed": 452,
+      "failed": 0,
+      "ignored": 6
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "risk_pivot_refresh",
+        "--release",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored"
+      ],
+      "log": "acceptance-feature.txt",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "未重复的检查": "默认完整milp、默认release验收和planner已由同轮其它工作树通过；本候选生产逻辑全部受默认关闭特性保护，按主代理安排只补默认构建和功能对照。",
+  "files": {
+    "README.md": "f16f63411e5b86931bc1faa9df357c5ee112c3ec04e39dfb201bfda2c43ca2dd",
+    "acceptance-feature.txt": "0903a2f8bb1b5f2c8ac98d528b9589a6dd029cda1f146e98c6f21a5afaa9cc38",
+    "bnatt500-default.json": "a6ad9578e68bd52bec0b169eca03b332ad81e153e24f28ec400fd7d7c2d038af",
+    "bnatt500-default.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bnatt500-feature.json": "69654f8bc1ece02b352fd11b3f5a2a4b0bd85aa772483b8982dd0787364e9f8a",
+    "bnatt500-feature.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build-default.txt": "466707aeb3457e61f1c0f82f505b56ec60de7a1ff384cb6f477070100c2ed023",
+    "build-feature.txt": "c17ed9974d43efbd994604d0c75ac3388b6a1ff7e003a1f329395196497293c5",
+    "functional-results.json": "a6d4c60f3a35111ee5ffc42f4cd6e4743c86dbc1bde6c8d7bb4388ae4d45656c",
+    "functional-run.txt": "7991fec59e11406485658ef719dee88e6ee1873ae165819829acd16433f6d454",
+    "healthy-knapsack-default.json": "7460ac7bdfd8583963c9075d50f294552ee9705f83a3e123f4296b263f6edeae",
+    "healthy-knapsack-default.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "healthy-knapsack-feature.json": "63d2eb425aba36715e8277a6e6422631d73be9bde44102e980ae0db539b04b8a",
+    "healthy-knapsack-feature.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "milp-feature.txt": "52d58bd6984dfa1531a7c0006ddbefd30ba06599ad2943bfb3dc79a1bcba0691",
+    "targeted.txt": "68c1c8bec5dacac19940a552cf99e2b29c9915f06ea54e5f2e53efaa9360e122"
+  },
+  "default_features": [
+    "sparse_row_products"
+  ],
+  "candidate_extra_features": [
+    "risk_pivot_refresh"
+  ],
+  "disabled_features": [
+    "proof_profile",
+    "sparse_profile",
+    "sparse_row_products_stats",
+    "root_snapshot_restore",
+    "root_heuristic_work_budget"
+  ]
+}

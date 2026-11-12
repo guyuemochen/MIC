@@ -1,0 +1,4 @@
+healthy-knapsack default {'status': 'optimal', 'objective': 17.0, 'bound': 17.0, 'nodes': 1, 'lp_iterations': 21, 'cuts': 6, 'elapsed_secs': 0.000404042}
+healthy-knapsack feature {'status': 'optimal', 'objective': 17.0, 'bound': 17.0, 'nodes': 1, 'lp_iterations': 21, 'cuts': 6, 'elapsed_secs': 0.000435208}
+bnatt500 default {'status': 'limit_reached', 'objective': None, 'bound': None, 'nodes': 1, 'lp_iterations': 2688, 'cuts': 0, 'elapsed_secs': 0.668128708}
+bnatt500 feature {'status': 'limit_reached', 'objective': None, 'bound': None, 'nodes': 1, 'lp_iterations': 37304, 'cuts': 0, 'elapsed_secs': 10.040584291}
