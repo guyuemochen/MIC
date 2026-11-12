@@ -15,7 +15,8 @@ ROOT_EVENTS = ('root_lp', 'root_after_cuts', 'root_ready', 'root_restart')
 CUT_EVENTS = ('cut_entry', 'cut_round', 'cut_chunk', 'cut_rollback',
               'cut_outer_rollback_begin', 'cut_outer_rollback')
 SAMPLE_EVENTS = ('frontier', 'node', 'chosen')
-LP_FIELDS = ('status', 'bound', 'iterations', 'iterations_scope', 'seconds', 'retained_cuts')
+LP_FIELDS = ('status', 'bound', 'iterations', 'iterations_scope', 'iterations_note',
+             'seconds', 'seconds_scope', 'retained_cuts')
 FRONTIER_EXTENSIONS = ('unresolved_count', 'unresolved_bound', 'combined_bound')
 EVENT_FIELDS = {
     'root_lp': LP_FIELDS, 'root_after_cuts': LP_FIELDS, 'root_restart': LP_FIELDS,
@@ -27,8 +28,8 @@ EVENT_FIELDS = {
     'cut_outer_rollback_begin': ('discarded', 'status'),
     'cut_round': ('round', 'entry_bound', 'generated', 'sanitize_survived', 'truncated', 'planned'),
     'cut_chunk': ('round', 'chunk_start', 'attempted', 'applied_before', 'status', 'bound',
-                  'iterations', 'committed_optimal', 'rolled_back'),
-    'cut_rollback': ('round', 'discarded', 'retained_cuts', 'status', 'bound', 'iterations'),
+                  'iterations', 'seconds', 'committed_optimal', 'rolled_back'),
+    'cut_rollback': ('round', 'discarded', 'retained_cuts', 'status', 'bound', 'iterations', 'seconds'),
     'frontier': ('nodes', 'exit', 'incumbent', 'stack_bound', 'size', 'unknown_est_count',
                  'weakest_ties', 'weakest_min_depth', 'depth1_pending', 'min_depth', 'max_depth',
                  *FRONTIER_EXTENSIONS),
@@ -37,9 +38,9 @@ EVENT_FIELDS = {
     'chosen': ('depth', 'var', 'observations', 'probed_this_node'),
     'lp_failure': ('stage', 'status', 'numerical_error', 'phase1_pending'),
 }
-PROBE_FIELDS = ('depth', 'calls', 'iterations', 'seconds', 'positive_gain', 'zero_gain',
-                'negative_gain', 'nonfinite', 'infeasible', 'iteration_limit', 'time_limit',
-                'unbounded')
+PROBE_OUTCOMES = ('positive_gain', 'zero_gain', 'negative_gain', 'nonfinite_optimal_gain',
+                  'infeasible', 'iteration_limit', 'time_limit', 'unbounded')
+PROBE_FIELDS = ('depth', 'calls', 'iterations', 'seconds', *PROBE_OUTCOMES)
 SOLVE_FIELDS = ('status', 'objective', 'bound', 'gap_absolute', 'gap_percent', 'elapsed_secs',
                 'nodes', 'lp_iterations', 'cuts', 'peak_rss_bytes')
 
@@ -160,6 +161,10 @@ def report_profile(row, error):
                'missing_reason': None if grouped[kind] else '探针未观测到该阶段'}
         for kind in ROOT_EVENTS
     }
+    if any(context.get('root_cuts_enabled') is False for context in grouped.get('context', ())):
+        for root in grouped['root_after_cuts']:
+            if 'seconds' in root.get('null_reasons', {}):
+                root['null_reasons']['seconds'] = '本次运行关闭根割'
     samples = {}
     for kind in SAMPLE_EVENTS:
         items = grouped[kind]
@@ -168,11 +173,20 @@ def report_profile(row, error):
             'missing_reason': None if items else '探针未观测到该类事件',
         }
     probe_snapshots = [snapshot(bucket, PROBE_FIELDS) for bucket in probes] if valid_probes else None
+    valid_outcomes = True
+    for bucket in probe_snapshots or ():
+        counters = [bucket.get(key) for key in ('calls', *PROBE_OUTCOMES)]
+        if any(type(value) is not int or value < 0 for value in counters):
+            valid_outcomes = False
+            bucket['outcomes_error'] = '探测次数或分类计数缺失或无效'
+        elif counters[0] != sum(counters[1:]):
+            valid_outcomes = False
+            bucket['outcomes_error'] = '探测结果分类之和与总次数不一致'
     metadata = snapshot({key: value for key, value in profile.items() if key not in ('events', 'probes')},
                         PROFILE_FIELDS)
     snapshots = [metadata, *(probe_snapshots or ()),
                  *(item for items in grouped.values() for item in items)]
-    complete = (valid_events and valid_probes and valid_counters
+    complete = (valid_events and valid_probes and valid_counters and valid_outcomes
                 and all('missing_fields' not in item for item in snapshots))
     recognized = set(ROOT_EVENTS + CUT_EVENTS + SAMPLE_EVENTS + ('lp_failure',))
     return {
