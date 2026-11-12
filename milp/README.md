@@ -451,6 +451,13 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
 
 ### 双引擎架构（--lp-engine，大规模轮 S2–S4、S6）
 
+2026-11新增受影响行累加：定价与Devex权重更新时，先按实际访问项数判断
+逐行累加是否比逐列扫描便宜，只访问乘子非零的行。逐列浮点累加顺序、破键、
+Bland路径保持原语义；不改变LP迭代轨迹。七个LP配对测量通过后默认启用
+`sparse_row_products`特性，访问计数仍需单独开启`sparse_row_products_stats`。
+复现旧扫描可对本crate构建`--no-default-features`；仅在milp-ffi顶层传此参数
+不会关闭其milp依赖的默认特性。实测范围和限制见大规模报告第17节。
+
 LP 求解器有两个实现，是**同一 LP 语义的两个实现**（比值测试、反循环、
 两阶段纪律的契约逐条写在 `simplex_sparse.rs` 模块头注释，改任一侧都要
 检查另一侧是否需要对齐）：
