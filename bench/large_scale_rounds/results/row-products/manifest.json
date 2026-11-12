@@ -1,0 +1,72 @@
+{
+  "source": {
+    "path": "/private/tmp/mic-sparse-row-products",
+    "commit": "1922ec93821f14022ffc916f2c083adaa2df9f69",
+    "tree": "325c14495a5b017fd7786ef26ad182f6a3fa0977"
+  },
+  "inputs": {
+    "lp-sparse-4000x800": {
+      "path": "/Users/guyuemochen/Desktop/projects/MIC/bench/instances/lp-sparse-4000x800.milp",
+      "sha256": "b38f475e7467ee44e768213a0576abab94527ad7fdb0ddffa8c6981bcf65f2bc"
+    },
+    "lp-wide-1000x2000": {
+      "path": "/Users/guyuemochen/Desktop/projects/MIC/bench/instances/lp-wide-1000x2000.milp",
+      "sha256": "d2f524bb3aeb416771d3763f978ac1274329b82653470abeef2646a0de12be01"
+    },
+    "setcover-300x600": {
+      "path": "/Users/guyuemochen/Desktop/projects/MIC/bench/instances/setcover-300x600.milp",
+      "sha256": "76cd09336751c59cbd3b7d6b86f671b09b969062237e035c7de77968482a8316"
+    },
+    "scan2-sparse-wide": {
+      "name": "scan2-sparse-wide",
+      "variables": 2400,
+      "rows": 500,
+      "density": 0.05,
+      "seed": 2026111201,
+      "sha256": "d5560b1fa4d4bf0f6c5565c200c1d68509b4246e80d1c9ed69613d0366f56067",
+      "path": "/private/tmp/mic-rounds-scan-holdouts/scan2-sparse-wide.milp"
+    },
+    "scan2-sparse-tall": {
+      "name": "scan2-sparse-tall",
+      "variables": 1000,
+      "rows": 1500,
+      "density": 0.08,
+      "seed": 2026111202,
+      "sha256": "a636264234396b3fbbd5f6ed46e99be1154c0ab0441e5ff5121b39b12050d696",
+      "path": "/private/tmp/mic-rounds-scan-holdouts/scan2-sparse-tall.milp"
+    },
+    "scan2-medium": {
+      "name": "scan2-medium",
+      "variables": 1600,
+      "rows": 800,
+      "density": 0.3,
+      "seed": 2026111203,
+      "sha256": "6da73eda409ec1b745b2347adf1e07689df570a9738700f5de4e827906272a08",
+      "path": "/private/tmp/mic-rounds-scan-holdouts/scan2-medium.milp"
+    },
+    "scan2-dense-wide": {
+      "name": "scan2-dense-wide",
+      "variables": 2000,
+      "rows": 500,
+      "density": 1.0,
+      "seed": 2026111204,
+      "sha256": "dce567c93ec35f98a96de119e8f45e987ccdc07d9f618444fd8dba59f6a829dd",
+      "path": "/private/tmp/mic-rounds-scan-holdouts/scan2-dense-wide.milp"
+    }
+  },
+  "holdout_manifest_sha256": "57527eacb212770170d46aae6ba47b0e30c7e3d19174f1e75c8b42a406bc5ed8",
+  "binaries": {
+    "off": {
+      "path": "/private/tmp/mic-row-base/release/examples/sparse_cost",
+      "sha256": "fcb64e3ac58ced1c4d3fe0b8a2becf02d7ff006bb617d4fbe222e2a81c8a46a3"
+    },
+    "on": {
+      "path": "/private/tmp/mic-row-candidate/release/examples/sparse_cost",
+      "sha256": "9cf8ccdd41f392c38c323983642ea8ae148ffb8521d0a88f1d4d683d49d6b623"
+    },
+    "diagnostic": {
+      "path": "/private/tmp/mic-row-diagnostic/release/examples/sparse_cost",
+      "sha256": "aa1bac0f4381479da8b5ca52d30bcd6e7a338c136a177f6e553ffe359e01b07f"
+    }
+  }
+}

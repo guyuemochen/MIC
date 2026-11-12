@@ -1,0 +1,391 @@
+{
+  "passed": true,
+  "gates": {
+    "correctness": true,
+    "target_time_ratio": true,
+    "geometric_time_ratio": true,
+    "per_case_time_ratio": true,
+    "peak_rss": true
+  },
+  "correctness_errors": [],
+  "target_time_ratio": 0.2678608153284447,
+  "geometric_time_ratio": 0.35226508147194835,
+  "thresholds": {
+    "target_time_ratio": 0.9,
+    "geometric_time_ratio": 0.95,
+    "per_case_time_ratio": 1.1,
+    "peak_rss_ratio": 1.1,
+    "peak_rss_delta_bytes": 8388608
+  },
+  "source": {
+    "path": "/private/tmp/mic-sparse-row-products",
+    "commit": "1922ec93821f14022ffc916f2c083adaa2df9f69",
+    "tree": "325c14495a5b017fd7786ef26ad182f6a3fa0977"
+  },
+  "binaries": {
+    "off": {
+      "path": "/private/tmp/mic-row-base/release/examples/sparse_cost",
+      "sha256": "fcb64e3ac58ced1c4d3fe0b8a2becf02d7ff006bb617d4fbe222e2a81c8a46a3"
+    },
+    "on": {
+      "path": "/private/tmp/mic-row-candidate/release/examples/sparse_cost",
+      "sha256": "9cf8ccdd41f392c38c323983642ea8ae148ffb8521d0a88f1d4d683d49d6b623"
+    },
+    "diagnostic": {
+      "path": "/private/tmp/mic-row-diagnostic/release/examples/sparse_cost",
+      "sha256": "aa1bac0f4381479da8b5ca52d30bcd6e7a338c136a177f6e553ffe359e01b07f"
+    }
+  },
+  "cases": [
+    {
+      "case": "lp-sparse-4000x800",
+      "status": "Optimal",
+      "objective_text": "5893.7057566182575",
+      "iterations": 2659,
+      "off_median_secs": 3.408565,
+      "on_median_secs": 0.913021,
+      "time_ratio": 0.2678608153284447,
+      "off_median_rss_bytes": 39501824,
+      "on_median_rss_bytes": 39567360,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 39501824,
+          "on_bytes": 39567360,
+          "ratio": 1.0016590626296142,
+          "delta_bytes": 65536,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 39518208,
+          "on_bytes": 39550976,
+          "ratio": 1.0008291873963515,
+          "delta_bytes": 32768,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 39419904,
+          "on_bytes": 39632896,
+          "ratio": 1.0054031587697423,
+          "delta_bytes": 212992,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 5319,
+          "row_product_hits": 5319,
+          "column_entries": 1297799406,
+          "touched_entries": 345417828,
+          "estimated_row_work": 430521828,
+          "hit_column_entries": 1297799406,
+          "hit_touched_entries": 345417828
+        },
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "case": "lp-wide-1000x2000",
+      "status": "Optimal",
+      "objective_text": "112.6002675915855",
+      "iterations": 732,
+      "off_median_secs": 2.251928,
+      "on_median_secs": 0.647548,
+      "time_ratio": 0.28755271038860925,
+      "off_median_rss_bytes": 190054400,
+      "on_median_rss_bytes": 190234624,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 190054400,
+          "on_bytes": 190234624,
+          "ratio": 1.000948275862069,
+          "delta_bytes": 180224,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 190054400,
+          "on_bytes": 190152704,
+          "ratio": 1.0005172413793104,
+          "delta_bytes": 98304,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 190054400,
+          "on_bytes": 190234624,
+          "ratio": 1.000948275862069,
+          "delta_bytes": 180224,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 1465,
+          "row_product_hits": 1465,
+          "column_entries": 2685771443,
+          "touched_entries": 130879749,
+          "estimated_row_work": 149924749,
+          "hit_column_entries": 2685771443,
+          "hit_touched_entries": 130879749
+        },
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "case": "setcover-300x600",
+      "status": "Optimal",
+      "objective_text": "131.46305476903697",
+      "iterations": 10331,
+      "off_median_secs": 1.652446,
+      "on_median_secs": 1.651707,
+      "time_ratio": 0.9995527841757007,
+      "off_median_rss_bytes": 10485760,
+      "on_median_rss_bytes": 10534912,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 10485760,
+          "on_bytes": 10534912,
+          "ratio": 1.0046875,
+          "delta_bytes": 49152,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 10534912,
+          "on_bytes": 10534912,
+          "ratio": 1.0,
+          "delta_bytes": 0,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 10485760,
+          "on_bytes": 10551296,
+          "ratio": 1.00625,
+          "delta_bytes": 65536,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 10325,
+          "row_product_hits": 1574,
+          "column_entries": 95162470,
+          "touched_entries": 117276666,
+          "estimated_row_work": 151349166,
+          "hit_column_entries": 18308500,
+          "hit_touched_entries": 9327239
+        },
+        "hit_rate": 0.1524455205811138
+      }
+    },
+    {
+      "case": "scan2-sparse-wide",
+      "status": "Optimal",
+      "objective_text": "13852.89863441684",
+      "iterations": 2556,
+      "off_median_secs": 1.248218,
+      "on_median_secs": 0.52785,
+      "time_ratio": 0.4228828618077932,
+      "off_median_rss_bytes": 11370496,
+      "on_median_rss_bytes": 11485184,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 11288576,
+          "on_bytes": 11501568,
+          "ratio": 1.0188679245283019,
+          "delta_bytes": 212992,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 11370496,
+          "on_bytes": 11468800,
+          "ratio": 1.0086455331412103,
+          "delta_bytes": 98304,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 11386880,
+          "on_bytes": 11485184,
+          "ratio": 1.00863309352518,
+          "delta_bytes": 98304,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 5113,
+          "row_product_hits": 5113,
+          "column_entries": 284016200,
+          "touched_entries": 132313379,
+          "estimated_row_work": 181909479,
+          "hit_column_entries": 284016200,
+          "hit_touched_entries": 132313379
+        },
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "case": "scan2-sparse-tall",
+      "status": "Optimal",
+      "objective_text": "3649.3927046034114",
+      "iterations": 1487,
+      "off_median_secs": 0.623921,
+      "on_median_secs": 0.392296,
+      "time_ratio": 0.6287590896924451,
+      "off_median_rss_bytes": 22511616,
+      "on_median_rss_bytes": 22577152,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 22478848,
+          "on_bytes": 22577152,
+          "ratio": 1.0043731778425655,
+          "delta_bytes": 98304,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 22528000,
+          "on_bytes": 22577152,
+          "ratio": 1.0021818181818183,
+          "delta_bytes": 49152,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 22511616,
+          "on_bytes": 22609920,
+          "ratio": 1.0043668122270741,
+          "delta_bytes": 98304,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 2975,
+          "row_product_hits": 2975,
+          "column_entries": 300306000,
+          "touched_entries": 40218039,
+          "estimated_row_work": 71455539,
+          "hit_column_entries": 300306000,
+          "hit_touched_entries": 40218039
+        },
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "case": "scan2-medium",
+      "status": "Optimal",
+      "objective_text": "980.8488775427141",
+      "iterations": 810,
+      "off_median_secs": 0.841832,
+      "on_median_secs": 0.183095,
+      "time_ratio": 0.21749588991627783,
+      "off_median_rss_bytes": 42467328,
+      "on_median_rss_bytes": 42565632,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 42467328,
+          "on_bytes": 42565632,
+          "ratio": 1.0023148148148149,
+          "delta_bytes": 98304,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 42483712,
+          "on_bytes": 42565632,
+          "ratio": 1.0019282684149633,
+          "delta_bytes": 81920,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 42434560,
+          "on_bytes": 42614784,
+          "ratio": 1.0042471042471042,
+          "delta_bytes": 180224,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 1621,
+          "row_product_hits": 1621,
+          "column_entries": 589827476,
+          "touched_entries": 69186559,
+          "estimated_row_work": 83451359,
+          "hit_column_entries": 589827476,
+          "hit_touched_entries": 69186559
+        },
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "case": "scan2-dense-wide",
+      "status": "Optimal",
+      "objective_text": "245.57086864014497",
+      "iterations": 101,
+      "off_median_secs": 0.138608,
+      "on_median_secs": 0.020955,
+      "time_ratio": 0.15118174997114164,
+      "off_median_rss_bytes": 94715904,
+      "on_median_rss_bytes": 94683136,
+      "rss_pairs": [
+        {
+          "rep": 0,
+          "off_bytes": 94715904,
+          "on_bytes": 94830592,
+          "ratio": 1.0012108631724614,
+          "delta_bytes": 114688,
+          "passed": true
+        },
+        {
+          "rep": 1,
+          "off_bytes": 94781440,
+          "on_bytes": 94650368,
+          "ratio": 0.9986171132238548,
+          "delta_bytes": -131072,
+          "passed": true
+        },
+        {
+          "rep": 2,
+          "off_bytes": 94715904,
+          "on_bytes": 94683136,
+          "ratio": 0.9996540390935824,
+          "delta_bytes": -32768,
+          "passed": true
+        }
+      ],
+      "rss_passed": true,
+      "diagnostic": {
+        "counters": {
+          "row_product_calls": 203,
+          "row_product_hits": 203,
+          "column_entries": 200620168,
+          "touched_entries": 9776886,
+          "estimated_row_work": 11502386,
+          "hit_column_entries": 200620168,
+          "hit_touched_entries": 9776886
+        },
+        "hit_rate": 1.0
+      }
+    }
+  ]
+}

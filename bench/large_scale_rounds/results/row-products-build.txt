@@ -1,0 +1,6 @@
+   Compiling milp v0.1.0 (/tmp/mic-sparse-row-products/milp)
+    Finished `release` profile [optimized] target(s) in 2.45s
+   Compiling milp v0.1.0 (/tmp/mic-sparse-row-products/milp)
+    Finished `release` profile [optimized] target(s) in 2.02s
+   Compiling milp v0.1.0 (/tmp/mic-sparse-row-products/milp)
+    Finished `release` profile [optimized] target(s) in 2.00s
