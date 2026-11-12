@@ -149,7 +149,9 @@ pub fn lp(
             ("iterations", iterations.into()),
             (
                 "iterations_scope",
-                if kind == "root_after_cuts" {
+                if kind == "root_snapshot_restore" {
+                    "restored_engine_cumulative"
+                } else if kind == "root_after_cuts" {
                     "bb_cumulative_at_stage"
                 } else {
                     "call"
@@ -159,7 +161,9 @@ pub fn lp(
             // B&B既有计数会随cut_loop内部重建重置一段；不冒充实际全部LP成本。
             (
                 "iterations_note",
-                if kind == "root_after_cuts" {
+                if kind == "root_snapshot_restore" {
+                    "restored_counter_not_new_lp_work"
+                } else if kind == "root_after_cuts" {
                     "production_counter_may_reset_on_rebuild"
                 } else {
                     "observed_call_delta"
@@ -169,7 +173,9 @@ pub fn lp(
             ("seconds", optional(seconds)),
             (
                 "seconds_scope",
-                if kind == "root_after_cuts" {
+                if kind == "root_snapshot_restore" {
+                    "snapshot_restore_not_lp_call"
+                } else if kind == "root_after_cuts" {
                     "root_cut_stage_including_rebuild"
                 } else {
                     "call"
@@ -792,6 +798,20 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn snapshot_restore_counters_do_not_claim_new_lp_work() {
+        reset(1);
+        lp("root_snapshot_restore", &LpSolution {
+            status: LpStatus::Optimal, objective: 2.0, x: vec![], duals: vec![],
+        }, 47, None, 0);
+        let trace = take();
+        let event = &trace.events[0];
+        assert_eq!(number(event, "iterations"), 47.0);
+        assert!(matches!(field(event, "iterations_scope"), Value::Text("restored_engine_cumulative")));
+        assert!(matches!(field(event, "iterations_note"), Value::Text("restored_counter_not_new_lp_work")));
+        assert!(matches!(field(event, "seconds_scope"), Value::Text("snapshot_restore_not_lp_call")));
+    }
+
     #[test]
     fn nonoptimal_objectives_and_nonfinite_numbers_never_become_json_bounds() {
         reset(1);
