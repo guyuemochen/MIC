@@ -874,7 +874,8 @@ fn batch_invalid_element_rejected_zero_mutation() {
     );
     // count>0 而数组指针 NULL → 1（以 vtypes=NULL 为例，直调避开辅助的
     // 长度推导）。
-    let one_name = [cs("a").as_ptr()];
+    let name = cs("a");
+    let one_name = [name.as_ptr()];
     let lbs1 = [0.0f64];
     let ubs1 = [1.0f64];
     expect(
