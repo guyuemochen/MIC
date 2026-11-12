@@ -14,7 +14,7 @@
 
 use crate::branch_bound::{is_integral, select_branch_var};
 use crate::model::{Problem, RelOp, Sense, Tolerances, VarType};
-use crate::simplex::{Bounds, LpStatus};
+use crate::simplex::{Bounds, LpSolution, LpStatus};
 use crate::simplex_sparse::LpEngine;
 
 /// 启发式得到的可行整数解。
@@ -24,6 +24,36 @@ pub struct Incumbent {
     pub objective: f64,
     /// 结构变量取值（整数变量已取整）。
     pub values: Vec<f64>,
+}
+
+/// 启发式共享的剩余 LP 工作预算；不用于数学剪枝，不修改引擎的时限或迭代提示。
+///
+/// 每次 resolve 前检查两项余额，返回后扣除实际迭代与一次调用（含失败、
+/// 反向重试和嵌套节点）。单次 resolve 仍受调用方原有限额控制，因此迭代
+/// 总量可超出预算一个调用；本预算不能保证给主搜索留下墙钟时间。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HeuristicWorkBudget {
+    pub iterations: u64,
+    pub lp_calls: u64,
+}
+
+/// 在实际调用边界统一记账，避免快照恢复或引擎重建影响跨启发式余额。
+fn resolve_with_work_budget(
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    budget: &mut Option<&mut HeuristicWorkBudget>,
+) -> Option<LpSolution> {
+    let Some(work) = budget.as_deref_mut() else {
+        return Some(simplex.resolve(bounds));
+    };
+    if work.iterations == 0 || work.lp_calls == 0 {
+        return None;
+    }
+    let before = simplex.iterations();
+    let sol = simplex.resolve(bounds);
+    work.iterations = work.iterations.saturating_sub(simplex.iterations().saturating_sub(before));
+    work.lp_calls -= 1;
+    Some(sol)
 }
 
 /// 简单取整 + 可行性复核。
@@ -118,6 +148,19 @@ pub fn dive(
     max_fixes: usize,
     tol: &Tolerances,
 ) -> Option<Incumbent> {
+    dive_with_work_budget(problem, simplex, bounds, lp_x, max_fixes, tol, None)
+}
+
+/// 带可选共享工作预算的潜水；None 严格保留旧调用顺序，耗尽时复核最后已知点。
+pub(crate) fn dive_with_work_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    lp_x: &[f64],
+    max_fixes: usize,
+    tol: &Tolerances,
+    mut budget: Option<&mut HeuristicWorkBudget>,
+) -> Option<Incumbent> {
     let n = problem.vars.len();
     if lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
         return None;
@@ -162,7 +205,9 @@ pub fn dive(
         dive_bounds.lb[j] = target;
         dive_bounds.ub[j] = target;
         fixes += 1;
-        let sol = simplex.resolve(&dive_bounds);
+        let Some(sol) = resolve_with_work_budget(simplex, &dive_bounds, &mut budget) else {
+            return round_and_check(problem, bounds, &cur_x, tol);
+        };
         match sol.status {
             LpStatus::Optimal => cur_x = sol.x,
             LpStatus::Infeasible if !flipped[j] => {
@@ -178,7 +223,9 @@ pub fn dive(
                     flipped[j] = true;
                     dive_bounds.lb[j] = other;
                     dive_bounds.ub[j] = other;
-                    let retry = simplex.resolve(&dive_bounds);
+                    let Some(retry) = resolve_with_work_budget(simplex, &dive_bounds, &mut budget) else {
+                        return round_and_check(problem, bounds, &cur_x, tol);
+                    };
                     match retry.status {
                         LpStatus::Optimal => cur_x = retry.x,
                         _ => {
@@ -269,6 +316,19 @@ pub fn sub_mip(
     incumbent_obj: Option<f64>,
     tol: &Tolerances,
 ) -> Option<Incumbent> {
+    sub_mip_with_work_budget(problem, simplex, bounds, root_lp_x, incumbent_obj, tol, None)
+}
+
+/// 带可选共享工作预算的受限搜索；所有嵌套节点共用同一余额。
+pub(crate) fn sub_mip_with_work_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    root_lp_x: &[f64],
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+    budget: Option<&mut HeuristicWorkBudget>,
+) -> Option<Incumbent> {
     let n = problem.vars.len();
     if root_lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
         return None;
@@ -294,7 +354,11 @@ pub fn sub_mip(
     if fractional == 0 {
         return None; // 根 LP 已全整：无受限邻域可搜（主流程按 (e) 记录）
     }
-    sub_mip_with_caps(
+    if budget.is_none() {
+        return sub_mip_with_caps(problem, simplex, bounds, &sub, incumbent_obj, tol,
+            SUB_MIP_MAX_DEPTH, SUB_MIP_NODE_LIMIT);
+    }
+    sub_mip_with_caps_and_budget(
         problem,
         simplex,
         bounds,
@@ -303,6 +367,8 @@ pub fn sub_mip(
         tol,
         SUB_MIP_MAX_DEPTH,
         SUB_MIP_NODE_LIMIT,
+        budget,
+        Some(root_lp_x),
     )
 }
 
@@ -321,6 +387,23 @@ pub(crate) fn sub_mip_with_caps(
     max_depth: u32,
     node_limit: u64,
 ) -> Option<Incumbent> {
+    sub_mip_with_caps_and_budget(problem, simplex, base, sub, incumbent_obj, tol,
+        max_depth, node_limit, None, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sub_mip_with_caps_and_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    base: &Bounds,
+    sub: &Bounds,
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+    max_depth: u32,
+    node_limit: u64,
+    budget: Option<&mut HeuristicWorkBudget>,
+    fallback_x: Option<&[f64]>,
+) -> Option<Incumbent> {
     let int_vars = problem.integer_vars();
     let mut ctx = SubMipCtx {
         problem,
@@ -333,13 +416,19 @@ pub(crate) fn sub_mip_with_caps(
         nodes_left: node_limit,
         max_depth,
         best: None,
+        budget,
     };
+    // 新增预算路径先复核最后已知根点，首次调用耗尽或失败也能保留候选。
+    // None 不增加候选或阈值更新，严格保持历史搜索顺序。
+    if ctx.budget.is_some() {
+        if let Some(x) = fallback_x { ctx.offer(x); }
+    }
     sub_mip_dfs(&mut ctx, simplex, sub, 0);
     ctx.best
 }
 
 /// 嵌套 DFS 的共享上下文（问题与容差只读引用 + 上限/阈值/预算/候选状态）。
-struct SubMipCtx<'a> {
+struct SubMipCtx<'a, 'b> {
     problem: &'a Problem,
     /// 原始根界（候选复核用——保证 incumbent 全局有效，与 dive 同契约）。
     base: &'a Bounds,
@@ -354,9 +443,10 @@ struct SubMipCtx<'a> {
     max_depth: u32,
     /// 已找到的最优候选。
     best: Option<Incumbent>,
+    budget: Option<&'b mut HeuristicWorkBudget>,
 }
 
-impl<'a> SubMipCtx<'a> {
+impl SubMipCtx<'_, '_> {
     /// 候选提取与采纳：对 LP 点做 [`round_and_check`] 复核（整数变量取整 +
     /// 逐行可行性核对 + 目标按 x 重算），通过且严格优于阈值才更新候选并
     /// 收紧阈值。
@@ -402,8 +492,10 @@ fn sub_mip_dfs(ctx: &mut SubMipCtx, simplex: &mut dyn LpEngine, node_bounds: &Bo
     if ctx.nodes_left == 0 {
         return; // 节点预算耗尽：整体停止（确定性封顶）
     }
+    let Some(sol) = resolve_with_work_budget(simplex, node_bounds, &mut ctx.budget) else {
+        return; // 已求解节点均已复核，保留现有候选，不将预算当成不可行证据。
+    };
     ctx.nodes_left -= 1;
-    let sol = simplex.resolve(node_bounds);
     if sol.status != LpStatus::Optimal {
         return; // 不可行 / 上限截断 / 数值异常：子树放弃
     }
@@ -967,6 +1059,108 @@ mod tests {
         let inc = dive(&q, &mut s2, &bnds2, &sol2.x, 0, &t).expect("整数解应直接返回");
         assert!((inc.objective - 3.0).abs() < 1e-9);
         assert_eq!(inc.values, vec![3.0]);
+    }
+
+    /// 使用真实 LP 引擎与剩余调用数核对重试和递归，避免以迭代为零误判未调用。
+    #[test]
+    fn work_budget_counts_dive_retry_and_checks_candidate() {
+        let mut p = Problem::new("预算反向重试", Sense::Minimize);
+        let x = p.add_var("x", VarType::Integer).unwrap();
+        p.set_var_bounds(x, 0.0, 5.0).unwrap();
+        p.set_objective(vec![(x, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(x, 1.0)], RelOp::Ge, 2.2).unwrap();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for calls in [0, 1, 2] {
+            let mut engine = Simplex::new(&p, t).unwrap();
+            let root = engine.solve(&b);
+            let before = engine.iterations();
+            let mut budget = HeuristicWorkBudget { iterations: 100, lp_calls: calls };
+            let inc = dive_with_work_budget(&p, &mut engine, &b, &root.x, 3, &t, Some(&mut budget));
+            assert_eq!(budget.lp_calls, 0);
+            assert_eq!(budget.iterations, 100u64.saturating_sub(engine.iterations() - before));
+            if calls < 2 {
+                assert!(inc.is_none(), "最后已知点取整为2违反原约束，不得返回");
+            } else {
+                assert_eq!(inc.unwrap().values, vec![3.0]);
+            }
+        }
+    }
+
+    #[test]
+    fn work_budget_zero_iterations_never_resolves_and_validates_root() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        let mut engine = Simplex::new(&p, t).unwrap();
+        let root = engine.solve(&b);
+        let before = engine.iterations();
+        let mut budget = HeuristicWorkBudget { iterations: 0, lp_calls: 10 };
+        assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut budget)).is_none());
+        assert!(sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).is_none());
+        assert_eq!(budget.lp_calls, 10);
+        assert_eq!(engine.iterations(), before);
+        // 零预算仍允许经过原模型校验的取整解，而非伪造“未找到”。
+        let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &[1.0, 1.2], None, &t, Some(&mut budget)).unwrap();
+        assert_eq!(inc.values, vec![1.0, 1.0]);
+        assert_eq!(budget.lp_calls, 10);
+    }
+
+    #[test]
+    fn work_budget_is_shared_by_nested_nodes_and_separate_heuristics() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        let mut engine = Simplex::new(&p, t).unwrap();
+        let root = engine.solve(&b);
+        let mut budget = HeuristicWorkBudget { iterations: 100, lp_calls: 2 };
+        let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).unwrap();
+        assert_eq!(inc.values, vec![1.0, 1.0]);
+        assert_eq!(budget.lp_calls, 0, "根及下行节点分别记账，上行不再调用");
+        let before = engine.iterations();
+        assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut budget)).is_none());
+        assert_eq!(engine.iterations(), before);
+    }
+
+    #[test]
+    fn work_budget_positive_iterations_stop_next_call() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let mut engine = Simplex::new(&p, tol()).unwrap();
+        let mut work = HeuristicWorkBudget { iterations: 1, lp_calls: 10 };
+        let mut budget = Some(&mut work);
+        let before = engine.iterations();
+        let sol = resolve_with_work_budget(&mut engine, &b, &mut budget).unwrap();
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!(engine.iterations() > before, "冷引擎确实消费正迭代数");
+        assert_eq!(budget.as_ref().unwrap().iterations, 0);
+        assert_eq!(budget.as_ref().unwrap().lp_calls, 9);
+        let after = engine.iterations();
+        assert!(resolve_with_work_budget(&mut engine, &b, &mut budget).is_none());
+        assert_eq!(engine.iterations(), after);
+        assert_eq!(budget.as_ref().unwrap().lp_calls, 9);
+    }
+
+    #[test]
+    fn work_budget_none_preserves_legacy_results_and_iterations() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for nested in [false, true] {
+            let mut old = Simplex::new(&p, t).unwrap();
+            let root = old.solve(&b);
+            let mut optional = old.clone();
+            let (a, z) = if nested {
+                (sub_mip(&p, &mut old, &b, &root.x, None, &t),
+                 sub_mip_with_work_budget(&p, &mut optional, &b, &root.x, None, &t, None))
+            } else {
+                (dive(&p, &mut old, &b, &root.x, 10, &t),
+                 dive_with_work_budget(&p, &mut optional, &b, &root.x, 10, &t, None))
+            };
+            assert_eq!(a.as_ref().map(|i| (&i.values, i.objective)), z.as_ref().map(|i| (&i.values, i.objective)));
+            assert_eq!(old.iterations(), optional.iterations());
+            assert_eq!(old.basis_columns(), optional.basis_columns());
+        }
     }
 
     // —— 根节点 sub-MIP 启发式（方向 1）——
