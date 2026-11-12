@@ -3154,6 +3154,11 @@ Devex权重、割行和快照的逐位一致性。
 完整入口对账（每次200节点、无墙钟停止）。终态、目标、界、gap、节点、LP迭代、
 割、RC统计和完整解向量全部相同。该组与其它测试并行，仅用于行为核验，不作计时证据。
 
+默认启用后，另以lp-sparse-4000x800走完整求解入口，MIC/HiGHS/SCIP各三次轮换，
+全部Optimal且原模型独立对账通过。三者本次中位分别0.920693/0.599326/1.444404秒。
+该例MIC已快于本设置下的SCIP，仍约为HiGHS的1.54倍耗时。这是单个生成LP的结果，
+不改变第15节公共MIP证明能力仍明显落后的结论。记录见`row-products-external-lp.jsonl`。
+
 裁决：默认开启`sparse_row_products`，保留`--no-default-features`旧路径用于复核；
 访问计数和分段计时只在各自诊断特性下编译。计时原始记录、源码/二进制/输入摘要及
 门槛裁决见`results/row-products/`，完整测试日志为`results/row-products-*.txt`。
