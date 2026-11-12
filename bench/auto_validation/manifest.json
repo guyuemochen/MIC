@@ -1,0 +1,339 @@
+{
+  "schema": 1,
+  "generator": "bench/auto_validation/generate.py",
+  "instances": [
+    {
+      "file": "packing_small_s12017.milp",
+      "sha256": "80d17b4286df9c24c2e9ab0185cf781d5fb8af6e1513e9133f5d2d48cf64f94e",
+      "parameters": {
+        "family": "packing_small",
+        "n": 80,
+        "m": 2,
+        "capacity_fraction": [
+          1,
+          2
+        ],
+        "correlated": false,
+        "seed": 12017
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_small_s12043.milp",
+      "sha256": "f81c072df7f6fea90dc30029638f3aca9d6b1b267a5b6848e5a6136f0b7746ab",
+      "parameters": {
+        "family": "packing_small",
+        "n": 80,
+        "m": 2,
+        "capacity_fraction": [
+          1,
+          2
+        ],
+        "correlated": false,
+        "seed": 12043
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_medium_s12017.milp",
+      "sha256": "69042c157d9d75616942a8db7860a5bff2e1195797698f8f85beaea31b01dd56",
+      "parameters": {
+        "family": "packing_medium",
+        "n": 160,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12017
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_medium_s12043.milp",
+      "sha256": "76150033ae3aca4bd386c653624e5cb32a34775d6b4e4a2b274c253b2c4a47af",
+      "parameters": {
+        "family": "packing_medium",
+        "n": 160,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12043
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_many_rows_s12017.milp",
+      "sha256": "e8d5a6125e553728e7fca9840b4d8b22ca18ceb65c9192c2d7635c06e5978f41",
+      "parameters": {
+        "family": "packing_many_rows",
+        "n": 240,
+        "m": 7,
+        "capacity_fraction": [
+          1,
+          8
+        ],
+        "correlated": false,
+        "seed": 12017
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_many_rows_s12043.milp",
+      "sha256": "4bc24d22b294747b8d7be30755b28cbdc028cf0f3dfac7d47f6cad1047cec957",
+      "parameters": {
+        "family": "packing_many_rows",
+        "n": 240,
+        "m": 7,
+        "capacity_fraction": [
+          1,
+          8
+        ],
+        "correlated": false,
+        "seed": 12043
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_correlated_s12017.milp",
+      "sha256": "1ba6575c821087d1d6c7baa77cfa959d5092d4ce2ce23bb719704d9d29388f19",
+      "parameters": {
+        "family": "packing_correlated",
+        "n": 300,
+        "m": 5,
+        "capacity_fraction": [
+          1,
+          6
+        ],
+        "correlated": true,
+        "seed": 12017
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "packing_correlated_s12043.milp",
+      "sha256": "6d01b1b2b175394ba8f3b46120f6b62ae260f4f125369687564814193e3c7fea",
+      "parameters": {
+        "family": "packing_correlated",
+        "n": 300,
+        "m": 5,
+        "capacity_fraction": [
+          1,
+          6
+        ],
+        "correlated": true,
+        "seed": 12043
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_n199.milp",
+      "sha256": "c8372ec375033410b3a63607154e0b9adbcc48a5673bc4045c2087ce4c3f0f0d",
+      "parameters": {
+        "family": "boundary_n199",
+        "n": 199,
+        "m": 2,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_n200.milp",
+      "sha256": "3a8680159a21007c41c63568aee27e754ffb56ed1764bd17db0fe189a61e6caf",
+      "parameters": {
+        "family": "boundary_n200",
+        "n": 200,
+        "m": 2,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_n512_m16.milp",
+      "sha256": "ebf6b3da2146e0163f42b7d51f2499c64b6dec1ebc1fe8e0aa9dd05b50523b9b",
+      "parameters": {
+        "family": "boundary_n512_m16",
+        "n": 512,
+        "m": 16,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_n513_m16.milp",
+      "sha256": "ae00adcb8b08a07f4ad488bb49b567a7902e663c94ee0eaabfd96cc5d2431719",
+      "parameters": {
+        "family": "boundary_n513_m16",
+        "n": 513,
+        "m": 16,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_m1.milp",
+      "sha256": "6e7aeb0811950b697c534766f67cc5eb7ae13ee524a7b8dfe9018cf4dd05d47f",
+      "parameters": {
+        "family": "boundary_m1",
+        "n": 240,
+        "m": 1,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "boundary_m17.milp",
+      "sha256": "a54ff773449ada6641ee564a8cafed9f9ee40107ac6e06cc610c6770aca9941e",
+      "parameters": {
+        "family": "boundary_m17",
+        "n": 240,
+        "m": 17,
+        "capacity_fraction": [
+          1,
+          3
+        ],
+        "correlated": false,
+        "seed": 12071
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "sparse_packing.milp",
+      "sha256": "f41cdd5f1a2c1cb87778a84fa2179f6bcc0c4a7faf4a2048d88b9b9abb41815e",
+      "parameters": {
+        "family": "sparse_packing",
+        "n": 220,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12203,
+        "density": 0.25
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "minimization.milp",
+      "sha256": "d9cff78c719eea234b879b138066812f5972477cbd47f7085812fc46aa0e8084",
+      "parameters": {
+        "family": "minimization",
+        "n": 220,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12203,
+        "sense": "min"
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "negative_objective.milp",
+      "sha256": "35cf3f29c501df35d809ad30f9cbe6b8e3cbe2ffb42b02eead2e2513ba9d4da7",
+      "parameters": {
+        "family": "negative_objective",
+        "n": 220,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12203,
+        "negative_objective": true
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "negative_coefficient.milp",
+      "sha256": "d1358bdec4fa9b7a1bf127ce024e04bbcdb0c55f62129347e33023df4291f709",
+      "parameters": {
+        "family": "negative_coefficient",
+        "n": 220,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12203,
+        "negative_coefficient": true
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "ge_rows.milp",
+      "sha256": "80bc79560f5bdf34a242508425840d46a9642b00367ca8a74e4e8e25848f12af",
+      "parameters": {
+        "family": "ge_rows",
+        "n": 220,
+        "m": 4,
+        "capacity_fraction": [
+          1,
+          5
+        ],
+        "correlated": false,
+        "seed": 12203,
+        "greater": true
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "covering_60x100_s12101.milp",
+      "sha256": "8cce5788db3ffc14cfbba20434518a486f5537b3c5cf4c417d6825b53cc9faff",
+      "parameters": {
+        "family": "covering",
+        "n": 100,
+        "m": 60,
+        "row_nnz": 10,
+        "seed": 12101
+      },
+      "known_optimum": null
+    },
+    {
+      "file": "covering_120x200_s12109.milp",
+      "sha256": "019dedd0ea85d0c19e09fc08f46069a9aabb76cdde9b2f2bc72aa5bb2e2d376a",
+      "parameters": {
+        "family": "covering",
+        "n": 200,
+        "m": 120,
+        "row_nnz": 20,
+        "seed": 12109
+      },
+      "known_optimum": null
+    }
+  ]
+}
