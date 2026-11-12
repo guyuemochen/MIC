@@ -833,7 +833,8 @@ fn acceptance_heuristic_auto_optimal() {
 /// 控制器可补跑 dive；目标不变）。nodes 为 A+B 叠加实测钉值。
 #[test]
 fn acceptance_cli_heuristic_on_identical() {
-    let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on"]);
+    // 保留S13历史节点基线，隔离启发式/RC行为；新默认传播另验确定性与真值。
+    let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on", "--binary-propagation", "off"]);
     assert_eq!(code, Some(0), "{stdout}");
     // 演进：根 dive 供应 incumbent 227→235；整数目标 cutoff 235→211；根
     // 覆盖割 211→195；默认 Pseudocost + 可靠性探测 + best-estimate 压栈序
@@ -1074,4 +1075,18 @@ fn acceptance_pc_probes_zero_passive_parity() {
         (probed.objective.unwrap() - p1.objective.unwrap()).abs() <= 1e-6,
         "探测预算只改统计不剪枝 ⇒ 目标必须一致"
     );
+}
+
+
+#[test]
+fn acceptance_cli_binary_propagation_auto_matches_on() {
+    let path = instance_path("hard-knapsack-12");
+    let default = cli(&[&path, "--heuristic-mode", "on"]);
+    let explicit = cli(&[&path, "--heuristic-mode", "on", "--binary-propagation", "on"]);
+    let repeated = cli(&[&path, "--heuristic-mode", "on", "--binary-propagation", "auto"]);
+    assert_eq!(default, explicit, "单线程默认Auto与显式On行为一致");
+    assert_eq!(default, repeated, "Auto重复求解输出确定");
+    assert_eq!(default.0, Some(0));
+    assert!(default.1.starts_with("status = optimal\n"));
+    assert!(default.1.ends_with("objective = 523.000000\n"));
 }

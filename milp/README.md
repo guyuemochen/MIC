@@ -47,7 +47,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -72,6 +72,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--determinism wall\|budget` | 确定性模式（W3）：`wall`（默认）= 现状（时限/自适应/降级按墙钟判定，长跑终态随机器状态漂移）；`budget` = 纯预算制——`--time-limit-secs` 换算为节点预算（6,000 节点/秒），全部墙钟判定改为等价节点数预算，决策路径零墙钟读点 ⇒ **同参数双跑全部行为字段逐字节相同**（仅 `--threads 1`，与 ≥2 组合报错；慢机上墙钟可超名义值——确定性优先） | `wall` | 非 `wall\|budget` token / 重复出现报错 |
 | `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）= 类自适应——表格规模 m×(n+m) ≥ 10^6 格 ⇒ revised，阈下留 tableau（小算例走旧路径防 codegen 扰动）；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
 | `--root-rc-fixing on\|off` | reduced-cost 变量固定**两级总开关**（大规模轮 S12 根阶段固定 + S13 树内再应用同门控，映射 `BbOptions.root_rc_fixing`）：`on` = 根阶段按对偶界固定非基贴界整数列 + 树内 incumbent 严格改进时以更小 τ 对同一根基快照再固定（均保最优，见「深度优先分支定界」一节）；`off` = 两级全关（不捕获快照、不挂触发、取交零开销直通），复现 S12 之前的旧行为 | `on` | 非 `on\|off` token / 缺参 / 重复出现报错（等号/空格两式） |
+| `--binary-propagation auto\|on\|off` | 精确二元静态行传播：`auto` 按用户请求的线程数一次解析，单线程开启、多线程关闭（包括内部顺序小树探测）；`on` 显式开启，`off` 完全关闭。只接受能认证为共同二进制格点、且格距严格大于验收容差的二元行，其余交回 LP；不读取根割或局部割 | `auto` | 显式 `on` 与多线程组合报错；缺参、重复或未知值报错，支持等号和空格形式 |
 | `--verbose` | Optimal 时先输出固定机制统计三行（`rc_fixed` / `rc_reapplies` / `rc_refixed`，S13；全 0 也如实输出），再逐行输出变量取值 | 关 | — |
 
 可选混合节点策略示例：
@@ -656,6 +657,17 @@ worker 重放的即过闸后的行。丢割永远安全（只丢界强度）。�
 knapsack-2000/mknap 节点数变化与目标恒同对账）见
 `docs/large-scale-report.md` S7 节。
 
+### 精确二元静态行传播
+
+二元静态行传播对应库字段 `BbOptions.binary_row_propagation`，类型为
+`BinaryPropagationMode::{Auto, On, Off}`。默认 `Auto` 在最外层求解入口按请求线程数解析，
+所以并行调度内部暂用单线程探测小树时不会意外开启。显式 `On` 仍仅支持单线程。
+传播在树节点 LP 之前处理工作模型原有行，推导只写精确 0/1 界并随节点回退；
+未完成的传播不会报告不可行。`BbStats.propagation` 单独记录认证行、扫描、固定和冲突，
+冲突剪枝不计作 LP 节点。根部已闭合及 `Off` 模式均不构造传播数据库。
+本文早期轮次记录的固定节点数与迭代数以 `--binary-propagation off` 复现；
+新默认保留最优值和单线程确定性，但传播剪枝会改变搜索节点数。
+
 ### 预处理（WP3；W5 增 R5 等价列聚合）
 
 保守规则五类且可证明安全，每轮严格按 **R1→R2→R3→R4→R5** 顺序施加，禁止
@@ -767,7 +779,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 91 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定后 93→95、S13 树内再固定后 95→91，`--heuristic-mode off` 复现 159、`--root-rc-fixing=off` 复现 93；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 91 节点（threads=1、`--binary-propagation off` 的历史口径——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定后 93→95、S13 树内再固定后 95→91，`--heuristic-mode off` 复现 159、`--root-rc-fixing=off` 复现 93；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 

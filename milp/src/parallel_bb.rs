@@ -76,7 +76,7 @@ use std::time::{Duration, Instant};
 
 use crate::branch_bound::{
     bound_no_better, capture_root_rc_cache, incumbent_improved, is_integral, probe_reliability,
-    BbOptions, BbStats, BranchRule, NodeRule, RcRefixState,
+    BbOptions, BbStats, BinaryPropagationMode, BranchRule, NodeRule, RcRefixState,
 };
 use crate::cuts::{self, CutOptions};
 use crate::error::{MilpError, Result};
@@ -808,9 +808,12 @@ pub fn parallel_branch_and_bound(
     tol: Tolerances,
 ) -> Result<ParallelOutcome> {
     let start = Instant::now();
-    if opts.binary_row_propagation {
+    if opts.binary_row_propagation == BinaryPropagationMode::On {
         return Err(MilpError::InvalidModel("二元静态行传播试验仅支持单线程".to_string()));
     }
+    // 直接公开入口也消费Auto为Off，不能把未解析模式传给后续工作节点。
+    let resolved_opts = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..*opts };
+    let opts = &resolved_opts;
     if opts.reuse_probe_evidence {
         return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
     }

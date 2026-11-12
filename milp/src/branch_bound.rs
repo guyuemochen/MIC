@@ -134,6 +134,28 @@ pub enum NodeRule {
     HybridBestBound,
 }
 
+/// 二元静态行传播模式；自动模式只按最外层请求线程数解析一次。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BinaryPropagationMode {
+    /// 完全关闭，不构造传播数据库。
+    Off,
+    /// 显式开启；不支持多线程请求。
+    On,
+    /// 单线程开启，多线程关闭（包括并行入口的顺序小树探测）。
+    #[default]
+    Auto,
+}
+
+impl BinaryPropagationMode {
+    pub(crate) fn resolve(self, threads: usize) -> Self {
+        match self {
+            Self::Auto if threads == 1 => Self::On,
+            Self::Auto => Self::Off,
+            explicit => explicit,
+        }
+    }
+}
+
 pub use crate::binary_propagation::PropagationStats;
 use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome};
 
@@ -177,8 +199,8 @@ pub struct BbOptions {
     /// 试验：复用当前节点强分支中最终选中变量的已证不可行方向与子节点界。
     /// 默认 false；仅顺序路径。证据不跨节点/局部割作用域缓存，不复用 LP 解或基。
     pub reuse_probe_evidence: bool,
-    /// 试验：精确二元静态行传播。默认 false，仅顺序树节点，不读取割。
-    pub binary_row_propagation: bool,
+    /// 精确二元静态行传播。默认 Auto，仅用户请求单线程时开启，不读取割。
+    pub binary_row_propagation: BinaryPropagationMode,
     /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
     /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
     /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
@@ -258,7 +280,7 @@ impl Default for BbOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             reuse_probe_evidence: false,
-            binary_row_propagation: false,
+            binary_row_propagation: BinaryPropagationMode::Auto,
             mitm_windows: 8,
             global_work_stack: false,
             work_stack_auto: true,
@@ -347,7 +369,7 @@ pub struct BbStats {
     /// 树内再应用累计新固定的整数变量数（S13-A；不含根阶段 [`Self::rc_fixed`]。
     /// 列一旦固定即 lb=ub，后续轮次天然跳过 ⇒ 计数不重）。纯记账。
     pub rc_refixed: u64,
-    /// 默认关闭的二元静态行传播统计；不计入 LP 节点数。
+    /// 二元静态行传播统计；不计入 LP 节点数。
     pub propagation: PropagationStats,
 }
 
@@ -473,7 +495,7 @@ pub fn branch_and_bound_controlled(
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
-    if opts.binary_row_propagation && ctrl.threads != 1 {
+    if opts.binary_row_propagation == BinaryPropagationMode::On && ctrl.threads != 1 {
         return Err(MilpError::InvalidModel("二元静态行传播试验仅支持单线程".to_string()));
     }
     if opts.reuse_probe_evidence && ctrl.threads != 1 {
@@ -482,7 +504,10 @@ pub fn branch_and_bound_controlled(
     if opts.node_rule == NodeRule::HybridBestBound && (opts.local_cuts || ctrl.threads != 1) {
         return Err(MilpError::InvalidModel("混合节点策略仅支持单线程且 local_cuts=false".to_string()));
     }
-    let opts = &resolve_branch_rule_defaults(problem, opts);
+    let mut resolved_opts = resolve_branch_rule_defaults(problem, opts);
+    // 必须早于并行分派：小树探测会临时把ctrl.threads改为1，不能重新开启Auto。
+    resolved_opts.binary_row_propagation = opts.binary_row_propagation.resolve(ctrl.threads);
+    let opts = &resolved_opts;
     if ctrl.threads >= 2 {
         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
         // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
@@ -515,6 +540,7 @@ fn sequential_bb(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
     let start = Instant::now();
     let int_vars = problem.integer_vars();
     let sense = problem.sense;
@@ -1167,7 +1193,7 @@ fn sequential_bb(
                 continue;
             }
         }
-        if opts.binary_row_propagation {
+        if opts.binary_row_propagation == BinaryPropagationMode::On {
             let state = propagation.get_or_insert_with(|| BinaryPropagation::new(problem, tol));
             // RC 覆盖层不记 trail；即使本次取交未改界，也必须重播种全部日志。
             // 深层父域已闭包，只有分支界与 RC 前提可能新增静态行推论。
@@ -2717,7 +2743,7 @@ fn small_tree_gate_applies(problem: &Problem, opts: &BbOptions) -> bool {
 /// （[`small_tree_gate_applies`] 且顺序探测在 [`SMALL_TREE_PROBE_NODES`]
 /// 预算内出终态——Optimal/Infeasible/Unbounded，或 gap/降级/时限等与
 /// threads=1 同口径的诚实截断）⇒ 直接返回：**threads ≥ 2 的输出与
-/// threads=1 逐字节相同**（同一条确定性代码路径），免掉池协调/worker 冷
+/// 显式关闭传播的threads=1逐字节相同**（同一条确定性代码路径），免掉池协调/worker 冷
 /// 启动开销；预算耗尽（LimitReached 且 nodes ≥ 预算且非 gap/降级）⇒ 树
 /// 不小，丢弃探测、并行从零派发（既有行为 + 有界前缀浪费；进度行在门未
 /// 命中时会重复发射首行——probe 与并行各一次，--log-secs 用户可见，纯
@@ -3295,14 +3321,16 @@ mod tests {
     /// 历史基线 57 cuts / 2,120 节点 = W6 前，回归钉）。
     #[test]
     fn local_cuts_fire_deterministically_and_toggle_restores() {
+        // 历史W6节点/割计数只测局部割；传播与真实割出域的组合另有专项覆盖。
+        let legacy = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..BbOptions::default() };
         let path = format!(
             "{}/../bench/instances/mknap-3x100.milp",
             env!("CARGO_MANIFEST_DIR")
         );
         let problem = crate::instance::load_instance(std::path::Path::new(&path))
             .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
-        let on1 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
-        let on2 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        let on1 = branch_and_bound(&problem, &legacy, tol()).unwrap();
+        let on2 = branch_and_bound(&problem, &legacy, tol()).unwrap();
         assert_eq!(on1.status, SolveStatus::Optimal);
         assert_close(on1.best_objective.unwrap(), 2331.0);
         // 确定性：行为字段双跑逐字节。
@@ -3328,7 +3356,7 @@ mod tests {
             &problem,
             &BbOptions {
                 local_cuts: false,
-                ..BbOptions::default()
+                ..legacy
             },
             tol(),
         )
@@ -3339,7 +3367,7 @@ mod tests {
             &problem,
             &BbOptions {
                 local_cuts: false,
-                ..BbOptions::default()
+                ..legacy
             },
             &SearchControl {
                 adaptive_heuristics: true,
@@ -3379,6 +3407,8 @@ mod tests {
     /// （整数节点复核 round_and_check 属跨模块联调路径，见相关用例）。
     fn plain_opts() -> BbOptions {
         BbOptions {
+            // 此组旧机制测试隔离LP分支/节点计数，显式关闭独立的行传播。
+            binary_row_propagation: BinaryPropagationMode::Off,
             root_cuts: false,
             heuristics: false,
             ..BbOptions::default()
@@ -3396,6 +3426,7 @@ mod tests {
     #[test]
     fn bb_options_default_contract() {
         let o = BbOptions::default();
+        assert_eq!(o.binary_row_propagation, BinaryPropagationMode::Auto);
         assert_eq!(o.branch_rule, BranchRule::MostFractional);
         assert_eq!(o.node_rule, NodeRule::DepthFirst);
         assert_eq!(o.node_limit, 2_000_000);
@@ -3495,9 +3526,10 @@ mod tests {
             172.0,
         )
         .unwrap();
+        // 本测试隔离旧小树调度等价性；Auto的外层线程差异另有专门用例。
         let t1 = branch_and_bound_controlled(
             &p,
-            &BbOptions::default(),
+            &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..BbOptions::default() },
             &SearchControl::default(),
             tol(),
             None,
@@ -3516,6 +3548,8 @@ mod tests {
             None,
         )
         .unwrap();
+        assert_eq!(t1.stats.propagation.calls, 0);
+        assert_eq!(t4.stats.propagation.calls, 0);
         assert_eq!(t4.status, t1.status);
         assert_eq!(t4.best_objective, t1.best_objective);
         assert_eq!(t4.best_values, t1.best_values, "取值逐字节（含并列破键序）");
@@ -3875,6 +3909,8 @@ mod tests {
         let p = rc_fix_fire_problem();
         // heuristics = false ⇒ 根阶段无 incumbent ⇒ rc_fixed = 0（选项开）。
         let opts = BbOptions {
+            // 隔离RC是否跳过根固定的旧节点计数，不让传播替代子节点LP。
+            binary_row_propagation: BinaryPropagationMode::Off,
             root_cuts: false,
             heuristics: false,
             root_rc_fixing: true,
@@ -5924,7 +5960,7 @@ mod binary_propagation_tests {
     }
 
     fn options(engine: LpEngineKind) -> BbOptions {
-        BbOptions { binary_row_propagation: true, branch_rule_auto: false,
+        BbOptions { binary_row_propagation: BinaryPropagationMode::On, branch_rule_auto: false,
             branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
             local_cuts: false, root_rc_fixing: false, lp_engine: engine, ..BbOptions::default() }
     }
@@ -5942,7 +5978,7 @@ mod binary_propagation_tests {
                     for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
                         for rc in [false, true] {
                             let opts = BbOptions { node_rule: rule, root_rc_fixing: rc, ..options(engine) };
-                            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: false, ..opts }, tol).unwrap();
+                            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts }, tol).unwrap();
                             let on = branch_and_bound(&p, &opts, tol).unwrap();
                             assert_eq!(off.status, on.status, "seed={seed} engine={engine:?} rule={rule:?} rc={rc}");
                             assert_eq!(on.best_objective, exact);
@@ -6060,7 +6096,7 @@ mod binary_propagation_tests {
         p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
         for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
             let on = branch_and_bound(&p, &options(engine), Tolerances::default()).unwrap();
-            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: false, ..options(engine) }, Tolerances::default()).unwrap();
+            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..options(engine) }, Tolerances::default()).unwrap();
             assert_eq!(on.status, SolveStatus::Optimal);
             assert_eq!(on.best_objective, Some(0.0));
             assert_eq!(on.stats.propagation.calls, 2);
@@ -6125,7 +6161,7 @@ mod binary_propagation_tests {
         let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
         for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
             let audit = LocalScopeAudit::new();
-            let opts = BbOptions { binary_row_propagation: true, root_cuts: false,
+            let opts = BbOptions { binary_row_propagation: BinaryPropagationMode::On, root_cuts: false,
                 local_cuts: true, lp_engine: engine, ..BbOptions::default() };
             let result = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
             assert_eq!(result.status, SolveStatus::Optimal);
@@ -6135,6 +6171,59 @@ mod binary_propagation_tests {
             assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
             assert_eq!(result.stats.propagation.accepted_rows, p.constraints.len() as u64,
                 "传播数据库只含工作模型静态行，不能把局部割纳入全局行");
+        }
+    }
+
+    #[test]
+    fn binary_propagation_auto_resolves_once_before_parallel_small_tree_prefix() {
+        let mut p = Problem::new("自动传播外层线程解析", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 0.5), (1, 0.5)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.25).unwrap();
+        p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+        let tol = Tolerances::default();
+        let auto = BbOptions { binary_row_propagation: BinaryPropagationMode::Auto, ..options(LpEngineKind::Tableau) };
+        let on = BbOptions { binary_row_propagation: BinaryPropagationMode::On, ..auto };
+        let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..auto };
+        let automatic = branch_and_bound(&p, &auto, tol).unwrap();
+        let explicit = branch_and_bound(&p, &on, tol).unwrap();
+        assert_eq!(automatic.status, explicit.status);
+        assert_eq!(automatic.best_values, explicit.best_values);
+        assert_eq!(automatic.bound, explicit.bound);
+        assert_eq!(automatic.stats.nodes, explicit.stats.nodes);
+        assert_eq!(automatic.stats.lp_iterations, explicit.stats.lp_iterations);
+        assert_eq!(automatic.stats.propagation.fixes, explicit.stats.propagation.fixes);
+        assert!(automatic.stats.propagation.calls > 0);
+        let disabled = branch_and_bound(&p, &off, tol).unwrap();
+        assert_eq!(disabled.stats.propagation.accepted_rows, 0);
+        assert_eq!(disabled.stats.propagation.calls, 0);
+        assert!(disabled.stats.nodes > automatic.stats.nodes);
+        assert!(small_tree_gate_applies(&p, &auto));
+        assert!(resolve_work_stack_mode(&p, &auto).1, "实际命中自动工作栈的小树前缀入口");
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let parallel_prefix = {
+            // 若临时threads=1错误重开传播，会立刻返回LimitReached，不能伪装成通过。
+            let _deadline = crate::binary_propagation::TestDeadlineGuard::on_check(1);
+            branch_and_bound_controlled(&p, &auto, &ctrl, tol, None).unwrap()
+        };
+        assert_eq!(parallel_prefix.status, SolveStatus::Optimal);
+        assert_eq!(parallel_prefix.stats.nodes, disabled.stats.nodes);
+        assert_eq!(parallel_prefix.stats.lp_iterations, disabled.stats.lp_iterations);
+        assert_eq!(parallel_prefix.stats.propagation.calls, 0);
+        assert_eq!(parallel_prefix.stats.propagation.accepted_rows, 0);
+        assert!(branch_and_bound_controlled(&p, &on, &ctrl, tol, None).is_err());
+        let config = crate::parallel_bb::ParallelConfig { threads: 2, mipgap_percent: None,
+            adaptive_heuristics: false, degrade: DegradePolicy::disabled(), log_period_secs: None, progress: None };
+        for opts in [auto, off] {
+            let forced_parallel = BbOptions { work_stack_auto: false, ..opts };
+            let outer = branch_and_bound_controlled(&p, &forced_parallel, &ctrl, tol, None).unwrap();
+            assert_eq!(outer.status, SolveStatus::Optimal);
+            assert_eq!(outer.stats.propagation.calls, 0);
+            let direct = crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, tol).unwrap();
+            assert_eq!(direct.best_objective, Some(0.0));
+            assert_eq!(direct.stats.propagation.calls, 0);
+            assert_eq!(direct.stats.propagation.accepted_rows, 0);
         }
     }
 

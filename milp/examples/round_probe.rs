@@ -1,5 +1,5 @@
 //! 单次求解探针与原模型导出。用于基准，不执行额外的根 LP。
-use milp::branch_bound::{BranchRule, NodeRule, SearchControl};
+use milp::branch_bound::{BinaryPropagationMode, BranchRule, NodeRule, SearchControl};
 use milp::instance::{load_instance, write_instance};
 use milp::model::{Constraint, LinearExpr, Problem, RelOp, Sense, SolveStatus, VarType, Variable};
 use milp::search_ctrl::{gap_percent, DegradePolicy};
@@ -141,7 +141,12 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
             }
             "--pc-probes" => opts.bb.pc_reliability_probes = value.parse()?,
             "--probe-reuse" => opts.bb.reuse_probe_evidence = toggle(value)?,
-            "--binary-propagation" => opts.bb.binary_row_propagation = toggle(value)?,
+            "--binary-propagation" => opts.bb.binary_row_propagation = match value {
+                "auto" => BinaryPropagationMode::Auto,
+                "on" => BinaryPropagationMode::On,
+                "off" => BinaryPropagationMode::Off,
+                _ => return Err(format!("未知传播模式 {value}，期望 auto|on|off").into()),
+            },
             "--early-stop" => {
                 ctrl.degrade = if toggle(value)? {
                     DegradePolicy::default()

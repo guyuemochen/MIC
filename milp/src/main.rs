@@ -2,7 +2,7 @@
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
 //! [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
+//! [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -36,7 +36,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use milp::branch_bound::{BbOptions, BranchRule, NodeRule, SearchControl, SearchHooks};
+use milp::branch_bound::{BinaryPropagationMode, BbOptions, BranchRule, NodeRule, SearchControl, SearchHooks};
 use milp::instance::load_instance;
 use milp::model::{Problem, SolveStatus, Tolerances};
 use milp::search_ctrl::{format_progress_line, Determinism, ProgressInfo};
@@ -44,7 +44,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]\n\
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]\n\
 --early-stop 默认 on：auto 模式有时间预算时允许停滞提前退出；off 仅关闭此策略，保留自适应启发式。时间、节点、LP迭代上限与 --mipgap 仍生效。";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
@@ -136,6 +136,8 @@ struct Config {
     ///（S12）+ incumbent 严格改进时的树内再应用（S13-A）。off ⇒ 两级全关
     ///（S12 之前的旧行为）。
     root_rc_fixing: bool,
+    /// 二元静态行传播；自动模式按外层请求线程数选择。
+    binary_row_propagation: BinaryPropagationMode,
 }
 
 fn main() -> ExitCode {
@@ -209,6 +211,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut determinism: Option<Determinism> = None;
     let mut lp_engine: Option<milp::simplex_sparse::LpEngineKind> = None;
     let mut root_rc_fixing: Option<bool> = None;
+    let mut binary_row_propagation: Option<BinaryPropagationMode> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -511,6 +514,25 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             lp_engine = Some(v);
+        } else if arg == "--binary-propagation" || arg.starts_with("--binary-propagation=") {
+            if binary_row_propagation.is_some() {
+                return Err(format!("`--binary-propagation` 重复出现（{USAGE}）"));
+            }
+            let value: String = if let Some(v) = arg.strip_prefix("--binary-propagation=") {
+                v.to_string()
+            } else {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!("`--binary-propagation` 缺少参数 auto|on|off（{USAGE}）"));
+                };
+                value.to_string()
+            };
+            binary_row_propagation = Some(match value.as_str() {
+                "auto" => BinaryPropagationMode::Auto,
+                "on" => BinaryPropagationMode::On,
+                "off" => BinaryPropagationMode::Off,
+                other => return Err(format!("未知 --binary-propagation 值 `{other}`（期望 auto|on|off，{USAGE}）")),
+            });
         } else if arg == "--root-rc-fixing" || arg.starts_with("--root-rc-fixing=") {
             if root_rc_fixing.is_some() {
                 return Err(format!("`--root-rc-fixing` 重复出现（{USAGE}）"));
@@ -553,6 +575,10 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     // 但 CLI 用户应看到用法信息而非「内部错误」前缀）。
     let determinism = determinism.unwrap_or(Determinism::Wall);
     let threads = threads.unwrap_or(1);
+    let binary_row_propagation = binary_row_propagation.unwrap_or_default();
+    if binary_row_propagation == BinaryPropagationMode::On && threads != 1 {
+        return Err(format!("`--binary-propagation on` 仅支持 `--threads 1`（{USAGE}）"));
+    }
     let node_rule = node_rule.unwrap_or(NodeRule::DepthFirst);
     let local_cuts = local_cuts.unwrap_or(true);
     if node_rule == NodeRule::HybridBestBound && (local_cuts || threads != 1) {
@@ -603,6 +629,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // S13-C：默认 on（对齐 BbOptions.root_rc_fixing 库默认）；off 关闭
         // 根固定与树内再应用两级。
         root_rc_fixing: root_rc_fixing.unwrap_or(true),
+        binary_row_propagation,
     })
 }
 
@@ -633,7 +660,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
             reuse_probe_evidence: false,
-            binary_row_propagation: false,
+            binary_row_propagation: config.binary_row_propagation,
             mitm_windows: if config.mitm { 8 } else { 0 },
             local_cuts: config.local_cuts,
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；
@@ -877,6 +904,7 @@ mod tests {
             determinism: Determinism::Wall,
             lp_engine: milp::simplex_sparse::LpEngineKind::Auto,
             root_rc_fixing: true,
+            binary_row_propagation: BinaryPropagationMode::Auto,
         }
     }
 
@@ -1739,4 +1767,24 @@ mod tests {
         assert_eq!(problem.num_vars(), 12);
         assert_eq!(problem.constraints.len(), 1);
     }
+    #[test]
+    fn binary_propagation_parsing_mapping_and_parallel_validation() {
+        assert_eq!(parse_args(&args(&["a.milp"])).unwrap().binary_row_propagation, BinaryPropagationMode::Auto);
+        for (token, mode) in [("auto", BinaryPropagationMode::Auto), ("on", BinaryPropagationMode::On), ("off", BinaryPropagationMode::Off)] {
+            for argv in [args(&["a.milp", "--binary-propagation", token]), args(&["a.milp", &format!("--binary-propagation={token}")])] {
+                let config = parse_args(&argv).unwrap();
+                assert_eq!(config.binary_row_propagation, mode);
+                assert_eq!(solve_options_from(&config).bb.binary_row_propagation, mode);
+            }
+        }
+        for argv in [args(&["a.milp", "--binary-propagation"]), args(&["a.milp", "--binary-propagation=bad"]),
+            args(&["a.milp", "--binary-propagation", "on", "--binary-propagation=off"]),
+            args(&["a.milp", "--binary-propagation", "on", "--threads", "2"])] {
+            assert!(parse_args(&argv).is_err());
+        }
+        for token in ["auto", "off"] {
+            assert!(parse_args(&args(&["a.milp", "--binary-propagation", token, "--threads", "2"])).is_ok());
+        }
+    }
+
 }
