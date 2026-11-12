@@ -8,7 +8,7 @@ import platform
 import subprocess
 import sys
 
-from compare import invoke, positive_integer, require, result, sha
+from compare import RssPreflightError, invoke, positive_integer, preflight_rss, require, result, sha
 from run_probe import AUTO_CASES, METADATA
 from run_proof_diagnostics import MODERN, STATUSES, baseline_rows
 from run_propagation import canonical_hash
@@ -120,6 +120,7 @@ def execute(command, seconds):
 def run(manifest, source, legacy, modern, seconds, reps, variants, output):
     require(not output.exists(), f'已有结果文件 {output}')
     validate_variants(variants)
+    preflight_rss()
     src = source_info(source)
     manifest_hash = sha(manifest)
     binaries = load_binaries(manifest, variants)
@@ -164,6 +165,9 @@ def main():
         return run(args.binaries.resolve(), args.source.resolve(), args.legacy_baseline.resolve(),
                    args.modern_baseline.resolve(), args.seconds, args.reps, args.variants,
                    args.output.resolve())
+    except RssPreflightError as error:
+        print(error, file=sys.stderr)
+        return 1
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError) as error:
         print(f'根阶段对照输入无效：{error}', file=sys.stderr)
         return 1

@@ -287,6 +287,20 @@ def invoke(command, seconds, rss=False):
     return row
 
 
+class RssPreflightError(RuntimeError):
+    """当前环境无法可靠测量独立进程的峰值 RSS。"""
+
+
+def preflight_rss():
+    try:
+        sample = invoke([sys.executable, '-c', "print('{}')"], 10, rss=True)
+        rss = sample.get('peak_rss_bytes')
+        require(type(rss) in (int, float) and math.isfinite(rss) and rss > 0,
+                f'未取得有限的正值峰值 RSS：{rss!r}')
+    except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
+        raise RssPreflightError(f'RSS 计时环境预检失败：{error}') from error
+
+
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 

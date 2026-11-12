@@ -7,7 +7,7 @@ import platform
 import subprocess
 import sys
 
-from compare import positive_integer, require, sha
+from compare import RssPreflightError, positive_integer, preflight_rss, require, sha
 from run_root_work import NODE_LIMIT, error_row, execute, schedule, settings, stage
 from run_row_products import source_info
 
@@ -40,6 +40,7 @@ def run(feature, manifest, source, legacy, modern, seconds, reps, output):
     require(feature in FEATURES, f'未知试验特性：{feature}')
     require((seconds, reps) in WINDOWS, '筛查使用 10 秒一次，配对使用 30 秒三次')
     require(not output.exists(), f'已有结果文件 {output}')
+    preflight_rss()
     source_data = source_info(source)
     manifest_hash = sha(manifest)
     binaries = load_binaries(manifest, feature)
@@ -85,6 +86,9 @@ def main():
         return run(args.feature, args.binaries.resolve(), args.source.resolve(),
                    args.legacy_baseline.resolve(), args.modern_baseline.resolve(), args.seconds,
                    args.reps, args.output.resolve())
+    except RssPreflightError as error:
+        print(error, file=sys.stderr)
+        return 1
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError) as error:
         print(f'单特性对照输入无效：{error}', file=sys.stderr)
         return 1
