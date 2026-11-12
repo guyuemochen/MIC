@@ -17,3 +17,6 @@ proof_profile = []
 
 # 根预割启发式后恢复完整最优基快照，默认关闭的性能试验。
 root_snapshot_restore = []
+
+# 根启发式共享LP工作上限，默认关闭的性能试验。
+root_heuristic_work_budget = []

@@ -698,6 +698,17 @@ fn sequential_bb(
     let mut proven_root_bound = None;
     remember_root_bound(sense, &mut proven_root_bound, &sol);
 
+    // 总预算只扣启发式LP工作，跨预割/割后共享，不随根重建或快照归零。
+    #[cfg(feature = "root_heuristic_work_budget")]
+    let mut root_work_budget = heuristics::HeuristicWorkBudget {
+        iterations: simplex.iterations().saturating_mul(4).max(1000),
+        lp_calls: 1000,
+    };
+    #[cfg(feature = "root_heuristic_work_budget")]
+    let mut root_work_budget = Some(&mut root_work_budget);
+    #[cfg(not(feature = "root_heuristic_work_budget"))]
+    let mut root_work_budget: Option<&mut heuristics::HeuristicWorkBudget> = None;
+
     // —— 根预割启发式（仅 root_cuts 开启时额外执行一轮）——
     // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更紧
     // 但取整/潜水质量下降——max 背包类：纯 LP 贪心顶点仅容量断点一个分数
@@ -713,13 +724,14 @@ fn sequential_bb(
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc);
         }
-        if let Some(inc) = heuristics::dive(
+        if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             opts.dive_max_fixes,
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
             maybe_update(sense, &mut incumbent, inc);
         }
@@ -740,6 +752,13 @@ fn sequential_bb(
             ) {
                 maybe_update(sense, &mut incumbent, inc);
             }
+        }
+        #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+        if let Some(budget) = root_work_budget.as_deref() {
+            crate::proof_profile::record("root_heuristic_budget", vec![
+                ("remaining_iterations", budget.iterations.into()),
+                ("remaining_lp_calls", budget.lp_calls.into()),
+            ]);
         }
         // dive 扰动了 Simplex 内部基：割循环入口的防御性 resolve(bounds) 只
         // 恢复 Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
@@ -936,13 +955,14 @@ fn sequential_bb(
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc);
         }
-        if let Some(inc) = heuristics::dive(
+        if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             opts.dive_max_fixes,
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
             maybe_update(sense, &mut incumbent, inc);
         }
@@ -955,13 +975,14 @@ fn sequential_bb(
         // round_and_check 复核（逐行可行性 + 目标按 x 重算）后仅以严格更优
         // 经 maybe_update 入池；启发式绝不影响状态判定。置于 MITM 之前
         //（廉价 LP 驱动先于昂贵组合枚举，命中即免 MITM）。
-        if let Some(inc) = heuristics::sub_mip(
+        if let Some(inc) = heuristics::sub_mip_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             incumbent.as_ref().map(|(o, _)| *o),
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
             maybe_update(sense, &mut incumbent, inc);
         }
@@ -975,6 +996,13 @@ fn sequential_bb(
             ) {
                 maybe_update(sense, &mut incumbent, inc);
             }
+        }
+        #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+        if let Some(budget) = root_work_budget.as_deref() {
+            crate::proof_profile::record("root_heuristic_budget", vec![
+                ("remaining_iterations", budget.iterations.into()),
+                ("remaining_lp_calls", budget.lp_calls.into()),
+            ]);
         }
         // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
         // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。

@@ -987,6 +987,17 @@ pub fn parallel_branch_and_bound(
         if let Some(status) = root_terminal_status(sol.status) {
             terminal = Some(status);
         }
+        // 总预算只扣启发式LP工作，跨预割/割后共享，不随根重建或快照归零。
+        #[cfg(feature = "root_heuristic_work_budget")]
+        let mut root_work_budget = heuristics::HeuristicWorkBudget {
+            iterations: simplex.iterations().saturating_mul(4).max(1000),
+            lp_calls: 1000,
+        };
+        #[cfg(feature = "root_heuristic_work_budget")]
+        let mut root_work_budget = Some(&mut root_work_budget);
+        #[cfg(not(feature = "root_heuristic_work_budget"))]
+        let mut root_work_budget: Option<&mut heuristics::HeuristicWorkBudget> = None;
+
         // —— 根预割启发式（镜像顺序侧 branch_bound.rs 根预割轮；LP Optimal
         // 且 root_cuts && heuristics 时额外执行一轮）——
         // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更
@@ -1002,13 +1013,14 @@ pub fn parallel_branch_and_bound(
             if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
-            if let Some(inc) = heuristics::dive(
+            if let Some(inc) = heuristics::dive_with_work_budget(
                 problem,
                 &mut simplex,
                 &bounds,
                 &sol.x,
                 opts.dive_max_fixes,
                 &tol,
+                root_work_budget.as_deref_mut(),
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
@@ -1022,6 +1034,13 @@ pub fn parallel_branch_and_bound(
                 ) {
                     maybe_update_local(sense, &mut incumbent, inc);
                 }
+            }
+            #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+            if let Some(budget) = root_work_budget.as_deref() {
+                crate::proof_profile::record("root_heuristic_budget", vec![
+                    ("remaining_iterations", budget.iterations.into()),
+                    ("remaining_lp_calls", budget.lp_calls.into()),
+                ]);
             }
             // dive 扰动 Simplex 内部基：割循环入口的防御性 resolve 只恢复
             // Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
@@ -1118,13 +1137,14 @@ pub fn parallel_branch_and_bound(
             if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
-            if let Some(inc) = heuristics::dive(
+            if let Some(inc) = heuristics::dive_with_work_budget(
                 problem,
                 &mut simplex,
                 &bounds,
                 &sol.x,
                 opts.dive_max_fixes,
                 &tol,
+                root_work_budget.as_deref_mut(),
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
@@ -1132,13 +1152,14 @@ pub fn parallel_branch_and_bound(
             // 定界）：与顺序路径同实现同口径（heuristics::sub_mip；确定性
             // 深限/节点上限，无墙钟读点、无随机数），保持 threads≥2 根阶段
             // incumbent 供应与 t1 一致；置于 MITM 之前（命中即免 MITM）。
-            if let Some(inc) = heuristics::sub_mip(
+            if let Some(inc) = heuristics::sub_mip_with_work_budget(
                 problem,
                 &mut simplex,
                 &bounds,
                 &sol.x,
                 incumbent.as_ref().map(|(o, _)| *o),
                 &tol,
+                root_work_budget.as_deref_mut(),
             ) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
@@ -1152,6 +1173,13 @@ pub fn parallel_branch_and_bound(
                 ) {
                     maybe_update_local(sense, &mut incumbent, inc);
                 }
+            }
+            #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+            if let Some(budget) = root_work_budget.as_deref() {
+                crate::proof_profile::record("root_heuristic_budget", vec![
+                    ("remaining_iterations", budget.iterations.into()),
+                    ("remaining_lp_calls", budget.lp_calls.into()),
+                ]);
             }
             // dive / sub-MIP 扰动了 Simplex 内部基：真实界 resolve 回取（记账性）。
             sol = simplex.resolve(&bounds);
