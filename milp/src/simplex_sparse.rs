@@ -11,7 +11,8 @@
 //! - **同一两阶段纪律**：Phase-1 = min Σ人工；最优值 > tol.feasibility ⇒
 //!   Infeasible；人工列**从不允许入基**（定价只扫静态列段，比『禁再入基』
 //!   更强且同安全）；Phase-1 后残基人工变量值清零并尽力驱赶出基（t=0 主元，
-//!   最小下标非人工候选），整行无候选的人工变量留基值恒 0；
+//!   最小下标非人工候选），整行无候选的人工变量留基值恒 0；清理中的数值
+//!   失败保留 Phase-1 欠账并报告 IterationLimit，不得继续 Phase-2；
 //! - **同一比值测试语义**（F7 全部点名项）：基变量上下界阻挡 + 入基变量
 //!   自身界翻转；主元 |p| ≥ tol.pivot 才允许出基，方向阻挡但主元过小 ⇒
 //!   FilteredBlock（数值失败）；无任何阻挡（含翻转不可用）⇒ NoBlock ⇒
@@ -607,6 +608,51 @@ impl LuScratch {
 #[derive(Debug, Clone)]
 struct LuError(String);
 
+/// 仅测试：在真实重构的破坏性写入后制造一次失败，复现调用间恢复纪律。
+/// 线程局部配置有作用域回退，不影响并行运行的其它测试。
+#[cfg(test)]
+mod refactor_fault {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) enum Kind { Lu, NonfiniteValue }
+    #[derive(Clone, Copy)]
+    struct State { kind: Kind, after_pivot: bool, armed: bool, consumed: bool }
+    std::thread_local! {
+        static STATE: std::cell::Cell<Option<State>> = const { std::cell::Cell::new(None) };
+    }
+    pub(super) struct Guard(Option<State>);
+    impl Guard {
+        pub(super) fn new(kind: Kind, after_pivot: bool) -> Self {
+            Self(STATE.with(|v| v.replace(Some(State { kind, after_pivot,
+                armed: !after_pivot, consumed: false }))))
+        }
+        pub(super) fn consumed(&self) -> bool {
+            STATE.with(|v| v.get().is_some_and(|s| s.consumed))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { STATE.with(|v| v.set(self.0)); }
+    }
+    pub(super) fn after_pivot() -> bool {
+        STATE.with(|v| {
+            let Some(mut s) = v.get() else { return false; };
+            if !s.after_pivot || s.consumed { return false; }
+            s.after_pivot = false;
+            s.armed = true;
+            v.set(Some(s));
+            true
+        })
+    }
+    pub(super) fn take(kind: Kind) -> bool {
+        STATE.with(|v| {
+            let Some(mut s) = v.get() else { return false; };
+            if !s.armed || s.consumed || s.kind != kind { return false; }
+            s.consumed = true;
+            v.set(Some(s));
+            true
+        })
+    }
+}
+
 /// Gilbert-Peierls 左视稀疏 LU（阈值主元 + 行填充代理破键）。
 ///
 /// 输入：`cols[k]` = 基矩阵第 k 列的 (原始行, 值) 列表（可乱序；零值忽略）。
@@ -682,6 +728,11 @@ fn factorize_into(
     f.u_diag.clear();
     f.u_diag.resize(m, 0.0);
     f.perm.clear();
+
+    #[cfg(test)]
+    if refactor_fault::take(refactor_fault::Kind::Lu) {
+        return Err(LuError("测试注入：因子化清空旧因子后失败".to_string()));
+    }
 
     for k in 0..m {
         // —— 模式 + scatter：a_k 非零行（重复行条目累加）+ 经 L 列闭包
@@ -1140,6 +1191,10 @@ pub struct SparseSimplex {
     /// add_row 追加了行/列后的脏标记：下一次 solve/resolve 入口整基重
     /// 因子化 + 重算 x_B（割批共享一次；F6『数值上宜随后重构』的落法）。
     factorization_dirty: bool,
+    /// refactor会破坏性覆盖旧LU。失败后不得再用LU/ETA热启动；下一次
+    /// resolve先按当前完整矩阵与新界冷重建。与add_row的待重构标记分开：
+    /// dirty仍有合法旧基，broken则连旧因子都不可读取。Clone保留此状态。
+    factorization_broken: bool,
     /// 上次 Phase-1 未清理即收场 / add_row 新建人工列（resolve 必须重跑
     /// Phase-1 的欠账记账，语义同 simplex.rs）。
     phase1_pending: bool,
@@ -1312,6 +1367,7 @@ impl SparseSimplex {
             refactor_cols: Vec::new(),
             etas: Vec::new(),
             factorization_dirty: false,
+            factorization_broken: true,
             phase1_pending: false,
             has_run: false,
             infeasible_flag: false,
@@ -1624,8 +1680,9 @@ impl SparseSimplex {
         // 具体时刻的非基集选择无关——框架只经权重生效；置于任何贴界/修复
         // 主元之前，其后 dual_repair / Phase-1 的主元照常更新权重）。
         self.devex_reset();
-        if !self.has_run {
-            // 尚无可用热状态：退化为冷启动（整基重建两阶段）。
+        if !self.has_run || self.factorization_broken {
+            // 尚无可用热状态，或此前重构已损坏因子：在snap/FTRAN/BTRAN
+            // 前冷重建，保留矩阵（含追加行）、调用界与既有时间/迭代预算。
             self.bounds.lb.clone_from(&bounds.lb);
             self.bounds.ub.clone_from(&bounds.ub);
             self.rebuild_initial_basis();
@@ -2383,6 +2440,8 @@ impl SparseSimplex {
         let _cost_guard = cost_profile::enter(0);
         let m = self.basis.len();
         let ncs = self.ncols_static();
+        // LU和x_B都重建成功才可清除此标记；任何?或显式Err均保留无效态。
+        self.factorization_broken = true;
         // 列权：(行 or nnz, 基位置)。
         let mut units: Vec<(usize, usize)> = Vec::new(); // (唯一行, bp)
         let mut multis: Vec<(usize, usize)> = Vec::new(); // (nnz, bp)
@@ -2453,6 +2512,10 @@ impl SparseSimplex {
         }
         let mut xb = vec![0.0; m];
         self.lu.ftran_dense(&self.work, &mut xb);
+        #[cfg(test)]
+        if refactor_fault::take(refactor_fault::Kind::NonfiniteValue) {
+            xb[0] = f64::NAN;
+        }
         for v in xb.iter() {
             if !v.is_finite() {
                 self.lu = LuFactors::default();
@@ -2463,6 +2526,7 @@ impl SparseSimplex {
         self.x_b = xb;
         self.just_refactored = true;
         self.factorization_dirty = false;
+        self.factorization_broken = false;
         Ok(())
     }
 
@@ -3217,7 +3281,10 @@ impl SparseSimplex {
         // 复位本次主元计数，逐次短 resolve 永不触发周期重构 ⇒ ETA 无界增长
         //（S4 实测 setcover-300x600 上 470 条，每次 FTRAN/BTRAN 多付
         // |etas|×m 次乘加，节点级热启动被拖垮）。
-        if self.eta_over_limit() {
+        let refactor_due = self.eta_over_limit();
+        #[cfg(test)]
+        let refactor_due = refactor_due || refactor_fault::after_pivot();
+        if refactor_due {
             self.refactor()?;
         }
         Ok(())
@@ -3245,6 +3312,12 @@ impl SparseSimplex {
     // ---- 内部：阶段循环 ----
 
     fn run_two_phase(&mut self, phase1_needed: bool) -> LpStatus {
+        // 初始基重建也可能数值失败（例如有限输入的运算溢出）；不能让
+        // 定价/人工清理读取损坏因子。rebuild_initial_basis已记下失败原因。
+        if self.factorization_broken {
+            self.phase1_pending |= phase1_needed && self.num_art > 0;
+            return LpStatus::IterationLimit;
+        }
         if phase1_needed && self.num_art > 0 {
             match self.run_phase(1) {
                 PhaseOutcome::Failed(msg) => {
@@ -3278,7 +3351,11 @@ impl SparseSimplex {
                         self.phase1_pending = true;
                         return LpStatus::Infeasible;
                     }
-                    self.cleanup_after_phase1();
+                    if let Err(msg) = self.cleanup_after_phase1() {
+                        self.numerical_error = Some(msg);
+                        self.phase1_pending = true;
+                        return LpStatus::IterationLimit;
+                    }
                     self.phase1_pending = false;
                     // Devex：Phase-1 基演进（含清理期 t=0 主元）期间的权重
                     // 对 Phase-2 已失参考意义——切换点重置为当前非基集。
@@ -3443,7 +3520,7 @@ impl SparseSimplex {
 
     /// Phase-1 后处理（与 simplex.rs 同款）：残基人工变量值清零并尽力以
     /// t=0 主元驱赶出基（最小下标候选）；无候选的人工变量留基值恒 0。
-    fn cleanup_after_phase1(&mut self) {
+    fn cleanup_after_phase1(&mut self) -> std::result::Result<(), String> {
         let ncs = self.ncols_static();
         for i in 0..self.basis.len() {
             if self.basis[i] < ncs {
@@ -3476,15 +3553,14 @@ impl SparseSimplex {
                 self.ftran_col(pick);
                 if self.alpha[i].abs() >= self.tol.pivot {
                     // t=0 主元：x_B 不动（δ·0·α = 0），x_B[r] = 入基旧界值。
-                    if self.do_pivot(pick, i, delta, 0.0, false).is_err() {
-                        // 重因子化也失败：保持人工变量留基（值 0），后续
-                        // 终检/数值通道兜底。
-                        break;
-                    }
+                    // do_pivot先交换基再重构；失败时人工变量不一定仍留基，
+                    // LU也可能已损坏，必须向上传播，不能继续Phase-2。
+                    self.do_pivot(pick, i, delta, 0.0, false)?;
                 }
                 self.count_step(0.0);
             }
         }
+        Ok(())
     }
 
     // ---- 内部：解构造 ----
@@ -3718,6 +3794,117 @@ mod tests {
                     rhs,
                 })
                 .collect(),
+        }
+    }
+
+    /// 重试中的LU失败既可能清空perm，也可能把整个lu重置；两者都不能
+    /// 在下一次resolve的snap/FTRAN之前当作仍可热启动的状态。
+    #[test]
+    fn refactor_failure_next_resolve_recovers_before_snap() {
+        let p = prob(Sense::Maximize,
+            vec![var("x", 0.0, 2.0), var("y", 0.0, 2.0)], vec![(0, 1.0)],
+            vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.0)]);
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            assert_eq!(sp.solve(&bounds).status, LpStatus::Optimal);
+            assert!(!sp.just_refactored && sp.etas.len() < ETA_REFLOOR_FLOOR as usize);
+            // 使真实price走数值重试；随后恢复成本，模型本身没有变化。
+            sp.c_internal[1] = f64::NAN;
+            let failed = {
+                let fault = refactor_fault::Guard::new(kind, false);
+                let result = sp.resolve(&bounds);
+                assert!(fault.consumed());
+                result
+            };
+            sp.c_internal[1] = 0.0;
+            assert_eq!(failed.status, LpStatus::IterationLimit);
+            assert!(failed.objective.is_nan());
+            assert!(sp.etas.len() < ETA_REFLOOR_FLOOR as usize);
+            let mut invalid = bounds.clone();
+            invalid.lb[1] = f64::NAN;
+            assert_eq!(sp.resolve(&invalid).status, LpStatus::IterationLimit,
+                "非法调用早退不能清除待恢复状态");
+            let mut snapshot = sp.clone();
+            // y原本非基贴下界，改变它的下界会在旧代码里先消费损坏LU。
+            let mut changed = bounds.clone();
+            changed.lb[1] = 0.25;
+            let mut dense = DenseSimplex::new(&p, tol).unwrap();
+            let expected = dense.solve(&changed);
+            let recovered = sp.resolve(&changed);
+            assert_eq!(recovered.status, LpStatus::Optimal);
+            assert!((recovered.objective - expected.objective).abs() < 1e-9);
+            assert!((recovered.objective - 0.75).abs() < 1e-9);
+            // Clone须携带无效状态；恢复必须保留快照里的矩阵和后来追加行。
+            snapshot.add_row(&[(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            dense.add_row(&[(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            let with_cut = snapshot.resolve(&changed);
+            let expected_cut = dense.resolve(&changed);
+            assert_eq!(with_cut.status, LpStatus::Optimal);
+            assert!((with_cut.objective - expected_cut.objective).abs() < 1e-9);
+            assert!((with_cut.objective - 0.5).abs() < 1e-9);
+        }
+    }
+
+    /// -x=0且x>=0：Phase-1初始人工变量为0，定价已最优，人工变量只能
+    /// 在清理阶段以零步换出。失败注入发生在这次真实换基之后的重构。
+    #[test]
+    fn refactor_failure_during_cleanup_stops_before_phase_two() {
+        let p = prob(Sense::Maximize, vec![var("x", 0.0, 1.0)], vec![(0, 1.0)],
+            vec![(vec![(0, -1.0)], RelOp::Eq, 0.0)]);
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        let expected = DenseSimplex::new(&p, tol).unwrap().solve(&bounds);
+        assert_eq!(expected.status, LpStatus::Optimal);
+        assert_eq!(expected.objective, 0.0);
+        for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            let failed = {
+                let fault = refactor_fault::Guard::new(kind, true);
+                let result = sp.solve(&bounds);
+                assert!(fault.consumed(), "必须命中清理阶段换基后的重构");
+                result
+            };
+            assert_eq!(failed.status, LpStatus::IterationLimit);
+            assert!(failed.objective.is_nan());
+            assert!(sp.phase1_pending, "清理未完成不能清除Phase-1欠账");
+            assert_eq!(sp.basis[0], 0, "失败前换基已发生，不能谎称人工变量仍留基");
+            let mut snapshot = sp.clone();
+            for candidate in [&mut sp, &mut snapshot] {
+                let recovered = candidate.resolve(&bounds);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, expected.objective);
+                assert!(!candidate.phase1_pending);
+            }
+        }
+    }
+
+    #[test]
+    fn refactor_failure_initial_basis_never_enters_phase_loops() {
+        let p = prob(Sense::Maximize, vec![var("x", 0.0, 2.0)], vec![(0, 1.0)],
+            vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&p);
+        for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+            let mut sp = SparseSimplex::new(&p, tol).unwrap();
+            let failed = {
+                let fault = refactor_fault::Guard::new(kind, false);
+                let result = sp.solve(&bounds);
+                assert!(fault.consumed());
+                result
+            };
+            assert_eq!(failed.status, LpStatus::IterationLimit);
+            assert!(failed.objective.is_nan());
+            assert_eq!(sp.iterations(), 0, "初始重构失败后不能开始主元迭代");
+            sp.set_time_deadline(Some(std::time::Instant::now() - std::time::Duration::from_secs(1)));
+            let timed_out = sp.resolve(&bounds);
+            assert_eq!(timed_out.status, LpStatus::TimeLimit, "安全恢复不能清除已有时限");
+            assert!(timed_out.objective.is_nan());
+            sp.set_time_deadline(None);
+            let recovered = sp.solve(&bounds);
+            assert_eq!(recovered.status, LpStatus::Optimal);
+            assert_eq!(recovered.objective, 1.0);
         }
     }
 
