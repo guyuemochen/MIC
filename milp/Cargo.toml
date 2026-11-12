@@ -21,6 +21,9 @@ root_snapshot_restore = []
 # 根启发式共享LP工作上限，默认关闭的性能试验。
 root_heuristic_work_budget = []
 
+# 根启发式单次resolve严格按换基/界翻转工作步扣费，默认关闭。
+root_heuristic_work_limit = ["root_heuristic_work_budget"]
+
 # 完整预处理后仅加强负二元系数，默认关闭的证明性能试验。
 binary_coefficient_strengthening = []
 

@@ -185,6 +185,78 @@ pub enum LpStatus {
     TimeLimit,
 }
 
+/// 一次 LP 调用借用的工作步余额，不属于引擎状态，快照/重建不能重领。
+/// 一个真实主元或界翻转扣一步；定价、重构及未执行的候选不扣费。
+/// 已开始主元包含原有的周期维护，最后一步也须完成；余额为零只阻止
+/// 下一轮或额外重试/回退，不能抢断原子操作或保证硬墙钟。
+/// 关闭实验特性时为空对象，检查与扣费均编译为无操作。
+pub(crate) struct LpWorkLimit<'a> {
+    #[cfg(feature = "root_heuristic_work_limit")]
+    remaining: Option<&'a mut u64>,
+    _marker: std::marker::PhantomData<&'a mut u64>,
+}
+
+impl<'a> LpWorkLimit<'a> {
+    pub(crate) fn unlimited() -> Self {
+        Self {
+            #[cfg(feature = "root_heuristic_work_limit")]
+            remaining: None,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    #[cfg(feature = "root_heuristic_work_limit")]
+    pub(crate) fn limited(remaining: &'a mut u64) -> Self {
+        Self { remaining: Some(remaining), _marker: std::marker::PhantomData }
+    }
+
+    #[inline]
+    pub(crate) fn can_start(&self, steps: u64) -> bool {
+        #[cfg(feature = "root_heuristic_work_limit")]
+        if let Some(remaining) = &self.remaining {
+            return **remaining >= steps;
+        }
+        let _ = steps;
+        true
+    }
+
+    /// 只在实际修改前调用；BFRT须先预检整批，逐项执行时才逐项扣款。
+    #[inline]
+    pub(crate) fn charge_step(&mut self) {
+        #[cfg(feature = "root_heuristic_work_limit")]
+        if let Some(remaining) = &mut self.remaining {
+            assert!(**remaining > 0, "工作步必须先检查余额再执行");
+            **remaining -= 1;
+        }
+    }
+
+    /// 新预算的退出点仍尊重原绝对期限；未设期限则不读钟。
+    pub(crate) fn limit_status(&self, deadline: Option<std::time::Instant>) -> LpStatus {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            LpStatus::TimeLimit
+        } else {
+            LpStatus::IterationLimit
+        }
+    }
+
+    #[inline]
+    pub(crate) fn stop_status(&self, deadline: Option<std::time::Instant>) -> Option<LpStatus> {
+        (!self.can_start(1)).then(|| self.limit_status(deadline))
+    }
+
+    /// 只在受限入口检查期限；普通resolve保留原有条件读钟的位置。
+    #[inline]
+    pub(crate) fn entry_status(&self, deadline: Option<std::time::Instant>) -> Option<LpStatus> {
+        #[cfg(feature = "root_heuristic_work_limit")]
+        if self.remaining.is_some() {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return Some(LpStatus::TimeLimit);
+            }
+        }
+        self.stop_status(deadline)
+    }
+}
+
 /// 结构变量当前上下界（分支定界只改这个，不改 Problem）。
 #[derive(Debug, Clone)]
 pub struct Bounds {
@@ -488,6 +560,8 @@ enum DualRepair {
     /// 不适用 / 超出预算 / 数值异常 ⇒ 调用方回退整基重建（语义与既有
     /// 冷路径完全一致，快路径只加速、绝不改变结果）。
     GiveUp,
+    /// 本次调用的工作步/期限耗尽，不得进入下一层修复或重建。
+    Stopped(LpStatus),
 }
 
 impl Simplex {
@@ -702,6 +776,16 @@ impl Simplex {
 
     /// 热启动求解：非基双向 snap+传播 → 必要时 Phase-1 修复 → Phase-2。
     pub fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.resolve_with_limit(bounds, &mut LpWorkLimit::unlimited())
+    }
+
+    /// 仅限制本次调用中的真实主元/界翻转；不修改原hint、期限或统计口径。
+    #[cfg(feature = "root_heuristic_work_limit")]
+    pub fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution {
+        self.resolve_with_limit(bounds, &mut LpWorkLimit::limited(remaining_steps))
+    }
+
+    fn resolve_with_limit(&mut self, bounds: &Bounds, work: &mut LpWorkLimit<'_>) -> LpSolution {
         #[cfg(feature = "proof_profile")]
         { self.numerical_error = None; }
         self.start_call();
@@ -711,12 +795,15 @@ impl Simplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
+        if let Some(st) = work.entry_status(self.time_deadline) {
+            return self.build_solution(st);
+        }
         if !self.has_run {
             // 尚无可用热状态：退化为冷启动。
             self.bounds.lb.clone_from(&bounds.lb);
             self.bounds.ub.clone_from(&bounds.ub);
             self.rebuild_initial_basis();
-            let st = self.run_two_phase(true);
+            let st = self.run_two_phase_with_limit(true, work);
             self.has_run = true;
             return self.build_solution(st);
         }
@@ -744,16 +831,21 @@ impl Simplex {
         //        IterationLimit 或谎报 Optimal）。
         let need_repair = self.basics_violated() || self.phase1_pending;
         let mut dual_repaired = false;
-        if need_repair
-            && !self.phase1_pending
-            && !self.artificials_in_basis()
-            && self.dual_repair() == DualRepair::Repaired
-        {
-            dual_repaired = true;
+        if need_repair && !self.phase1_pending && !self.artificials_in_basis() {
+            match self.dual_repair(work) {
+                DualRepair::Repaired => dual_repaired = true,
+                DualRepair::Stopped(st) => return self.build_solution(st),
+                DualRepair::GiveUp => {
+                    if let Some(st) = work.stop_status(self.time_deadline) {
+                        return self.build_solution(st);
+                    }
+                    self.rebuild_initial_basis();
+                }
+            }
         } else if need_repair {
             self.rebuild_initial_basis();
         }
-        let st = self.run_two_phase(need_repair && !dual_repaired);
+        let st = self.run_two_phase_with_limit(need_repair && !dual_repaired, work);
         self.has_run = true;
         self.build_solution(st)
     }
@@ -2036,13 +2128,20 @@ impl Simplex {
 
     /// 单阶段主循环。返回 Optimal / Unbounded（仅 Phase-2 合法）/ LimitReached
     /// / TimedOut（内部墙钟超限，W2）/ Failed（数值异常）。
-    fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
+    fn run_phase(&mut self, phase: u8, work: &mut LpWorkLimit<'_>) -> PhaseOutcome {
         let m = self.basis.len();
         let n = self.num_structural;
         let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
         let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
         loop {
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return if st == LpStatus::TimeLimit {
+                    PhaseOutcome::TimedOut
+                } else {
+                    PhaseOutcome::LimitReached
+                };
+            }
             if self.iter_call >= limit {
                 return PhaseOutcome::LimitReached;
             }
@@ -2084,6 +2183,7 @@ impl Simplex {
                 }
                 Step::Flip { t } => {
                     t_nondegenerate = t > self.tol.feasibility;
+                    work.charge_step();
                     self.do_flip(q, delta, t);
                     self.count_step(t);
                 }
@@ -2096,6 +2196,7 @@ impl Simplex {
                         ));
                     }
                     t_nondegenerate = t > self.tol.feasibility;
+                    work.charge_step();
                     self.do_pivot(q, row, delta, t, hit_upper);
                     self.count_step(t);
                     self.pivots_since_refresh = self.pivots_since_refresh.saturating_add(1);
@@ -2215,8 +2316,12 @@ impl Simplex {
     /// 未清理留基，该状态不可供后续 resolve 直接跑 Phase-2；只有清理完成
     /// 才复位（残基人工变量值恒 0 且行系数近零，Phase-2 不会再移动它）。
     fn run_two_phase(&mut self, phase1_needed: bool) -> LpStatus {
+        self.run_two_phase_with_limit(phase1_needed, &mut LpWorkLimit::unlimited())
+    }
+
+    fn run_two_phase_with_limit(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
         if phase1_needed && self.num_art > 0 {
-            match self.run_phase(1) {
+            match self.run_phase(1, work) {
                 PhaseOutcome::Failed(msg) => {
                     self.numerical_error = Some(msg);
                     self.phase1_pending = true;
@@ -2246,12 +2351,15 @@ impl Simplex {
                         self.phase1_pending = true;
                         return LpStatus::Infeasible;
                     }
-                    self.cleanup_after_phase1();
+                    if let Err(st) = self.cleanup_after_phase1(work) {
+                        self.phase1_pending = true;
+                        return st;
+                    }
                     self.phase1_pending = false;
                 }
             }
         }
-        match self.run_phase(2) {
+        match self.run_phase(2, work) {
             PhaseOutcome::Optimal => LpStatus::Optimal,
             PhaseOutcome::Unbounded => LpStatus::Unbounded,
             PhaseOutcome::LimitReached => LpStatus::IterationLimit,
@@ -2278,11 +2386,14 @@ impl Simplex {
     /// Phase-1 后处理：残基人工变量值清零并尽力驱赶出基（在非人工非基列上
     /// 以 t=0 主元换出）；整行无非人工候选的视为冗余行，人工变量留基且值
     /// 恒 0（其行系数对全部可入基列近零，后续相位不会再移动它）。
-    fn cleanup_after_phase1(&mut self) {
+    fn cleanup_after_phase1(&mut self, work: &mut LpWorkLimit<'_>) -> std::result::Result<(), LpStatus> {
         let ncs = self.ncols_static();
         for i in 0..self.basis.len() {
             if self.basis[i] < ncs {
                 continue;
+            }
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return Err(st);
             }
             // 值在容差内（infeasibility 已判 0），强制精确置 0。
             self.rhs[i] = 0.0;
@@ -2298,10 +2409,12 @@ impl Simplex {
             }
             if pick != usize::MAX {
                 let delta = if self.at_upper[pick] { -1.0 } else { 1.0 };
+                work.charge_step();
                 self.do_pivot(pick, i, delta, 0.0, false);
                 self.count_step(0.0);
             }
         }
+        Ok(())
     }
 
     // ===================== 内部：热启动 =====================
@@ -2463,9 +2576,12 @@ impl Simplex {
     /// 任何异常（无可入列、步长非法、超预算、检验数非有限）⇒ [`DualRepair::GiveUp`]
     /// 由调用方回退整基重建——包括「对偶无界 ⇒ 原始不可行」的情形也保守
     /// 回退（不可行判定仍由 Phase-1 给出，快路径绝不抢答）。
-    fn dual_repair(&mut self) -> DualRepair {
+    fn dual_repair(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
         const BUDGET_BASE: u32 = 2_000;
         const DEGEN_BLAND: u32 = 32;
+        if let Some(st) = work.stop_status(self.time_deadline) {
+            return DualRepair::Stopped(st);
+        }
         if !self.dual_feasible() {
             return DualRepair::GiveUp;
         }
@@ -2476,6 +2592,9 @@ impl Simplex {
         let mut iters: u32 = 0;
         let mut degen: u32 = 0;
         loop {
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return DualRepair::Stopped(st);
+            }
             // 新鲜度规范 (c)：外层循环每轮迭代顶部重算检验数——上一轮
             // do_pivot 已改表，下一轮列扫描读取的 rc 必须反映当前表格
             // （扫描“只对过滤列读取”是省工而非新鲜度保证，二者不得混淆）。
@@ -2568,6 +2687,7 @@ impl Simplex {
             if !t.is_finite() || t < 0.0 {
                 return DualRepair::GiveUp;
             }
+            work.charge_step();
             self.do_pivot(q, r, delta, t, hit_upper);
             iters += 1;
             self.iter_call += 1;
@@ -2750,6 +2870,133 @@ mod tests {
     use super::*;
     use crate::error::MilpError;
     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+
+    #[cfg(feature = "root_heuristic_work_limit")]
+    mod work_limit_tests {
+        use super::*;
+
+        fn two_rows() -> Problem {
+            prob(Sense::Maximize,
+                (0..4).map(|j| var(&format!("x{j}"), 0.0, f64::INFINITY)).collect(),
+                vec![(0, 2.0), (1, 1.0), (2, 2.0), (3, 1.0)],
+                vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.0),
+                     (vec![(2, 1.0), (3, 1.0)], RelOp::Le, 1.0)])
+        }
+
+        #[test]
+        fn tiny_limits_stop_inside_cold_resolve_and_resume() {
+            let p = two_rows();
+            let bounds = Bounds::from_problem(&p);
+            for cap in 0..=2 {
+                let mut s = Simplex::new(&p, tol()).unwrap();
+                s.set_iter_limit_hint(Some(37));
+                let mut remaining = cap;
+                let sol = s.resolve_with_work_limit(&bounds, &mut remaining);
+                assert_eq!(sol.status, LpStatus::IterationLimit);
+                assert!(sol.objective.is_nan());
+                assert_eq!(remaining, 0);
+                assert_eq!(s.iterations(), cap);
+                assert_eq!(s.iter_limit_hint, Some(37), "不能覆盖原hint或把微预算放大到1000");
+                assert!(s.numerical_error.is_none());
+                let recovered = s.resolve(&bounds);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, 4.0);
+            }
+        }
+
+        #[test]
+        fn phases_and_artificial_cleanup_share_one_balance() {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                vec![(0, 1.0), (1, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Ge, 1.0),
+                     (vec![(1, 1.0)], RelOp::Le, 1.0)]);
+            let bounds = Bounds::from_problem(&p);
+            for cap in [1, 2] {
+                let mut s = Simplex::new(&p, tol()).unwrap();
+                let mut remaining = cap;
+                let result = s.resolve_with_work_limit(&bounds, &mut remaining);
+                assert_eq!(result.status, LpStatus::IterationLimit);
+                assert_eq!(s.iterations(), cap);
+                assert_eq!(remaining, 0);
+                assert_eq!(s.phase1_pending, cap == 1);
+                let recovered = s.resolve(&bounds);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, 0.0);
+            }
+            // Phase-1定价零步最优，但两个人工变量各需一个清理主元。
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, 1.0), var("y", 0.0, 1.0)], vec![],
+                vec![(vec![(0, -1.0)], RelOp::Eq, 0.0),
+                     (vec![(1, -1.0)], RelOp::Eq, 0.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            let mut remaining = 1;
+            assert_eq!(s.resolve_with_work_limit(&bounds, &mut remaining).status, LpStatus::IterationLimit);
+            assert_eq!(s.iterations(), 1);
+            assert_eq!(remaining, 0);
+            assert!(s.phase1_pending && s.artificials_in_basis());
+            assert_eq!(s.resolve(&bounds).status, LpStatus::Optimal);
+            assert!(!s.phase1_pending);
+        }
+
+        #[test]
+        fn dual_repair_limit_does_not_rebuild_or_change_root_cuts() {
+            let p = two_rows();
+            let root = Bounds::from_problem(&p);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            assert_eq!(s.solve(&root).objective, 4.0);
+            s.add_row(&[(1, 1.0)], RelOp::Le, 0.75).unwrap();
+            assert_eq!(s.resolve(&root).status, LpStatus::Optimal);
+            let rows = s.num_rows();
+            let mut child = root.clone();
+            child.ub[0] = 0.0;
+            child.ub[2] = 0.0;
+            let before = s.iterations();
+            let mut remaining = 1;
+            let result = s.resolve_with_work_limit(&child, &mut remaining);
+            assert_eq!(result.status, LpStatus::IterationLimit);
+            assert_eq!(s.iterations() - before, 1);
+            assert_eq!(remaining, 0);
+            assert_eq!(s.num_art, 0, "工作上限不能沿GiveUp进入冷重建");
+            assert_eq!(s.num_rows(), rows);
+            assert!(s.numerical_error.is_none());
+            // 用真实根界恢复，已提交割仍在；不把受限子问题失败当根不可行。
+            let recovered = s.resolve(&root);
+            assert_eq!(recovered.status, LpStatus::Optimal);
+            assert_eq!(recovered.objective, 4.0);
+            assert_eq!(s.bounds.lb, root.lb);
+            assert_eq!(s.bounds.ub, root.ub);
+            assert_eq!(s.num_rows(), rows);
+        }
+
+        #[test]
+        fn caller_limits_and_unlimited_path_are_preserved() {
+            let p = two_rows();
+            let bounds = Bounds::from_problem(&p);
+            let mut ordinary = Simplex::new(&p, tol()).unwrap();
+            ordinary.set_iter_limit_hint(Some(1234));
+            let mut limited = ordinary.clone();
+            let mut remaining = 100;
+            let a = ordinary.resolve(&bounds);
+            let b = limited.resolve_with_work_limit(&bounds, &mut remaining);
+            assert_eq!((a.status, a.objective, a.x), (b.status, b.objective, b.x));
+            assert_eq!(ordinary.basis, limited.basis);
+            assert_eq!(ordinary.iterations(), limited.iterations());
+            assert_eq!(limited.iter_limit_hint, Some(1234));
+            let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            limited.set_time_deadline(Some(past));
+            let before = remaining;
+            assert_eq!(limited.resolve_with_work_limit(&bounds, &mut remaining).status, LpStatus::TimeLimit);
+            assert_eq!(remaining, before, "期限早退没有执行动作，不扣工作步");
+            assert_eq!(limited.time_deadline(), Some(past));
+            assert_eq!(limited.iter_limit_hint, Some(1234));
+            limited.set_time_deadline(None);
+            let before = remaining;
+            assert_eq!(limited.resolve_with_work_limit(&bounds, &mut remaining).status, LpStatus::Optimal);
+            assert_eq!(remaining, before, "零步最优终检不扣费");
+        }
+    }
 
     /// （W2）内部墙钟时限：deadline 已过 ⇒ TimeLimit 诚实截断（不冒充
     /// Optimal、不为凑检查周期白烧主元——首迭代即检查）；未注入（None，

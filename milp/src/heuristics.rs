@@ -28,12 +28,13 @@ pub struct Incumbent {
 
 /// 启发式共享的剩余 LP 工作预算；不用于数学剪枝，不修改引擎的时限或迭代提示。
 ///
-/// 每次 resolve 前检查两项余额，返回后扣除实际迭代与一次调用（含失败、
-/// 反向重试和嵌套节点）。单次 resolve 仍受调用方原有限额控制，因此迭代
-/// 总量可超出预算一个调用；本预算不能保证给主搜索留下墙钟时间。
+/// 旧特性在resolve边界扣累计迭代，允许超支一次调用；新增
+/// root_heuristic_work_limit才改为调用内部的工作步（每次换基/界翻转），
+/// 不改变原迭代统计。两种路径都计失败、反向重试和嵌套节点；均不保证
+/// 给主搜索留下固定墙钟时间，重构等操作不是可抢断的工作步。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HeuristicWorkBudget {
-    pub iterations: u64,
+    pub remaining_work: u64,
     pub lp_calls: u64,
 }
 
@@ -46,12 +47,18 @@ fn resolve_with_work_budget(
     let Some(work) = budget.as_deref_mut() else {
         return Some(simplex.resolve(bounds));
     };
-    if work.iterations == 0 || work.lp_calls == 0 {
+    if work.remaining_work == 0 || work.lp_calls == 0 {
         return None;
     }
-    let before = simplex.iterations();
-    let sol = simplex.resolve(bounds);
-    work.iterations = work.iterations.saturating_sub(simplex.iterations().saturating_sub(before));
+    #[cfg(feature = "root_heuristic_work_limit")]
+    let sol = simplex.resolve_with_work_limit(bounds, &mut work.remaining_work);
+    #[cfg(not(feature = "root_heuristic_work_limit"))]
+    let sol = {
+        let before = simplex.iterations();
+        let sol = simplex.resolve(bounds);
+        work.remaining_work = work.remaining_work.saturating_sub(simplex.iterations().saturating_sub(before));
+        sol
+    };
     work.lp_calls -= 1;
     Some(sol)
 }
@@ -1075,10 +1082,10 @@ mod tests {
             let mut engine = Simplex::new(&p, t).unwrap();
             let root = engine.solve(&b);
             let before = engine.iterations();
-            let mut budget = HeuristicWorkBudget { iterations: 100, lp_calls: calls };
+            let mut budget = HeuristicWorkBudget { remaining_work: 100, lp_calls: calls };
             let inc = dive_with_work_budget(&p, &mut engine, &b, &root.x, 3, &t, Some(&mut budget));
             assert_eq!(budget.lp_calls, 0);
-            assert_eq!(budget.iterations, 100u64.saturating_sub(engine.iterations() - before));
+            assert_eq!(budget.remaining_work, 100u64.saturating_sub(engine.iterations() - before));
             if calls < 2 {
                 assert!(inc.is_none(), "最后已知点取整为2违反原约束，不得返回");
             } else {
@@ -1095,7 +1102,7 @@ mod tests {
         let mut engine = Simplex::new(&p, t).unwrap();
         let root = engine.solve(&b);
         let before = engine.iterations();
-        let mut budget = HeuristicWorkBudget { iterations: 0, lp_calls: 10 };
+        let mut budget = HeuristicWorkBudget { remaining_work: 0, lp_calls: 10 };
         assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut budget)).is_none());
         assert!(sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).is_none());
         assert_eq!(budget.lp_calls, 10);
@@ -1113,7 +1120,7 @@ mod tests {
         let t = tol();
         let mut engine = Simplex::new(&p, t).unwrap();
         let root = engine.solve(&b);
-        let mut budget = HeuristicWorkBudget { iterations: 100, lp_calls: 2 };
+        let mut budget = HeuristicWorkBudget { remaining_work: 100, lp_calls: 2 };
         let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).unwrap();
         assert_eq!(inc.values, vec![1.0, 1.0]);
         assert_eq!(budget.lp_calls, 0, "根及下行节点分别记账，上行不再调用");
@@ -1123,17 +1130,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "root_heuristic_work_limit"))]
     fn work_budget_positive_iterations_stop_next_call() {
         let p = sub_mip_problem();
         let b = Bounds::from_problem(&p);
         let mut engine = Simplex::new(&p, tol()).unwrap();
-        let mut work = HeuristicWorkBudget { iterations: 1, lp_calls: 10 };
+        let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 10 };
         let mut budget = Some(&mut work);
         let before = engine.iterations();
         let sol = resolve_with_work_budget(&mut engine, &b, &mut budget).unwrap();
         assert_eq!(sol.status, LpStatus::Optimal);
         assert!(engine.iterations() > before, "冷引擎确实消费正迭代数");
-        assert_eq!(budget.as_ref().unwrap().iterations, 0);
+        assert_eq!(budget.as_ref().unwrap().remaining_work, 0);
         assert_eq!(budget.as_ref().unwrap().lp_calls, 9);
         let after = engine.iterations();
         assert!(resolve_with_work_budget(&mut engine, &b, &mut budget).is_none());
@@ -1160,6 +1168,117 @@ mod tests {
             assert_eq!(a.as_ref().map(|i| (&i.values, i.objective)), z.as_ref().map(|i| (&i.values, i.objective)));
             assert_eq!(old.iterations(), optional.iterations());
             assert_eq!(old.basis_columns(), optional.basis_columns());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_box_scope_snapshot_and_none_path() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut engine = new_engine(&p, t, kind).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+            engine.set_time_deadline(Some(deadline));
+            engine.set_iter_limit_hint(Some(1234));
+            let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 10 };
+            let limited = resolve_with_work_budget(&mut engine, &b, &mut Some(&mut work)).unwrap();
+            assert_eq!(limited.status, LpStatus::IterationLimit);
+            assert!(limited.objective.is_nan());
+            assert_eq!(work.remaining_work, 0);
+            assert_eq!(work.lp_calls, 9);
+            let mut snapshot = engine.snapshot();
+            for candidate in [&mut engine, &mut snapshot] {
+                assert_eq!(candidate.time_deadline(), Some(deadline));
+                let recovered = candidate.resolve(&b);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, 6.0);
+                assert_eq!(candidate.time_deadline(), Some(deadline));
+            }
+            let root = engine.resolve(&b);
+            let mut ordinary = engine.snapshot();
+            let mut optional = engine.snapshot();
+            let a = dive(&p, &mut ordinary, &b, &root.x, 10, &t);
+            let z = dive_with_work_budget(&p, &mut optional, &b, &root.x, 10, &t, None);
+            assert_eq!(a.as_ref().map(|v| (v.objective, &v.values)), z.as_ref().map(|v| (v.objective, &v.values)));
+            assert_eq!(ordinary.iterations(), optional.iterations());
+            assert_eq!(ordinary.basis_columns(), optional.basis_columns());
+            assert_eq!(ordinary.time_deadline(), optional.time_deadline());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_nested_nodes_share_balance_and_root_restore_is_outside() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut engine = new_engine(&p, t, kind).unwrap();
+            assert_eq!(engine.solve(&b).status, LpStatus::Optimal);
+            engine.add_row(&[(1, 1.0)], RelOp::Le, 1.75).unwrap();
+            let root = engine.resolve(&b);
+            assert_eq!(root.objective, 6.0);
+            let rows = engine.num_rows();
+            let before = engine.iterations();
+            let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 5 };
+            let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut work));
+            assert!(inc.is_none(), "中断子节点的未证最优点不能被当作已验候选");
+            assert_eq!(work.remaining_work, 0);
+            assert_eq!(work.lp_calls, 3, "根邻域零步调用及第一个子节点分别计费");
+            assert_eq!(engine.iterations() - before, 1);
+            let calls = work.lp_calls;
+            assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut work)).is_none());
+            assert_eq!(work.lp_calls, calls);
+            let restored = engine.resolve(&b);
+            assert_eq!(restored.status, LpStatus::Optimal);
+            assert_eq!(restored.objective, root.objective);
+            assert_eq!(engine.num_rows(), rows, "恢复原根界时保留已提交割");
+            assert_eq!(work.remaining_work, 0, "根恢复不借用或充值启发式余额");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_primal_flips_and_zero_budget_do_not_forge_proofs() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let mut flips = Problem::new("纯界翻转", Sense::Maximize);
+        for name in ["x", "y"] {
+            let j = flips.add_var(name, VarType::Continuous).unwrap();
+            flips.set_var_bounds(j, 0.0, 1.0).unwrap();
+        }
+        flips.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        let mut unbounded = Problem::new("真实无界", Sense::Maximize);
+        let x = unbounded.add_var("x", VarType::Continuous).unwrap();
+        unbounded.set_objective(vec![(x, 1.0)], 0.0).unwrap();
+        let mut infeasible = Problem::new("需Phase1证明不可行", Sense::Minimize);
+        let x = infeasible.add_var("x", VarType::Continuous).unwrap();
+        infeasible.set_var_bounds(x, 0.0, 1.0).unwrap();
+        infeasible.add_constraint(None, vec![(x, 1.0)], RelOp::Ge, 2.0).unwrap();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let bounds = Bounds::from_problem(&flips);
+            let mut engine = new_engine(&flips, tol(), kind).unwrap();
+            let mut remaining = 1;
+            let stopped = engine.resolve_with_work_limit(&bounds, &mut remaining);
+            assert_eq!(stopped.status, LpStatus::IterationLimit);
+            assert_eq!(remaining, 0);
+            assert_eq!(engine.iterations(), 1);
+            assert_eq!(stopped.x, vec![1.0, 0.0]);
+            assert_eq!(engine.resolve(&bounds).objective, 2.0);
+            for (p, expected) in [(&unbounded, LpStatus::Unbounded), (&infeasible, LpStatus::Infeasible)] {
+                let bounds = Bounds::from_problem(p);
+                let mut engine = new_engine(p, tol(), kind).unwrap();
+                let mut remaining = 0;
+                let stopped = engine.resolve_with_work_limit(&bounds, &mut remaining);
+                assert_eq!(stopped.status, LpStatus::IterationLimit);
+                assert!(stopped.objective.is_nan());
+                assert_eq!(engine.iterations(), 0);
+                let mut remaining = 10;
+                assert_eq!(engine.resolve_with_work_limit(&bounds, &mut remaining).status, expected);
+            }
         }
     }
 

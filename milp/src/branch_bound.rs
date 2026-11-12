@@ -701,7 +701,7 @@ fn sequential_bb(
     // 总预算只扣启发式LP工作，跨预割/割后共享，不随根重建或快照归零。
     #[cfg(feature = "root_heuristic_work_budget")]
     let mut root_work_budget = heuristics::HeuristicWorkBudget {
-        iterations: simplex.iterations().saturating_mul(4).max(1000),
+        remaining_work: simplex.iterations().saturating_mul(4).max(1000),
         lp_calls: 1000,
     };
     #[cfg(feature = "root_heuristic_work_budget")]
@@ -756,7 +756,7 @@ fn sequential_bb(
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
         if let Some(budget) = root_work_budget.as_deref() {
             crate::proof_profile::record("root_heuristic_budget", vec![
-                ("remaining_iterations", budget.iterations.into()),
+                (if cfg!(feature = "root_heuristic_work_limit") { "remaining_work_steps" } else { "remaining_iterations" }, budget.remaining_work.into()),
                 ("remaining_lp_calls", budget.lp_calls.into()),
             ]);
         }
@@ -1000,7 +1000,7 @@ fn sequential_bb(
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
         if let Some(budget) = root_work_budget.as_deref() {
             crate::proof_profile::record("root_heuristic_budget", vec![
-                ("remaining_iterations", budget.iterations.into()),
+                (if cfg!(feature = "root_heuristic_work_limit") { "remaining_work_steps" } else { "remaining_iterations" }, budget.remaining_work.into()),
                 ("remaining_lp_calls", budget.lp_calls.into()),
             ]);
         }

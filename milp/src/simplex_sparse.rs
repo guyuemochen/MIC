@@ -178,7 +178,7 @@ pub mod cost_profile {
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, Sense, Tolerances};
 use crate::simplex::{
-    Bounds, ColumnLayout, LpSolution, LpStatus, NonbasicCol, RowOrigin, Simplex, SlackCol,
+    Bounds, ColumnLayout, LpSolution, LpStatus, LpWorkLimit, NonbasicCol, RowOrigin, Simplex, SlackCol,
 };
 
 // ===========================================================================
@@ -265,6 +265,10 @@ pub trait LpEngine {
     /// 热启动求解（界变化 snap+传播 → 对偶修复快路径或整基重建 → 收尾；
     /// 语义对齐 simplex.rs::resolve，见各实现的模块文档）。
     fn resolve(&mut self, bounds: &Bounds) -> LpSolution;
+    /// 调用局部的换基/界翻转工作步余额；不覆盖hint、期限，不随快照重领。
+    /// 开启实验特性后，各实现须显式支持此契约，不能默认转调无限resolve。
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution;
     /// 追加割行（terms 结构变量空间原尺度、不缩放；返回割序号 k）。
     fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize>;
     /// 内部墙钟时限（W2 条件读钟；None = 零读钟）。
@@ -341,6 +345,10 @@ impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
     fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
         (**self).resolve(bounds)
     }
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution {
+        (**self).resolve_with_work_limit(bounds, remaining_steps)
+    }
     fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
         (**self).add_row(terms, op, rhs)
     }
@@ -395,6 +403,10 @@ impl LpEngine for Simplex {
     }
     fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
         self.resolve(bounds)
+    }
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution {
+        self.resolve_with_work_limit(bounds, remaining_steps)
     }
     fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
         self.add_row(terms, op, rhs)
@@ -1100,12 +1112,16 @@ mod refactor_fault {
 #[cfg(test)]
 mod direction_fault {
     std::thread_local! {
-        static VALUE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+        static VALUE: std::cell::Cell<Option<(f64, usize)>> = const { std::cell::Cell::new(None) };
     }
-    pub(super) struct Guard(Option<f64>);
+    pub(super) struct Guard(Option<(f64, usize)>);
     impl Guard {
         pub(super) fn new(value: f64) -> Self {
-            Self(VALUE.with(|v| v.replace(Some(value))))
+            Self(VALUE.with(|v| v.replace(Some((value, 0)))))
+        }
+        #[cfg(feature = "root_heuristic_work_limit")]
+        pub(super) fn after_calls(value: f64, skip: usize) -> Self {
+            Self(VALUE.with(|v| v.replace(Some((value, skip)))))
         }
         pub(super) fn consumed(&self) -> bool {
             VALUE.with(|v| v.get().is_none())
@@ -1117,7 +1133,11 @@ mod direction_fault {
         }
     }
     pub(super) fn take() -> Option<f64> {
-        VALUE.with(|v| v.take())
+        VALUE.with(|v| match v.get() {
+            Some((value, 0)) => { v.set(None); Some(value) }
+            Some((value, skip)) => { v.set(Some((value, skip - 1))); None }
+            None => None,
+        })
     }
 }
 
@@ -1486,6 +1506,12 @@ enum PhaseOutcome {
     Failed(String),
 }
 
+/// 人工变量清理不能把预算中断和数值失败混为一谈。
+enum CleanupFailure {
+    Stopped(LpStatus),
+    Numerical(String),
+}
+
 /// 有界测试观测与确定性时限注入；不进入生产对象或外部接口。
 #[cfg(all(test, feature = "risk_pivot_refresh"))]
 #[derive(Clone, Default)]
@@ -1503,6 +1529,8 @@ enum DualRepair {
     Repaired,
     /// 不适用/超出预算/数值异常 ⇒ 回退整基重建（语义与冷路径一致）。
     GiveUp,
+    /// 本次调用工作步/期限耗尽，不得继续冷重建。
+    Stopped(LpStatus),
 }
 
 /// 对偶主循环结果（S10 三层 resolve 第一层）。
@@ -1527,6 +1555,8 @@ enum DualResolveOutcome {
     /// 超限后跑它等于盲迭代）直达整基重建，run_phase 的 W2 条件读钟
     /// 接管，Phase-1/2 将诚实返回 TimeLimit。
     TimedOut,
+    /// 本次调用的工作上限，独立于快路径回退和旧墙钟回退。
+    Stopped(LpStatus),
 }
 
 /// 对偶主循环的退化/Bland 记账（S10 对偶 Bland + 复盘补丁 A）。独立
@@ -2164,6 +2194,16 @@ impl SparseSimplex {
     /// 界；FTRAN/BTRAN 即时现算）；任何异常 GiveUp 回退 b)；
     /// b) 整基重建 + Phase-1（冷路径，语义与 simplex.rs 完全一致）。
     pub fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.resolve_with_limit(bounds, &mut LpWorkLimit::unlimited())
+    }
+
+    /// 余额只借给本次调用；换基后重构失败也保留已经扣除的工作步。
+    #[cfg(feature = "root_heuristic_work_limit")]
+    pub fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution {
+        self.resolve_with_limit(bounds, &mut LpWorkLimit::limited(remaining_steps))
+    }
+
+    fn resolve_with_limit(&mut self, bounds: &Bounds, work: &mut LpWorkLimit<'_>) -> LpSolution {
         #[cfg(feature = "proof_profile")]
         { self.numerical_error = None; }
         self.start_call();
@@ -2171,6 +2211,9 @@ impl SparseSimplex {
             return self.build_solution(LpStatus::Infeasible);
         }
         if let Some(st) = self.validate_bounds_arg(bounds) {
+            return self.build_solution(st);
+        }
+        if let Some(st) = work.entry_status(self.time_deadline) {
             return self.build_solution(st);
         }
         // Devex 热启动入口重置：参考框架 = 当时非基集（reset-to-全 1 与
@@ -2183,7 +2226,7 @@ impl SparseSimplex {
             self.bounds.lb.clone_from(&bounds.lb);
             self.bounds.ub.clone_from(&bounds.ub);
             self.rebuild_initial_basis();
-            let st = self.run_two_phase(true);
+            let st = self.run_two_phase_with_limit(true, work);
             self.has_run = true;
             return self.build_solution(st);
         }
@@ -2226,9 +2269,10 @@ impl SparseSimplex {
             let outcome = if main_fused {
                 DualResolveOutcome::Fallthrough
             } else {
-                self.dual_main_resolve()
+                self.dual_main_resolve(work)
             };
             match outcome {
+                DualResolveOutcome::Stopped(st) => return self.build_solution(st),
                 DualResolveOutcome::Repaired => {
                     dual_repaired = true;
                     self.dual_main_consecutive_fails = 0;
@@ -2247,6 +2291,9 @@ impl SparseSimplex {
                     // 化与中间态一并覆写）。老路径对同类失败（dual_repair
                     // 内 refactor Err ⇒ GiveUp ⇒ rebuild）同款语义：数值
                     // 失败 ⇒ rebuild + Phase-1 诚实映射，绝不 panic。
+                    if let Some(st) = work.stop_status(self.time_deadline) {
+                        return self.build_solution(st);
+                    }
                     self.rebuild_initial_basis();
                 }
                 DualResolveOutcome::Fallthrough => {
@@ -2258,17 +2305,22 @@ impl SparseSimplex {
                         self.dual_main_consecutive_fails =
                             self.dual_main_consecutive_fails.saturating_add(1);
                     }
-                    if self.dual_repair() == DualRepair::Repaired {
-                        dual_repaired = true;
-                    } else {
-                        self.rebuild_initial_basis();
+                    match self.dual_repair_with_limit(work) {
+                        DualRepair::Repaired => dual_repaired = true,
+                        DualRepair::Stopped(st) => return self.build_solution(st),
+                        DualRepair::GiveUp => {
+                            if let Some(st) = work.stop_status(self.time_deadline) {
+                                return self.build_solution(st);
+                            }
+                            self.rebuild_initial_basis();
+                        }
                     }
                 }
             }
         } else if need_repair {
             self.rebuild_initial_basis();
         }
-        let st = self.run_two_phase(need_repair && !dual_repaired);
+        let st = self.run_two_phase_with_limit(need_repair && !dual_repaired, work);
         self.has_run = true;
         self.build_solution(st)
     }
@@ -2447,11 +2499,19 @@ impl SparseSimplex {
     /// 全部基变量回界内。任何异常（无可入列 / 步长非法 / 超预算 / 检验数
     /// 非有限 / 主元过小 / 重因子化失败）⇒ GiveUp 回退整基重建——快路径
     /// 只加速、绝不改变结果。
+    #[cfg(test)]
     fn dual_repair(&mut self) -> DualRepair {
+        self.dual_repair_with_limit(&mut LpWorkLimit::unlimited())
+    }
+
+    fn dual_repair_with_limit(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
         #[cfg(feature = "lu_failure_diagnostics")]
         {self.lu_trace.phase="dual_repair";self.lu_trace.reason="dual_repair";}
         const BUDGET_BASE: u32 = 2_000;
         const DEGEN_BLAND: u32 = 32;
+        if let Some(st) = work.stop_status(self.time_deadline) {
+            return DualRepair::Stopped(st);
+        }
         if !self.dual_feasible() {
             return DualRepair::GiveUp;
         }
@@ -2462,6 +2522,9 @@ impl SparseSimplex {
         let mut iters: u32 = 0;
         let mut degen: u32 = 0;
         loop {
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return DualRepair::Stopped(st);
+            }
             // y = BTRAN(c_B)（检验数新鲜度：上一轮主元已改基）。
             for i in 0..m {
                 self.cb[i] = self.cost_of(self.basis[i], 2);
@@ -2588,6 +2651,7 @@ impl SparseSimplex {
                     return DualRepair::GiveUp;
                 }
             }
+            work.charge_step();
             if self.do_pivot(q, r, delta, t, hit_upper).is_err() {
                 return DualRepair::GiveUp;
             }
@@ -2631,20 +2695,28 @@ impl SparseSimplex {
     /// 不同）：主循环求速度（BFRT 长步、θ 最小列），dual_repair 是经
     /// 长期验证的稳健回退（归一化行选择、|主元| 最大破键）。两层的
     /// rc/BTRAN 现算与主元执行纪律（|主元| 闸、refactor 单次重试）同款。
-    fn dual_main_resolve(&mut self) -> DualResolveOutcome {
+    fn dual_main_resolve(&mut self, work: &mut LpWorkLimit<'_>) -> DualResolveOutcome {
         // 预算 = m + 64（定档依据见常量 doc）。
         let m = self.basis.len();
         let budget =
             DUAL_MAIN_BUDGET_BASE.saturating_add((m as u32).saturating_mul(DUAL_MAIN_BUDGET_PER_ROW));
-        self.dual_main_loop(budget)
+        self.dual_main_loop_with_limit(budget, work)
     }
 
     /// [`Self::dual_main_resolve`] 的预算参数化内核：预算是唯一的可注入
     /// 参数，确定性单测以极小预算直接驱动「预算耗尽 ⇒ Fallthrough ⇒
     /// 回退链仍给出正确解」的诚实回退路径。
+    #[cfg(test)]
     fn dual_main_loop(&mut self, budget: u32) -> DualResolveOutcome {
+        self.dual_main_loop_with_limit(budget, &mut LpWorkLimit::unlimited())
+    }
+
+    fn dual_main_loop_with_limit(&mut self, budget: u32, work: &mut LpWorkLimit<'_>) -> DualResolveOutcome {
         #[cfg(feature = "lu_failure_diagnostics")]
         {self.lu_trace.phase="dual_main";self.lu_trace.reason="dual_main";}
+        if let Some(st) = work.stop_status(self.time_deadline) {
+            return DualResolveOutcome::Stopped(st);
+        }
         self.dual_main_calls += 1;
         // 入口对偶可行性 rc 扫描红线：对偶不可行基不跑主循环（对偶单纯形
         // 的前提），回退第二层 dual_repair——其入口同款 dual_feasible 复查
@@ -2661,6 +2733,9 @@ impl SparseSimplex {
         // 候选缓冲 (θ_j, j, αr_j, δ_j, range_j)，跨迭代复用容量。
         let mut cands: Vec<(f64, usize, f64, f64, f64)> = Vec::new();
         loop {
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return DualResolveOutcome::Stopped(st);
+            }
             if iters >= budget {
                 return DualResolveOutcome::Fallthrough; // 迭代超限
             }
@@ -2812,6 +2887,11 @@ impl SparseSimplex {
             }
             let q = cands[pick].1;
             let delta_q = cands[pick].3;
+            // 整批预检但不预扣：不得翻一半后因额度不足退出；若后续数值
+            // 失败，只扣已经执行的翻转/主元，未执行的动作仍保留余额。
+            if !work.can_start((flip_end as u64).saturating_add(1)) {
+                return DualResolveOutcome::Stopped(work.limit_status(self.time_deadline));
+            }
             // (4) 执行翻转（先于主元）：被翻列走到对面界、x_B 全行传播；
             // 入选列以 θ_final 更新对偶变量后这些列 rc 越零变号、「步后
             // rc=0 落对偶可行侧」（本引擎 y/rc 每迭代 BTRAN 现算，无需
@@ -2819,6 +2899,7 @@ impl SparseSimplex {
             for idx in 0..flip_end {
                 let (_, j, _, delta, range) = cands[idx];
                 self.ftran_col(j);
+                work.charge_step();
                 self.do_flip(j, delta, range);
                 self.dual_main_flips += 1;
             }
@@ -2858,6 +2939,7 @@ impl SparseSimplex {
                     return DualResolveOutcome::Fallthrough; // 刚重因子化仍过小（因子化完好）
                 }
             }
+            work.charge_step();
             if self.do_pivot(q, r, delta_q, t, !below).is_err() {
                 // 【复盘补丁 B：状态污染声明之二】do_pivot 的 Err 唯一来源
                 // 是其内部 ETA 越限触发的 refactor 失败——因子化已损坏
@@ -3916,6 +3998,10 @@ impl SparseSimplex {
     // ---- 内部：阶段循环 ----
 
     fn run_two_phase(&mut self, phase1_needed: bool) -> LpStatus {
+        self.run_two_phase_with_limit(phase1_needed, &mut LpWorkLimit::unlimited())
+    }
+
+    fn run_two_phase_with_limit(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
         // 初始基重建也可能数值失败（例如有限输入的运算溢出）；不能让
         // 定价/人工清理读取损坏因子。rebuild_initial_basis已记下失败原因。
         if self.factorization_broken {
@@ -3923,7 +4009,7 @@ impl SparseSimplex {
             return LpStatus::IterationLimit;
         }
         if phase1_needed && self.num_art > 0 {
-            match self.run_phase(1) {
+            match self.run_phase_with_limit(1, work) {
                 PhaseOutcome::Failed(msg) => {
                     self.numerical_error = Some(msg);
                     self.phase1_pending = true;
@@ -3955,10 +4041,15 @@ impl SparseSimplex {
                         self.phase1_pending = true;
                         return LpStatus::Infeasible;
                     }
-                    if let Err(msg) = self.cleanup_after_phase1() {
-                        self.numerical_error = Some(msg);
+                    if let Err(failure) = self.cleanup_after_phase1(work) {
                         self.phase1_pending = true;
-                        return LpStatus::IterationLimit;
+                        return match failure {
+                            CleanupFailure::Stopped(st) => st,
+                            CleanupFailure::Numerical(msg) => {
+                                self.numerical_error = Some(msg);
+                                LpStatus::IterationLimit
+                            }
+                        };
                     }
                     self.phase1_pending = false;
                     // Devex：Phase-1 基演进（含清理期 t=0 主元）期间的权重
@@ -3967,7 +4058,7 @@ impl SparseSimplex {
                 }
             }
         }
-        match self.run_phase(2) {
+        match self.run_phase_with_limit(2, work) {
             PhaseOutcome::Optimal => LpStatus::Optimal,
             PhaseOutcome::Unbounded => LpStatus::Unbounded,
             PhaseOutcome::LimitReached => LpStatus::IterationLimit,
@@ -3980,7 +4071,12 @@ impl SparseSimplex {
         }
     }
 
+    #[cfg(all(test, feature = "risk_pivot_refresh"))]
     fn run_phase(&mut self, phase: u8) -> PhaseOutcome {
+        self.run_phase_with_limit(phase, &mut LpWorkLimit::unlimited())
+    }
+
+    fn run_phase_with_limit(&mut self, phase: u8, work: &mut LpWorkLimit<'_>) -> PhaseOutcome {
         #[cfg(feature = "lu_failure_diagnostics")]
         { self.lu_trace.phase = if phase == 1 { "phase1" } else { "phase2" }; }
         let m = self.basis.len();
@@ -3989,6 +4085,13 @@ impl SparseSimplex {
         let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
         loop {
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return if st == LpStatus::TimeLimit {
+                    PhaseOutcome::TimedOut
+                } else {
+                    PhaseOutcome::LimitReached
+                };
+            }
             if self.iter_call >= limit {
                 return PhaseOutcome::LimitReached;
             }
@@ -4005,7 +4108,7 @@ impl SparseSimplex {
             let mut t_nondegenerate = false;
             let (q, delta) = match self.price(phase) {
                 Pricing::Failed(msg) => {
-                    if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
+                    if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                         return out;
                     }
                     continue;
@@ -4016,7 +4119,7 @@ impl SparseSimplex {
             self.ftran_col(q);
             match self.ratio_test(q, delta) {
                 Step::FilteredBlock(msg) => {
-                    if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
+                    if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                         return out;
                     }
                     continue;
@@ -4031,6 +4134,7 @@ impl SparseSimplex {
                 }
                 Step::Flip { t } => {
                     t_nondegenerate = t > self.tol.feasibility;
+                    work.charge_step();
                     self.do_flip(q, delta, t);
                     self.count_step(t);
                 }
@@ -4041,7 +4145,7 @@ impl SparseSimplex {
                             self.alpha[row].abs(),
                             self.tol.pivot
                         );
-                        if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
+                        if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                             return out;
                         }
                         continue;
@@ -4056,8 +4160,9 @@ impl SparseSimplex {
                         }
                     }
                     t_nondegenerate = t > self.tol.feasibility;
+                    work.charge_step();
                     if let Err(msg) = self.do_pivot(q, row, delta, t, hit_upper) {
-                        if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
+                        if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                             return out;
                         }
                         continue;
@@ -4067,7 +4172,7 @@ impl SparseSimplex {
             }
             if self.x_b.iter().any(|v| !v.is_finite()) {
                 let msg = "基变量值出现 NaN/Inf".to_string();
-                if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
+                if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                     return out;
                 }
                 continue;
@@ -4149,7 +4254,17 @@ impl SparseSimplex {
     /// 数值异常的确定性重试：非刚重因子化 ⇒ 重因子化 + 重算 x_B 后返回
     /// Retry（外层 continue 重试本迭代；just_refactored 闸保证至多一次，
     /// 无循环）；刚重因子化仍异常 / 重因子化失败 ⇒ Failed。
-    fn numerical_retry_or_fail(&mut self, msg: String) -> PhaseOutcome {
+    fn numerical_retry_or_fail(&mut self, msg: String, work: &mut LpWorkLimit<'_>) -> PhaseOutcome {
+        if let Some(st) = work.stop_status(self.time_deadline) {
+            // 换基已经执行后才重构失败：不退工作步，不清除broken状态，
+            // 也不在余额耗尽后偷偷开始另一轮重构。
+            self.numerical_error = Some(msg);
+            return if st == LpStatus::TimeLimit {
+                PhaseOutcome::TimedOut
+            } else {
+                PhaseOutcome::LimitReached
+            };
+        }
         if !self.just_refactored {
             #[cfg(feature = "lu_failure_diagnostics")]
             {self.lu_trace.reason="numerical_retry";}
@@ -4201,13 +4316,16 @@ impl SparseSimplex {
 
     /// Phase-1 后处理（与 simplex.rs 同款）：残基人工变量值清零并尽力以
     /// t=0 主元驱赶出基（最小下标候选）；无候选的人工变量留基值恒 0。
-    fn cleanup_after_phase1(&mut self) -> std::result::Result<(), String> {
+    fn cleanup_after_phase1(&mut self, work: &mut LpWorkLimit<'_>) -> std::result::Result<(), CleanupFailure> {
         #[cfg(feature = "lu_failure_diagnostics")]
         { self.lu_trace.phase = "phase1_cleanup"; }
         let ncs = self.ncols_static();
         for i in 0..self.basis.len() {
             if self.basis[i] < ncs {
                 continue;
+            }
+            if let Some(st) = work.stop_status(self.time_deadline) {
+                return Err(CleanupFailure::Stopped(st));
             }
             self.x_b[i] = 0.0;
             let m = self.basis.len();
@@ -4238,7 +4356,8 @@ impl SparseSimplex {
                     // t=0 主元：x_B 不动（δ·0·α = 0），x_B[r] = 入基旧界值。
                     // do_pivot先交换基再重构；失败时人工变量不一定仍留基，
                     // LU也可能已损坏，必须向上传播，不能继续Phase-2。
-                    self.do_pivot(pick, i, delta, 0.0, false)?;
+                    work.charge_step();
+                    self.do_pivot(pick, i, delta, 0.0, false).map_err(CleanupFailure::Numerical)?;
                 }
                 self.count_step(0.0);
             }
@@ -4389,6 +4508,10 @@ impl LpEngine for SparseSimplex {
     fn resolve(&mut self, bounds: &Bounds) -> LpSolution {
         self.resolve(bounds)
     }
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn resolve_with_work_limit(&mut self, bounds: &Bounds, remaining_steps: &mut u64) -> LpSolution {
+        self.resolve_with_work_limit(bounds, remaining_steps)
+    }
     fn add_row(&mut self, terms: &[(usize, f64)], op: RelOp, rhs: f64) -> Result<usize> {
         self.add_row(terms, op, rhs)
     }
@@ -4444,6 +4567,270 @@ mod tests {
     use crate::model::{LinearExpr, VarType, Variable};
     use crate::simplex::Simplex as DenseSimplex;
     use std::path::PathBuf;
+
+    #[cfg(feature = "root_heuristic_work_limit")]
+    mod work_limit_tests {
+        use super::*;
+
+        fn two_rows() -> Problem {
+            prob(Sense::Maximize,
+                (0..4).map(|j| var(&format!("x{j}"), 0.0, f64::INFINITY)).collect(),
+                vec![(0, 2.0), (1, 1.0), (2, 2.0), (3, 1.0)],
+                vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.0),
+                     (vec![(2, 1.0), (3, 1.0)], RelOp::Le, 1.0)])
+        }
+
+        fn bfrt_problem() -> Problem {
+            // 收紧x1.ub至0后：先翻x2，再让x0入基，恰好两个工作步。
+            prob(Sense::Maximize,
+                vec![var("x0", 0.0, 3.0), var("x1", 0.0, 10.0), var("x2", 0.0, 0.5)],
+                vec![(0, 1.0), (1, 1.0), (2, -0.1)],
+                vec![(vec![(0, 1.0), (1, -1.0), (2, -2.0)], RelOp::Le, 1.0)])
+        }
+
+        fn snap_to(sp: &mut SparseSimplex, bounds: &Bounds) {
+            sp.start_call();
+            sp.devex_reset();
+            std::mem::swap(&mut sp.bounds, &mut sp.prev_bounds);
+            sp.bounds = bounds.clone();
+            sp.snap_nonbasics();
+        }
+
+        #[test]
+        fn tiny_limits_cover_cold_phases_and_cleanup_recovery() {
+            let p = two_rows();
+            let root = Bounds::from_problem(&p);
+            for cap in 0..=2 {
+                let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                sp.set_iter_limit_hint(Some(37));
+                let mut remaining = cap;
+                let result = sp.resolve_with_work_limit(&root, &mut remaining);
+                assert_eq!(result.status, LpStatus::IterationLimit);
+                assert!(result.objective.is_nan());
+                assert_eq!(remaining, 0);
+                assert_eq!(sp.iterations(), cap);
+                assert_eq!(sp.iter_limit_hint, Some(37));
+                assert!(sp.numerical_error.is_none());
+                let recovered = sp.resolve(&root);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, 4.0);
+            }
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                vec![(0, 1.0), (1, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Ge, 1.0),
+                     (vec![(1, 1.0)], RelOp::Le, 1.0)]);
+            let root = Bounds::from_problem(&p);
+            for cap in [1, 2] {
+                let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                let mut remaining = cap;
+                assert_eq!(sp.resolve_with_work_limit(&root, &mut remaining).status, LpStatus::IterationLimit);
+                assert_eq!(remaining, 0);
+                assert_eq!(sp.iterations(), cap);
+                assert_eq!(sp.phase1_pending, cap == 1);
+                assert_eq!(sp.resolve(&root).objective, 0.0);
+            }
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, 1.0), var("y", 0.0, 1.0)], vec![],
+                vec![(vec![(0, -1.0)], RelOp::Eq, 0.0),
+                     (vec![(1, -1.0)], RelOp::Eq, 0.0)]);
+            let root = Bounds::from_problem(&p);
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let mut remaining = 1;
+            assert_eq!(sp.resolve_with_work_limit(&root, &mut remaining).status, LpStatus::IterationLimit);
+            assert_eq!(remaining, 0);
+            assert_eq!(sp.iterations(), 1);
+            assert!(sp.phase1_pending && sp.artificials_in_basis());
+            assert_eq!(sp.resolve(&root).status, LpStatus::Optimal);
+            assert!(!sp.phase1_pending);
+        }
+
+        #[test]
+        fn both_dual_layers_share_balance_and_limit_does_not_fall_through() {
+            let p = two_rows();
+            let root = Bounds::from_problem(&p);
+            let mut child = root.clone();
+            child.ub[0] = 0.0;
+            child.ub[2] = 0.0;
+            for main_enabled in [false, true] {
+                let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                assert_eq!(sp.solve(&root).objective, 4.0);
+                sp.dual_main_enabled = main_enabled;
+                let before = sp.iterations();
+                let mut remaining = 1;
+                let result = sp.resolve_with_work_limit(&child, &mut remaining);
+                assert_eq!(result.status, LpStatus::IterationLimit);
+                assert!(result.objective.is_nan());
+                assert_eq!(remaining, 0);
+                assert_eq!(sp.iterations() - before, 1);
+                assert_eq!(sp.num_art, 0, "硬上限不能沿回退链重建人工基");
+                assert_eq!(sp.dual_main_fallthroughs, 0, "工作上限不是快路径失败");
+                assert_eq!(sp.resolve(&root).objective, 4.0);
+            }
+            // 主循环自身的小预算仍可回退，但下一层继续使用同一工作余额。
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert_eq!(sp.solve(&root).objective, 4.0);
+            snap_to(&mut sp, &child);
+            let mut remaining = 2;
+            {
+                let mut work = LpWorkLimit::limited(&mut remaining);
+                assert_eq!(sp.dual_main_loop_with_limit(1, &mut work), DualResolveOutcome::Fallthrough);
+                assert_eq!(sp.dual_repair_with_limit(&mut work), DualRepair::Stopped(LpStatus::IterationLimit));
+            }
+            assert_eq!(remaining, 0);
+            assert_eq!(sp.iter_call, 2);
+            assert_eq!(sp.resolve(&root).objective, 4.0);
+        }
+
+        #[test]
+        fn bfrt_checks_entire_batch_before_mutating_or_charging() {
+            let p = bfrt_problem();
+            let root = Bounds::from_problem(&p);
+            let mut child = root.clone();
+            child.ub[1] = 0.0;
+            let mut base = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert_eq!(base.solve(&root).objective, 13.0);
+            let mut snapped = base.clone();
+            snap_to(&mut snapped, &child);
+            let mut stopped = base.clone();
+            let mut remaining = 1;
+            assert_eq!(stopped.resolve_with_work_limit(&child, &mut remaining).status, LpStatus::IterationLimit);
+            assert_eq!(remaining, 1, "整批不足时未执行任何动作，不能预扣");
+            assert_eq!(stopped.basis, snapped.basis);
+            assert_eq!(stopped.at_upper, snapped.at_upper);
+            assert_eq!(stopped.x_b, snapped.x_b);
+            assert_eq!(stopped.dual_main_flips, 0);
+            assert_eq!(stopped.dual_main_pivots, 0);
+            assert_eq!(stopped.dual_main_fallthroughs, 0);
+            let mut remaining = 2;
+            let before = base.iterations();
+            assert_eq!(base.resolve_with_work_limit(&child, &mut remaining).status, LpStatus::IterationLimit);
+            assert_eq!(remaining, 0);
+            assert_eq!(base.dual_main_flips, 1);
+            assert_eq!(base.dual_main_pivots, 1);
+            assert_eq!(base.iterations() - before, 1, "原迭代统计口径保持，工作步另计");
+            assert_eq!(base.resolve(&root).objective, 13.0);
+        }
+
+        #[test]
+        fn bfrt_failure_before_pivot_only_charges_completed_flip() {
+            let p = bfrt_problem();
+            let root = Bounds::from_problem(&p);
+            let mut child = root.clone();
+            child.ub[1] = 0.0;
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert_eq!(sp.solve(&root).objective, 13.0);
+            // 明确建立新鲜因子，使主元拒绝直接退出，而不走允许的一次重构。
+            sp.refactor().unwrap();
+            snap_to(&mut sp, &child);
+            assert!(sp.just_refactored);
+            let basis = sp.basis.clone();
+            let mut remaining = 2;
+            {
+                // 第一次FTRAN服务翻转；第二次才是尚未执行的入基主元。
+                let fault = direction_fault::Guard::after_calls(0.0, 1);
+                let mut work = LpWorkLimit::limited(&mut remaining);
+                assert_eq!(sp.dual_main_loop_with_limit(100, &mut work), DualResolveOutcome::Fallthrough);
+                assert!(fault.consumed());
+            }
+            assert_eq!(remaining, 1);
+            assert_eq!(sp.dual_main_flips, 1);
+            assert_eq!(sp.dual_main_pivots, 0);
+            assert_eq!(sp.basis, basis);
+            assert_eq!(sp.resolve(&root).objective, 13.0);
+        }
+
+        #[test]
+        fn last_step_keeps_atomic_refactor_failure_charged_and_broken() {
+            let p = bfrt_problem();
+            let root = Bounds::from_problem(&p);
+            let mut child = root.clone();
+            child.ub[1] = 0.0;
+            for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+                let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                assert_eq!(sp.solve(&root).objective, 13.0);
+                let mut remaining = 2;
+                let before = sp.iterations();
+                let result = {
+                    let fault = refactor_fault::Guard::new(kind, true);
+                    let result = sp.resolve_with_work_limit(&child, &mut remaining);
+                    assert!(fault.consumed(), "最后一步仍完成原子主元的既有维护");
+                    result
+                };
+                assert_eq!(result.status, LpStatus::IterationLimit);
+                assert!(result.objective.is_nan());
+                assert_eq!(remaining, 0);
+                assert!(sp.factorization_broken, "不能额外重建并清除broken");
+                assert_eq!(sp.basis[0], 0, "换基已发生，即使旧迭代统计尚未计入");
+                assert_eq!(sp.iterations(), before);
+                let mut snapshot = sp.clone();
+                for candidate in [&mut sp, &mut snapshot] {
+                    assert_eq!(candidate.resolve_with_work_limit(&root, &mut remaining).status, LpStatus::IterationLimit);
+                    assert!(candidate.factorization_broken, "零余额调用不启动新重构");
+                    let recovered = candidate.resolve(&root);
+                    assert_eq!(recovered.status, LpStatus::Optimal);
+                    assert_eq!(recovered.objective, 13.0);
+                    assert!(!candidate.factorization_broken);
+                }
+            }
+        }
+
+        #[test]
+        fn primal_and_cleanup_failed_pivots_charge_without_extra_retry() {
+            for cleanup in [false, true] {
+                let p = prob(Sense::Maximize, vec![var("x", 0.0, 1.0)], vec![(0, 1.0)],
+                    vec![(vec![(0, if cleanup { -1.0 } else { 1.0 })],
+                        if cleanup { RelOp::Eq } else { RelOp::Le },
+                        if cleanup { 0.0 } else { 0.5 })]);
+                let root = Bounds::from_problem(&p);
+                for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+                    let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                    let mut remaining = 1;
+                    let result = {
+                        let fault = refactor_fault::Guard::new(kind, true);
+                        let result = sp.resolve_with_work_limit(&root, &mut remaining);
+                        assert!(fault.consumed());
+                        result
+                    };
+                    assert_eq!(result.status, LpStatus::IterationLimit);
+                    assert!(result.objective.is_nan());
+                    assert_eq!(remaining, 0);
+                    assert_eq!(sp.basis[0], 0, "失败发生在真实换基之后");
+                    assert!(sp.factorization_broken, "余额零不能另起数值重试");
+                    assert_eq!(sp.phase1_pending, cleanup);
+                    let recovered = sp.resolve(&root);
+                    assert_eq!(recovered.status, LpStatus::Optimal);
+                    assert_eq!(recovered.objective, if cleanup { 0.0 } else { 0.5 });
+                }
+            }
+        }
+
+        #[test]
+        fn caller_limits_zero_action_and_unlimited_parity() {
+            let p = two_rows();
+            let root = Bounds::from_problem(&p);
+            let mut ordinary = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            ordinary.set_iter_limit_hint(Some(1234));
+            let mut limited = ordinary.clone();
+            let mut remaining = 100;
+            let a = ordinary.resolve(&root);
+            let b = limited.resolve_with_work_limit(&root, &mut remaining);
+            assert_eq!((a.status, a.objective, a.x), (b.status, b.objective, b.x));
+            assert_eq!(ordinary.basis, limited.basis);
+            assert_eq!(ordinary.iterations(), limited.iterations());
+            assert_eq!(limited.iter_limit_hint, Some(1234));
+            let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            limited.set_time_deadline(Some(past));
+            let before = remaining;
+            assert_eq!(limited.resolve_with_work_limit(&root, &mut remaining).status, LpStatus::TimeLimit);
+            assert_eq!(remaining, before);
+            assert_eq!(limited.time_deadline(), Some(past));
+            assert_eq!(limited.iter_limit_hint, Some(1234));
+            limited.set_time_deadline(None);
+            assert_eq!(limited.resolve_with_work_limit(&root, &mut remaining).status, LpStatus::Optimal);
+            assert_eq!(remaining, before, "只做最优性终检，不扣工作步");
+        }
+    }
 
     // ---- 构造辅助（对齐 simplex.rs 测试风格）----
 
