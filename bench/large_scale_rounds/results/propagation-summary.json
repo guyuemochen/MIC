@@ -1,0 +1,2752 @@
+{
+  "correctness_passed": true,
+  "eligible_for_paired": true,
+  "correctness_errors": [],
+  "independent_check": {
+    "passed": true,
+    "runs": 204,
+    "instances": 12,
+    "solutions_checked": 197,
+    "mic_with_external_optimum": 132,
+    "mic_bounds_checked": 132,
+    "errors": []
+  },
+  "screen": [
+    {
+      "instance": "knapsack-5000",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.012821958,
+            "peak_rss_bytes": 6094848,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.012428875,
+            "peak_rss_bytes": 5980160,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 1,
+              "prop_calls": 186,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.012821958,
+      "on_median_secs": 0.012428875,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "mknap-5x300",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991444,
+            "elapsed_secs": 3.665359,
+            "peak_rss_bytes": 4571136,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991451,
+            "elapsed_secs": 4.268544292,
+            "peak_rss_bytes": 4767744,
+            "propagation": {
+              "prop_accepted_rows": 5,
+              "prop_skipped_rows": 0,
+              "prop_calls": 127368,
+              "prop_row_visits": 636929,
+              "prop_term_visits": 382157400,
+              "prop_fixes": 642,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 7,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 3.665359,
+      "on_median_secs": 4.268544292,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "setcover-300x600",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 213,
+            "lp_iterations": 78432,
+            "elapsed_secs": 10.006818417,
+            "peak_rss_bytes": 15908864,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 205,
+            "lp_iterations": 77792,
+            "elapsed_secs": 10.002599333,
+            "peak_rss_bytes": 16908288,
+            "propagation": {
+              "prop_accepted_rows": 300,
+              "prop_skipped_rows": 0,
+              "prop_calls": 204,
+              "prop_row_visits": 5320,
+              "prop_term_visits": 525278,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -8,
+          "lp_iterations_delta": -640,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "lp-sparse-4000x800",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.914989542,
+            "peak_rss_bytes": 48922624,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.927325417,
+            "peak_rss_bytes": 53133312,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 97845248,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.914989542,
+      "on_median_secs": 0.927325417,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0033",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 2217,
+            "lp_iterations": 125833,
+            "elapsed_secs": 0.605194292,
+            "peak_rss_bytes": 3145728,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 970,
+            "lp_iterations": 28216,
+            "elapsed_secs": 0.135092291,
+            "peak_rss_bytes": 3162112,
+            "propagation": {
+              "prop_accepted_rows": 15,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1260,
+              "prop_row_visits": 9282,
+              "prop_term_visits": 182968,
+              "prop_fixes": 3432,
+              "prop_conflicts": 291
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -1247,
+          "lp_iterations_delta": -97617,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.605194292,
+      "on_median_secs": 0.135092291,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0201",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 8520.0,
+            "bound": 7176.264323023764,
+            "nodes": 2851,
+            "lp_iterations": 278734,
+            "elapsed_secs": 10.000203875,
+            "peak_rss_bytes": 10551296,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 2231,
+            "lp_iterations": 316798,
+            "elapsed_secs": 10.000221583,
+            "peak_rss_bytes": 10600448,
+            "propagation": {
+              "prop_accepted_rows": 133,
+              "prop_skipped_rows": 0,
+              "prop_calls": 2272,
+              "prop_row_visits": 78352,
+              "prop_term_visits": 5732043,
+              "prop_fixes": 11614,
+              "prop_conflicts": 42
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -60.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -620,
+          "lp_iterations_delta": 38064,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "enigma",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": null,
+            "bound": 0.0,
+            "nodes": 94959,
+            "lp_iterations": 2832577,
+            "elapsed_secs": 10.0001385,
+            "peak_rss_bytes": 3407872,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 0.0,
+            "bound": 0.0,
+            "nodes": 160973,
+            "lp_iterations": 1798429,
+            "elapsed_secs": 7.731802,
+            "peak_rss_bytes": 3375104,
+            "propagation": {
+              "prop_accepted_rows": 40,
+              "prop_skipped_rows": 1,
+              "prop_calls": 160972,
+              "prop_row_visits": 2983811,
+              "prop_term_visits": 59185528,
+              "prop_fixes": 769870,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": true,
+          "optimal_proof_gained": true,
+          "objective_delta": null,
+          "bound_delta": 0.0,
+          "nodes_delta": 66014,
+          "lp_iterations_delta": -1034148,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 1,
+      "new_optimal_proofs": 1,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "stein27",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4267,
+            "lp_iterations": 77446,
+            "elapsed_secs": 3.430218375,
+            "peak_rss_bytes": 8994816,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4385,
+            "lp_iterations": 76773,
+            "elapsed_secs": 3.3298729160000002,
+            "peak_rss_bytes": 9060352,
+            "propagation": {
+              "prop_accepted_rows": 118,
+              "prop_skipped_rows": 0,
+              "prop_calls": 4384,
+              "prop_row_visits": 122829,
+              "prop_term_visits": 947406,
+              "prop_fixes": 4818,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 118,
+          "lp_iterations_delta": -673,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 3.430218375,
+      "on_median_secs": 3.3298729160000002,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0282",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 317142.0,
+            "bound": 189762.35417210025,
+            "nodes": 1480,
+            "lp_iterations": 178679,
+            "elapsed_secs": 10.001418833,
+            "peak_rss_bytes": 13811712,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 314567.0,
+            "bound": 189762.35417210025,
+            "nodes": 1950,
+            "lp_iterations": 151882,
+            "elapsed_secs": 10.002577125,
+            "peak_rss_bytes": 14647296,
+            "propagation": {
+              "prop_accepted_rows": 241,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1950,
+              "prop_row_visits": 84931,
+              "prop_term_visits": 3523856,
+              "prop_fixes": 8004,
+              "prop_conflicts": 1
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -2575.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 470,
+          "lp_iterations_delta": -26797,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0548",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 4096,
+            "lp_iterations": 863026,
+            "elapsed_secs": 10.000595125,
+            "peak_rss_bytes": 13058048,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 6280,
+            "lp_iterations": 862868,
+            "elapsed_secs": 10.000649625,
+            "peak_rss_bytes": 13090816,
+            "propagation": {
+              "prop_accepted_rows": 174,
+              "prop_skipped_rows": 0,
+              "prop_calls": 7796,
+              "prop_row_visits": 38027,
+              "prop_term_visits": 2419488,
+              "prop_fixes": 6995,
+              "prop_conflicts": 1517
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 2184,
+          "lp_iterations_delta": -158,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "lseu",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 1874.0,
+            "bound": 1008.7157770515382,
+            "nodes": 7806,
+            "lp_iterations": 848336,
+            "elapsed_secs": 10.000234916,
+            "peak_rss_bytes": 4292608,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 1251.0,
+            "bound": 1008.7157770515382,
+            "nodes": 19522,
+            "lp_iterations": 860758,
+            "elapsed_secs": 10.000535917,
+            "peak_rss_bytes": 4341760,
+            "propagation": {
+              "prop_accepted_rows": 28,
+              "prop_skipped_rows": 0,
+              "prop_calls": 20040,
+              "prop_row_visits": 117464,
+              "prop_term_visits": 6036614,
+              "prop_fixes": 23927,
+              "prop_conflicts": 519
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -623.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 11716,
+          "lp_iterations_delta": 12422,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "air03",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.318583917,
+            "peak_rss_bytes": 32456704,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.320776541,
+            "peak_rss_bytes": 31981568,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 1.318583917,
+      "on_median_secs": 1.320776541,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    }
+  ],
+  "paired": [
+    {
+      "instance": "knapsack-5000",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.012764292,
+            "peak_rss_bytes": 5799936,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.012867208,
+            "peak_rss_bytes": 5996544,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 1,
+              "prop_calls": 186,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.013189375,
+            "peak_rss_bytes": 5849088,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.013151708,
+            "peak_rss_bytes": 5799936,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 1,
+              "prop_calls": 186,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.013181875,
+            "peak_rss_bytes": 5816320,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 88526.0,
+            "bound": 88526.0,
+            "nodes": 187,
+            "lp_iterations": 1917,
+            "elapsed_secs": 0.01317125,
+            "peak_rss_bytes": 5980160,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 1,
+              "prop_calls": 186,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.013181875,
+      "on_median_secs": 0.013151708,
+      "time_ratio": 0.9977114788298327,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "mknap-5x300",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991444,
+            "elapsed_secs": 3.723190125,
+            "peak_rss_bytes": 4571136,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991451,
+            "elapsed_secs": 4.343826292,
+            "peak_rss_bytes": 4767744,
+            "propagation": {
+              "prop_accepted_rows": 5,
+              "prop_skipped_rows": 0,
+              "prop_calls": 127368,
+              "prop_row_visits": 636929,
+              "prop_term_visits": 382157400,
+              "prop_fixes": 642,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 7,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991444,
+            "elapsed_secs": 3.7895105,
+            "peak_rss_bytes": 4571136,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991451,
+            "elapsed_secs": 4.41352975,
+            "peak_rss_bytes": 4669440,
+            "propagation": {
+              "prop_accepted_rows": 5,
+              "prop_skipped_rows": 0,
+              "prop_calls": 127368,
+              "prop_row_visits": 636929,
+              "prop_term_visits": 382157400,
+              "prop_fixes": 642,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 7,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991444,
+            "elapsed_secs": 3.78856725,
+            "peak_rss_bytes": 4669440,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 4762.0,
+            "bound": 4762.0,
+            "nodes": 127369,
+            "lp_iterations": 1991451,
+            "elapsed_secs": 4.416253042,
+            "peak_rss_bytes": 4734976,
+            "propagation": {
+              "prop_accepted_rows": 5,
+              "prop_skipped_rows": 0,
+              "prop_calls": 127368,
+              "prop_row_visits": 636929,
+              "prop_term_visits": 382157400,
+              "prop_fixes": 642,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 7,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 3.78856725,
+      "on_median_secs": 4.41352975,
+      "time_ratio": 1.1649601178387425,
+      "counts_for_geometric_mean": true,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "setcover-300x600",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 201,
+            "lp_iterations": 77415,
+            "elapsed_secs": 10.003902584,
+            "peak_rss_bytes": 15974400,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 203,
+            "lp_iterations": 77541,
+            "elapsed_secs": 10.004014208,
+            "peak_rss_bytes": 16646144,
+            "propagation": {
+              "prop_accepted_rows": 300,
+              "prop_skipped_rows": 0,
+              "prop_calls": 202,
+              "prop_row_visits": 5268,
+              "prop_term_visits": 520124,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 2,
+          "lp_iterations_delta": 126,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 200,
+            "lp_iterations": 77193,
+            "elapsed_secs": 10.00313175,
+            "peak_rss_bytes": 16138240,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 200,
+            "lp_iterations": 77193,
+            "elapsed_secs": 10.0132725,
+            "peak_rss_bytes": 16646144,
+            "propagation": {
+              "prop_accepted_rows": 300,
+              "prop_skipped_rows": 0,
+              "prop_calls": 199,
+              "prop_row_visits": 5206,
+              "prop_term_visits": 514106,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 201,
+            "lp_iterations": 77415,
+            "elapsed_secs": 10.022844041,
+            "peak_rss_bytes": 15908864,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 145.0,
+            "bound": 131.46305476904783,
+            "nodes": 193,
+            "lp_iterations": 76328,
+            "elapsed_secs": 10.0122965,
+            "peak_rss_bytes": 16695296,
+            "propagation": {
+              "prop_accepted_rows": 300,
+              "prop_skipped_rows": 0,
+              "prop_calls": 192,
+              "prop_row_visits": 5035,
+              "prop_term_visits": 497426,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -8,
+          "lp_iterations_delta": -1087,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "lp-sparse-4000x800",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.936403417,
+            "peak_rss_bytes": 53116928,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.929480458,
+            "peak_rss_bytes": 53100544,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 106233856,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.952878083,
+            "peak_rss_bytes": 53133312,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.948279084,
+            "peak_rss_bytes": 53198848,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 106266624,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.947918458,
+            "peak_rss_bytes": 48939008,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 5893.7057566182575,
+            "bound": 5893.7057566182575,
+            "nodes": 1,
+            "lp_iterations": 2659,
+            "elapsed_secs": 0.947386,
+            "peak_rss_bytes": 48939008,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 97878016,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.947918458,
+      "on_median_secs": 0.947386,
+      "time_ratio": 0.9994382871274355,
+      "counts_for_geometric_mean": true,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0033",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 2217,
+            "lp_iterations": 125833,
+            "elapsed_secs": 0.6071245,
+            "peak_rss_bytes": 3112960,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 970,
+            "lp_iterations": 28216,
+            "elapsed_secs": 0.135978459,
+            "peak_rss_bytes": 3178496,
+            "propagation": {
+              "prop_accepted_rows": 15,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1260,
+              "prop_row_visits": 9282,
+              "prop_term_visits": 182968,
+              "prop_fixes": 3432,
+              "prop_conflicts": 291
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -1247,
+          "lp_iterations_delta": -97617,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 2217,
+            "lp_iterations": 125833,
+            "elapsed_secs": 0.60777025,
+            "peak_rss_bytes": 3145728,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 970,
+            "lp_iterations": 28216,
+            "elapsed_secs": 0.13511375,
+            "peak_rss_bytes": 3112960,
+            "propagation": {
+              "prop_accepted_rows": 15,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1260,
+              "prop_row_visits": 9282,
+              "prop_term_visits": 182968,
+              "prop_fixes": 3432,
+              "prop_conflicts": 291
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -1247,
+          "lp_iterations_delta": -97617,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 2217,
+            "lp_iterations": 125833,
+            "elapsed_secs": 0.614878459,
+            "peak_rss_bytes": 3162112,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 3089.0,
+            "bound": 3089.0,
+            "nodes": 970,
+            "lp_iterations": 28216,
+            "elapsed_secs": 0.136082125,
+            "peak_rss_bytes": 3178496,
+            "propagation": {
+              "prop_accepted_rows": 15,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1260,
+              "prop_row_visits": 9282,
+              "prop_term_visits": 182968,
+              "prop_fixes": 3432,
+              "prop_conflicts": 291
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -1247,
+          "lp_iterations_delta": -97617,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 0.60777025,
+      "on_median_secs": 0.135978459,
+      "time_ratio": 0.223733325216231,
+      "counts_for_geometric_mean": true,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0201",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 8520.0,
+            "bound": 7176.264323023764,
+            "nodes": 2828,
+            "lp_iterations": 276986,
+            "elapsed_secs": 10.000645875,
+            "peak_rss_bytes": 10502144,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 2221,
+            "lp_iterations": 315049,
+            "elapsed_secs": 10.00142125,
+            "peak_rss_bytes": 10633216,
+            "propagation": {
+              "prop_accepted_rows": 133,
+              "prop_skipped_rows": 0,
+              "prop_calls": 2262,
+              "prop_row_visits": 78140,
+              "prop_term_visits": 5716779,
+              "prop_fixes": 11567,
+              "prop_conflicts": 42
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -60.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -607,
+          "lp_iterations_delta": 38063,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": 8520.0,
+            "bound": 7176.264323023764,
+            "nodes": 2829,
+            "lp_iterations": 277626,
+            "elapsed_secs": 10.001234875,
+            "peak_rss_bytes": 10469376,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 2221,
+            "lp_iterations": 315049,
+            "elapsed_secs": 10.002271834,
+            "peak_rss_bytes": 10616832,
+            "propagation": {
+              "prop_accepted_rows": 133,
+              "prop_skipped_rows": 0,
+              "prop_calls": 2262,
+              "prop_row_visits": 78140,
+              "prop_term_visits": 5716779,
+              "prop_fixes": 11567,
+              "prop_conflicts": 42
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -60.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -608,
+          "lp_iterations_delta": 37423,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": 8520.0,
+            "bound": 7176.264323023764,
+            "nodes": 2829,
+            "lp_iterations": 277766,
+            "elapsed_secs": 10.001891209,
+            "peak_rss_bytes": 10502144,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 2221,
+            "lp_iterations": 315369,
+            "elapsed_secs": 10.00039675,
+            "peak_rss_bytes": 10567680,
+            "propagation": {
+              "prop_accepted_rows": 133,
+              "prop_skipped_rows": 0,
+              "prop_calls": 2262,
+              "prop_row_visits": 78140,
+              "prop_term_visits": 5716779,
+              "prop_fixes": 11567,
+              "prop_conflicts": 42
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -60.0,
+          "bound_delta": 0.0,
+          "nodes_delta": -608,
+          "lp_iterations_delta": 37603,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "enigma",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": null,
+            "bound": 0.0,
+            "nodes": 94970,
+            "lp_iterations": 2833203,
+            "elapsed_secs": 10.000088042,
+            "peak_rss_bytes": 3375104,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 0.0,
+            "bound": 0.0,
+            "nodes": 160973,
+            "lp_iterations": 1798429,
+            "elapsed_secs": 7.732032875,
+            "peak_rss_bytes": 3391488,
+            "propagation": {
+              "prop_accepted_rows": 40,
+              "prop_skipped_rows": 1,
+              "prop_calls": 160972,
+              "prop_row_visits": 2983811,
+              "prop_term_visits": 59185528,
+              "prop_fixes": 769870,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": true,
+          "optimal_proof_gained": true,
+          "objective_delta": null,
+          "bound_delta": 0.0,
+          "nodes_delta": 66003,
+          "lp_iterations_delta": -1034774,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": null,
+            "bound": 0.0,
+            "nodes": 95147,
+            "lp_iterations": 2839344,
+            "elapsed_secs": 10.00009525,
+            "peak_rss_bytes": 3407872,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 0.0,
+            "bound": 0.0,
+            "nodes": 160973,
+            "lp_iterations": 1798429,
+            "elapsed_secs": 7.812593417,
+            "peak_rss_bytes": 3358720,
+            "propagation": {
+              "prop_accepted_rows": 40,
+              "prop_skipped_rows": 1,
+              "prop_calls": 160972,
+              "prop_row_visits": 2983811,
+              "prop_term_visits": 59185528,
+              "prop_fixes": 769870,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": true,
+          "optimal_proof_gained": true,
+          "objective_delta": null,
+          "bound_delta": 0.0,
+          "nodes_delta": 65826,
+          "lp_iterations_delta": -1040915,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": null,
+            "bound": 0.0,
+            "nodes": 94786,
+            "lp_iterations": 2827373,
+            "elapsed_secs": 10.000067917,
+            "peak_rss_bytes": 3391488,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 0.0,
+            "bound": 0.0,
+            "nodes": 160973,
+            "lp_iterations": 1798429,
+            "elapsed_secs": 7.704593083,
+            "peak_rss_bytes": 3457024,
+            "propagation": {
+              "prop_accepted_rows": 40,
+              "prop_skipped_rows": 1,
+              "prop_calls": 160972,
+              "prop_row_visits": 2983811,
+              "prop_term_visits": 59185528,
+              "prop_fixes": 769870,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": true,
+          "optimal_proof_gained": true,
+          "objective_delta": null,
+          "bound_delta": 0.0,
+          "nodes_delta": 66187,
+          "lp_iterations_delta": -1028944,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 3,
+      "new_optimal_proofs": 3,
+      "new_optimum_in_all_three": true,
+      "rss_passed": true
+    },
+    {
+      "instance": "stein27",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4267,
+            "lp_iterations": 77446,
+            "elapsed_secs": 3.378084833,
+            "peak_rss_bytes": 9207808,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4385,
+            "lp_iterations": 76773,
+            "elapsed_secs": 3.3995547090000002,
+            "peak_rss_bytes": 9355264,
+            "propagation": {
+              "prop_accepted_rows": 118,
+              "prop_skipped_rows": 0,
+              "prop_calls": 4384,
+              "prop_row_visits": 122829,
+              "prop_term_visits": 947406,
+              "prop_fixes": 4818,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 118,
+          "lp_iterations_delta": -673,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4267,
+            "lp_iterations": 77446,
+            "elapsed_secs": 3.376134083,
+            "peak_rss_bytes": 9011200,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4385,
+            "lp_iterations": 76773,
+            "elapsed_secs": 3.330225584,
+            "peak_rss_bytes": 9289728,
+            "propagation": {
+              "prop_accepted_rows": 118,
+              "prop_skipped_rows": 0,
+              "prop_calls": 4384,
+              "prop_row_visits": 122829,
+              "prop_term_visits": 947406,
+              "prop_fixes": 4818,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 118,
+          "lp_iterations_delta": -673,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4267,
+            "lp_iterations": 77446,
+            "elapsed_secs": 3.3746650000000002,
+            "peak_rss_bytes": 9289728,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 18.0,
+            "bound": 18.0,
+            "nodes": 4385,
+            "lp_iterations": 76773,
+            "elapsed_secs": 3.33763775,
+            "peak_rss_bytes": 9322496,
+            "propagation": {
+              "prop_accepted_rows": 118,
+              "prop_skipped_rows": 0,
+              "prop_calls": 4384,
+              "prop_row_visits": 122829,
+              "prop_term_visits": 947406,
+              "prop_fixes": 4818,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 118,
+          "lp_iterations_delta": -673,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 3.376134083,
+      "on_median_secs": 3.33763775,
+      "time_ratio": 0.9885975106279568,
+      "counts_for_geometric_mean": true,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0282",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 317142.0,
+            "bound": 189762.35417210025,
+            "nodes": 1476,
+            "lp_iterations": 178589,
+            "elapsed_secs": 10.002223625,
+            "peak_rss_bytes": 13811712,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 314567.0,
+            "bound": 189762.35417210025,
+            "nodes": 1953,
+            "lp_iterations": 152535,
+            "elapsed_secs": 10.002727875,
+            "peak_rss_bytes": 14614528,
+            "propagation": {
+              "prop_accepted_rows": 241,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1953,
+              "prop_row_visits": 84985,
+              "prop_term_visits": 3526626,
+              "prop_fixes": 8004,
+              "prop_conflicts": 1
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -2575.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 477,
+          "lp_iterations_delta": -26054,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": 317142.0,
+            "bound": 189762.35417210025,
+            "nodes": 1476,
+            "lp_iterations": 178269,
+            "elapsed_secs": 10.003908584,
+            "peak_rss_bytes": 14548992,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 314567.0,
+            "bound": 189762.35417210025,
+            "nodes": 1953,
+            "lp_iterations": 152471,
+            "elapsed_secs": 10.005032916,
+            "peak_rss_bytes": 14647296,
+            "propagation": {
+              "prop_accepted_rows": 241,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1953,
+              "prop_row_visits": 84985,
+              "prop_term_visits": 3526626,
+              "prop_fixes": 8004,
+              "prop_conflicts": 1
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -2575.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 477,
+          "lp_iterations_delta": -25798,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": 317142.0,
+            "bound": 189762.35417210025,
+            "nodes": 1476,
+            "lp_iterations": 178461,
+            "elapsed_secs": 10.000465,
+            "peak_rss_bytes": 14548992,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 314567.0,
+            "bound": 189762.35417210025,
+            "nodes": 1950,
+            "lp_iterations": 152138,
+            "elapsed_secs": 10.00239875,
+            "peak_rss_bytes": 14663680,
+            "propagation": {
+              "prop_accepted_rows": 241,
+              "prop_skipped_rows": 0,
+              "prop_calls": 1950,
+              "prop_row_visits": 84931,
+              "prop_term_visits": 3523856,
+              "prop_fixes": 8004,
+              "prop_conflicts": 1
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -2575.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 474,
+          "lp_iterations_delta": -26323,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0548",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 4091,
+            "lp_iterations": 861699,
+            "elapsed_secs": 10.000573583,
+            "peak_rss_bytes": 13123584,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 6295,
+            "lp_iterations": 865785,
+            "elapsed_secs": 10.000541209,
+            "peak_rss_bytes": 13041664,
+            "propagation": {
+              "prop_accepted_rows": 174,
+              "prop_skipped_rows": 0,
+              "prop_calls": 7817,
+              "prop_row_visits": 38143,
+              "prop_term_visits": 2427984,
+              "prop_fixes": 7019,
+              "prop_conflicts": 1523
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 2204,
+          "lp_iterations_delta": 4086,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 4084,
+            "lp_iterations": 860182,
+            "elapsed_secs": 10.000453208,
+            "peak_rss_bytes": 13123584,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 6299,
+            "lp_iterations": 866711,
+            "elapsed_secs": 10.000727667,
+            "peak_rss_bytes": 13238272,
+            "propagation": {
+              "prop_accepted_rows": 174,
+              "prop_skipped_rows": 0,
+              "prop_calls": 7823,
+              "prop_row_visits": 38179,
+              "prop_term_visits": 2430654,
+              "prop_fixes": 7027,
+              "prop_conflicts": 1525
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 2215,
+          "lp_iterations_delta": 6529,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 4085,
+            "lp_iterations": 860501,
+            "elapsed_secs": 10.000560417,
+            "peak_rss_bytes": 12992512,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 24505.0,
+            "bound": 5552.81912166968,
+            "nodes": 6291,
+            "lp_iterations": 865211,
+            "elapsed_secs": 10.00051025,
+            "peak_rss_bytes": 13254656,
+            "propagation": {
+              "prop_accepted_rows": 174,
+              "prop_skipped_rows": 0,
+              "prop_calls": 7812,
+              "prop_row_visits": 38119,
+              "prop_term_visits": 2426356,
+              "prop_fixes": 7015,
+              "prop_conflicts": 1522
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 2206,
+          "lp_iterations_delta": 4710,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "lseu",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "limit_reached",
+            "objective": 1874.0,
+            "bound": 1008.7157770515382,
+            "nodes": 7799,
+            "lp_iterations": 847148,
+            "elapsed_secs": 10.000088917,
+            "peak_rss_bytes": 4243456,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 1251.0,
+            "bound": 1008.7157770515382,
+            "nodes": 19584,
+            "lp_iterations": 863729,
+            "elapsed_secs": 10.000615667,
+            "peak_rss_bytes": 4407296,
+            "propagation": {
+              "prop_accepted_rows": 28,
+              "prop_skipped_rows": 0,
+              "prop_calls": 20102,
+              "prop_row_visits": 117806,
+              "prop_term_visits": 6051260,
+              "prop_fixes": 23991,
+              "prop_conflicts": 519
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -623.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 11785,
+          "lp_iterations_delta": 16581,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "limit_reached",
+            "objective": 1874.0,
+            "bound": 1008.7157770515382,
+            "nodes": 7806,
+            "lp_iterations": 848272,
+            "elapsed_secs": 10.0002055,
+            "peak_rss_bytes": 4259840,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 1251.0,
+            "bound": 1008.7157770515382,
+            "nodes": 19564,
+            "lp_iterations": 862729,
+            "elapsed_secs": 10.000806042,
+            "peak_rss_bytes": 4341760,
+            "propagation": {
+              "prop_accepted_rows": 28,
+              "prop_skipped_rows": 0,
+              "prop_calls": 20082,
+              "prop_row_visits": 117682,
+              "prop_term_visits": 6046106,
+              "prop_fixes": 23963,
+              "prop_conflicts": 519
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -623.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 11758,
+          "lp_iterations_delta": 14457,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "limit_reached",
+            "objective": 1874.0,
+            "bound": 1008.7157770515382,
+            "nodes": 7744,
+            "lp_iterations": 841229,
+            "elapsed_secs": 10.000084708,
+            "peak_rss_bytes": 4325376,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "limit_reached",
+            "objective": 1251.0,
+            "bound": 1008.7157770515382,
+            "nodes": 19522,
+            "lp_iterations": 860822,
+            "elapsed_secs": 10.000396334,
+            "peak_rss_bytes": 4390912,
+            "propagation": {
+              "prop_accepted_rows": 28,
+              "prop_skipped_rows": 0,
+              "prop_calls": 20040,
+              "prop_row_visits": 117464,
+              "prop_term_visits": 6036614,
+              "prop_fixes": 23927,
+              "prop_conflicts": 519
+            }
+          },
+          "common_optimum": false,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": -623.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 11778,
+          "lp_iterations_delta": 19593,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": false,
+      "off_median_secs": null,
+      "on_median_secs": null,
+      "time_ratio": null,
+      "counts_for_geometric_mean": false,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    },
+    {
+      "instance": "air03",
+      "pairs": [
+        {
+          "rep": 0,
+          "off": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.32878125,
+            "peak_rss_bytes": 31965184,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.32792,
+            "peak_rss_bytes": 30834688,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "off": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.334670125,
+            "peak_rss_bytes": 31981568,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.331860208,
+            "peak_rss_bytes": 30867456,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "off": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.334640791,
+            "peak_rss_bytes": 31096832,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "on": {
+            "status": "optimal",
+            "objective": 340160.0,
+            "bound": 340160.0,
+            "nodes": 1,
+            "lp_iterations": 5752,
+            "elapsed_secs": 1.337580417,
+            "peak_rss_bytes": 31031296,
+            "propagation": {
+              "prop_accepted_rows": 0,
+              "prop_skipped_rows": 0,
+              "prop_calls": 0,
+              "prop_row_visits": 0,
+              "prop_term_visits": 0,
+              "prop_fixes": 0,
+              "prop_conflicts": 0
+            }
+          },
+          "common_optimum": true,
+          "proof_lost": false,
+          "proof_gained": false,
+          "optimal_proof_gained": false,
+          "objective_delta": 0.0,
+          "bound_delta": 0.0,
+          "nodes_delta": 0,
+          "lp_iterations_delta": 0,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "all_common_optimum": true,
+      "off_median_secs": 1.334640791,
+      "on_median_secs": 1.331860208,
+      "time_ratio": 0.9979166057123755,
+      "counts_for_geometric_mean": true,
+      "proof_lost": false,
+      "new_proofs": 0,
+      "new_optimal_proofs": 0,
+      "new_optimum_in_all_three": false,
+      "rss_passed": true
+    }
+  ],
+  "promotion": {
+    "passed": true,
+    "gates": {
+      "correctness": true,
+      "no_proof_loss": true,
+      "enough_eligible_cases": true,
+      "per_case_ratio": true,
+      "peak_rss": true,
+      "performance": true
+    },
+    "eligible_cases": 5,
+    "geometric_time_ratio": 0.7620479444239945,
+    "performance_paths": {
+      "a": true,
+      "b": false
+    },
+    "newly_proven_models": [
+      "enigma"
+    ],
+    "new_proofs": 3,
+    "new_optimal_proofs": 3
+  }
+}
