@@ -1,0 +1,7 @@
+{
+  "mock_invalid_rss_rejected": 7,
+  "mock_positive_rss_accepted": true,
+  "runners_fail_before_source_stage_or_output": 2,
+  "sandbox_preflight_rejected": true,
+  "sandbox_stderr": "Traceback (most recent call last):\n  File \"/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/compare.py\", line 296, in preflight_rss\n    sample = invoke([sys.executable, '-c', \"print('{}')\"], 10, rss=True)\n  File \"/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/compare.py\", line 280, in invoke\n    raise RuntimeError(f'进程退出码 {proc.returncode}\\n{stderr[-4000:]}\\n{stdout[-1000:]}')\nRuntimeError: 进程退出码 1\n        0.01 real         0.01 user         0.00 sys\ntime: sysctl kern.clockrate: Operation not permitted\n\n{}\n\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sys;sys.path.insert(0,'bench/large_scale_rounds');from compare import preflight_rss;preflight_rss()\n                                                                                               ~~~~~~~~~~~~~^^\n  File \"/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/compare.py\", line 301, in preflight_rss\n    raise RssPreflightError(f'RSS 计时环境预检失败：{error}') from error\ncompare.RssPreflightError: RSS 计时环境预检失败：进程退出码 1\n        0.01 real         0.01 user         0.00 sys\ntime: sysctl kern.clockrate: Operation not permitted\n\n{}\n\n"
+}
