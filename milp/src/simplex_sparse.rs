@@ -4117,6 +4117,8 @@ impl SparseSimplex {
             self.risk_refresh_test.attempts =
                 self.risk_refresh_test.attempts.saturating_add(1);
         }
+        #[cfg(feature = "lu_failure_diagnostics")]
+        { self.lu_trace.reason = "risk_pivot_refresh"; }
         if let Err(msg) = self.refactor() {
             return PhaseOutcome::Failed(msg);
         }
@@ -4635,6 +4637,8 @@ mod tests {
     fn risk_pivot_refresh_failure_keeps_old_basis_and_phase_debt() {
         for phase1 in [false, true] {
             for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+                #[cfg(feature = "lu_failure_diagnostics")]
+                lu_failure_diagnostics::reset();
                 let (p, bounds, mut sp) = risk_fixture(phase1);
                 let old_basis = sp.basis.clone();
                 let old_upper = sp.at_upper.clone();
@@ -4652,6 +4656,15 @@ mod tests {
                 assert_eq!(sp.phase1_pending, phase1);
                 assert_eq!(sp.risk_refresh_test.attempts, 1, "失败不能再次刷新坏LU");
                 assert_eq!(sp.iter_call, 0);
+                #[cfg(feature = "lu_failure_diagnostics")]
+                {
+                    let capture = lu_failure_diagnostics::take();
+                    if matches!(kind, refactor_fault::Kind::Lu) {
+                        assert_eq!(capture.expect("LU失败应留证据").reason, "risk_pivot_refresh");
+                    } else {
+                        assert!(capture.is_none(), "x_B故障不能被误记为LU分解故障");
+                    }
+                }
                 let mut snapshot = sp.clone();
                 let expected = DenseSimplex::new(&p, Tolerances::default()).unwrap().solve(&bounds);
                 for candidate in [&mut sp, &mut snapshot] {

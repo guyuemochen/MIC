@@ -1,0 +1,57 @@
+{
+  "parent_commit": "13d353b",
+  "features_tested": [
+    "binary_coefficient_strengthening",
+    "risk_pivot_refresh",
+    "lu_failure_diagnostics",
+    "proof_profile",
+    "root_snapshot_restore",
+    "root_heuristic_work_budget"
+  ],
+  "source_sha256": {
+    "milp/Cargo.toml": "ab191a888baf2340dd0644706183a78fd18fee3336daf1c0bb44ad2b261e27b4",
+    "milp/examples/domain_stats.rs": "e72281c1944a3abf0cb2d056d6b38701f280429692aab7ca86e006d4fa2d70de",
+    "milp/examples/lu_failure_probe.rs": "a59aa20917df97766f024cf9753daf4be404ccefbe08be40966f3e996293856d",
+    "milp/examples/profile_stats.rs": "823554404b4ba048f3456c53a9b345d1f5938ddb21e2b81a6fd4f18f47ee789a",
+    "milp/examples/round_probe.rs": "4b78f76482ce69bba6330451393a51cddfeeab7a9d5013a7565e338e03e217e5",
+    "milp/examples/scale_probe.rs": "61e17d096b1be484013c6a302bf935cb1c09bc37ccfa7b34f51b2d092b3b494e",
+    "milp/examples/sparse_cost.rs": "be40e4f2b7a48ae581714c349e5a555856faaf8699e2ae23d1187a7c22b3c039",
+    "milp/src/binary_propagation.rs": "ab66890ce10b5832ec5898b8def676fe8bf5705a6eb40ee247f4bc7111b9957d",
+    "milp/src/branch_bound.rs": "887cd9022077d31b312f377ddb441713af71e736f0f77ad7762a31801c6aa9ef",
+    "milp/src/cuts.rs": "731ca846eeb465a59e8eb517ce8f97fbdfa37237b06185ee20517371d17bb685",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/heuristics.rs": "c3a27d21213600757d870d03f7ef57500ec2d90119719caac13abd21b0a48407",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "a2413becb37d19bac42af72eb81bb940cf6d4603995a7b34effab01daeccaa5b",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/parallel_bb.rs": "4494c6ba26c12b7a2c589721857f8df34094a8713948633481d3e235bf019eef",
+    "milp/src/presolve.rs": "d4c6ca82fc1312a6e85eae74299098708f8797c92aa12ec88cb1a8155a281002",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/simplex.rs": "1905139fd3c4c787d774c62a271eb6e1be79d15eb3d700d8bbf9b1d603a93b94",
+    "milp/src/simplex_sparse.rs": "8a29dae34af3be5219aa2c4de0e7756d1721d66135642ecff39a36340bd8af5d",
+    "milp/src/solver.rs": "3b6eaf1bf97228ecf3a488ad79ed02952aab1f0471cef99f5de54768f64144c3",
+    "milp/tests/acceptance.rs": "d663af0129152f20abcfe3b666baa3b016d22ab6b71ce8aa3cee395a0e88ff29",
+    "milp/tests/warm_cold_parity.rs": "3c56f99ae286a6911d722c21af5f37138bf1d02fcc70622d41a68d417ad44c2a"
+  },
+  "validation": {
+    "milp": {
+      "passed": 470,
+      "ignored": 6
+    },
+    "release_acceptance": {
+      "passed": 16,
+      "ignored": 0
+    },
+    "ffi": {
+      "unit": 5,
+      "abi": 22
+    },
+    "python": {
+      "passed": 65
+    }
+  },
+  "note": "整合后补充风险刷新诊断原因标记及其回归断言；正式计时关闭全部诊断，分别启用单个性能候选。"
+}
