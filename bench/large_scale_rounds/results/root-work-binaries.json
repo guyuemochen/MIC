@@ -1,0 +1,25 @@
+{
+  "base": {
+    "binary": "/tmp/mic-r7-binaries/round_probe_base",
+    "features": []
+  },
+  "snapshot": {
+    "binary": "/tmp/mic-r7-binaries/round_probe_snapshot",
+    "features": [
+      "root_snapshot_restore"
+    ]
+  },
+  "budget": {
+    "binary": "/tmp/mic-r7-binaries/round_probe_budget",
+    "features": [
+      "root_heuristic_work_budget"
+    ]
+  },
+  "both": {
+    "binary": "/tmp/mic-r7-binaries/round_probe_both",
+    "features": [
+      "root_snapshot_restore",
+      "root_heuristic_work_budget"
+    ]
+  }
+}

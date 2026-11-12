@@ -1,0 +1,64 @@
+{
+  "source_commit": "3c70943e865bc1f3488d3fcc6b5d5adb4b4dcf47",
+  "source_tree": "0430a5c1da6cfb4767d5a9ab299e72df2623ff18",
+  "builds": [
+    {
+      "variant": "base",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/mic-root-work-r7/milp/Cargo.toml",
+        "--release",
+        "--example",
+        "round_probe"
+      ],
+      "binary_sha256": "674d4108ea43347031997d87efcb5e95b0fd3fe71076697f0b3955c923a5b336"
+    },
+    {
+      "variant": "snapshot",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/mic-root-work-r7/milp/Cargo.toml",
+        "--release",
+        "--example",
+        "round_probe",
+        "--features",
+        "root_snapshot_restore"
+      ],
+      "binary_sha256": "4c1e84b96d5e6ac1c6c11e51ce5efb86360c2e0496f11591a3561e75d2077d86"
+    },
+    {
+      "variant": "budget",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/mic-root-work-r7/milp/Cargo.toml",
+        "--release",
+        "--example",
+        "round_probe",
+        "--features",
+        "root_heuristic_work_budget"
+      ],
+      "binary_sha256": "5ad2e24884ee780300100ed943c7e23af7414162a5b038ad3e8350c3f1d0eccb"
+    },
+    {
+      "variant": "both",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/mic-root-work-r7/milp/Cargo.toml",
+        "--release",
+        "--example",
+        "round_probe",
+        "--features",
+        "root_snapshot_restore,root_heuristic_work_budget"
+      ],
+      "binary_sha256": "f95d1182b14ffe0245021d14196417b525f2ae52bbd5022e0985aa253a1ef383"
+    }
+  ]
+}
