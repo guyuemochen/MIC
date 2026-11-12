@@ -47,7 +47,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -62,6 +62,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
+| `--early-stop on\|off` | 是否允许停滞时提前返回；`off` 保留 auto 启发式，关闭策略级自动降级。时间、节点、迭代上限和显式 mipgap 仍生效 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
 | `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
 | `--node-rule dfs\|hybrid` | 节点选择；`dfs` 为原深度优先，`hybrid` 每64节点选择当前最好界，其余深搜。混合策略以不可变共享块保存完整父域，未变化的块不重复复制；仍可能比DFS多用内存，收益依问题而异，不自动启用 | `dfs` | 未知值 / 缺参 / 重复出现报错；`hybrid` 必须显式 `--local-cuts off` 且 `--threads 1`，否则报错；支持等号/空格两式 |
 | `--local-cuts on\|off` | 树内局部割开关；`off` 不影响根割开关，用于混合策略及同口径对照 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
@@ -212,8 +213,8 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 在「树节点上要不要投资 dive」的微观自适应之上，`auto` 还有一层**策略级**
 自适应：自动判断「继续证明最优」还是「提前返回当前最好解」。
 
-- **激活条件（缺一不可）**：`--heuristic-mode auto`（默认）**且**给了
-  `--time-limit-secs N`。不给时间预算 = 没有表达速度优先的需求 ⇒ 契约
+- **激活条件（缺一不可）**：`--heuristic-mode auto`（默认）、
+  `--early-stop on`（默认），**且**给了 `--time-limit-secs N`。不给时间预算 = 没有表达速度优先的需求 ⇒ 契约
   红线：auto 仍**证明最优**，绝不降级。
 - **触发判定**（`search_ctrl::AutoDegrade`，默认参数 0.5/0.25/0.01，
   经 `SearchControl::degrade` 可注入）：预算消耗 ≥ 50% 之后，若
@@ -229,6 +230,11 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 - **与 `--mipgap` 的关系**：`--mipgap` 是手动的「gap 到多少就停」；
   自动降级是求解器自己判断「这预算内证不完了，别耗着」。两者可并用，
   谁先满足谁终止。
+
+要在给定预算内持续尝试证明最优，同时保留自适应启发式，可用
+`--heuristic-mode auto --early-stop off --time-limit-secs 60`。库入口对应
+`SearchControl::degrade = DegradePolicy::disabled()`。该开关支持顺序和并行路径，
+不把限额返回的可行解标成最优；默认行为保持不变。
 
 ### 确定性模式（--determinism budget，W3）
 

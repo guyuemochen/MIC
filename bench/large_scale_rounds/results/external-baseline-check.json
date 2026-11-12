@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "runs": 108,
+  "instances": 12,
+  "solutions_checked": 105,
+  "mic_with_external_optimum": 36,
+  "mic_bounds_checked": 36,
+  "errors": []
+}
