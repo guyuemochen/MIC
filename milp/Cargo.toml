@@ -14,3 +14,6 @@ sparse_row_products_stats = ["sparse_row_products"]
 
 # 真实生产路径的证明进展诊断，默认不编译。
 proof_profile = []
+
+# 根预割启发式后恢复完整最优基快照，默认关闭的性能试验。
+root_snapshot_restore = []

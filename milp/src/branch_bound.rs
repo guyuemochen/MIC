@@ -707,6 +707,9 @@ fn sequential_bb(
     // 不读 incumbent，割序不受影响。关割路径顶点唯一（割前 ≡ 割后），
     // `root_cuts=false` 时不执行 ⇒ 行为逐字节不变。
     if opts.root_cuts && opts.heuristics {
+        // 快照在启发式改界前取得：基、非基贴界、定价历史与绝对deadline一并保留。
+        #[cfg(feature = "root_snapshot_restore")]
+        let root_snapshot = simplex.snapshot();
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc);
         }
@@ -746,17 +749,31 @@ fn sequential_bb(
         // 与无预割路径逐字节一致的表格），使割循环恒在冷基上分离；incumbent
         // 已由 maybe_update 收取，不受重建影响。迭代记账先累计再重建
         // （与下方 PruneLimit 重建路径同款），不丢数。
-        base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
-        simplex = new_engine(problem, tol, opts.lp_engine)?;
-        simplex.set_time_deadline(time_deadline);
-        sol = simplex.solve(&bounds);
+        #[cfg(not(feature = "root_snapshot_restore"))]
+        {
+            base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
+            simplex = new_engine(problem, tol, opts.lp_engine)?;
+            simplex.set_time_deadline(time_deadline);
+            sol = simplex.solve(&bounds);
+        }
+        #[cfg(feature = "root_snapshot_restore")]
+        {
+            // 快照自带根LP迭代，只把启发式新增迭代记入外部累计，避免重复记账。
+            base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(root_snapshot.iterations()));
+            simplex = root_snapshot;
+            // 恢复快照不执行LP；原sol仍对应该最优基。超时仍必须诚实终止。
+            if time_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                sol.status = LpStatus::TimeLimit;
+                sol.objective = f64::NAN;
+            }
+        }
         #[cfg(test)]
         test_root_lp_interrupt::apply("restart", &mut sol);
         remember_root_bound(sense, &mut proven_root_bound, &sol);
         #[cfg(feature = "proof_profile")]
-        crate::proof_profile::lp("root_restart", &sol, simplex.iterations(), None, stats.cuts);
+        crate::proof_profile::lp(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" }, &sol, simplex.iterations(), None, stats.cuts);
         #[cfg(feature = "proof_profile")]
-        crate::proof_profile::lp_failure("root_restart",&sol,&*simplex);
+        crate::proof_profile::lp_failure(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" },&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             let bound = if status == SolveStatus::LimitReached {
                 bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
@@ -2875,6 +2892,41 @@ pub(crate) mod test_root_lp_interrupt {
 mod root_evidence_tests {
     use super::*;
     use crate::model::{RelOp, VarType};
+
+    #[cfg(feature = "root_snapshot_restore")]
+    #[test]
+    fn root_snapshot_matches_cold_basis_after_heuristic_mutation() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = unresolved_bound_tests::model(sense, false);
+            let bounds = Bounds::from_problem(&p);
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                let tol = Tolerances::default();
+                let mut lp = new_engine(&p, tol, engine).unwrap();
+                let deadline = Instant::now().checked_add(std::time::Duration::from_secs(3600));
+                lp.set_time_deadline(deadline);
+                let sol = lp.solve(&bounds);
+                assert_eq!(sol.status, LpStatus::Optimal);
+                let snapshot = lp.snapshot();
+                let root_iters = snapshot.iterations();
+                let _ = heuristics::dive(&p, &mut lp, &bounds, &sol.x, 20, &tol);
+                let all_iters = lp.iterations();
+                let heuristic_iters = all_iters.saturating_sub(root_iters);
+                lp = snapshot;
+                assert_eq!(heuristic_iters.saturating_add(lp.iterations()), all_iters);
+                assert_eq!(lp.time_deadline(), deadline);
+                let mut cold = new_engine(&p, tol, engine).unwrap();
+                let cold_sol = cold.solve(&bounds);
+                assert_eq!(sol.objective, cold_sol.objective);
+                assert_eq!(sol.x, cold_sol.x);
+                assert_eq!(lp.basis_columns(), cold.basis_columns());
+                assert_eq!(lp.structural_reduced_costs(), cold.structural_reduced_costs());
+                assert_eq!(lp.num_rows(), cold.num_rows());
+                for row in 0..lp.num_rows() {
+                    assert_eq!(lp.tableau_row_terms(row), cold.tableau_row_terms(row));
+                }
+            }
+        }
+    }
 
     #[test]
     fn root_bound_uses_only_finite_proofs_and_conservative_incumbent_clip() {

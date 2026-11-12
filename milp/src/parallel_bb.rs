@@ -996,6 +996,9 @@ pub fn parallel_branch_and_bound(
         // 割后一轮取最优（maybe_update_local 只增不减）；incumbent 只增不减
         // 不影响割的生成。`root_cuts=false` 时不执行 ⇒ 行为逐字节不变。
         if terminal.is_none() && opts.root_cuts && opts.heuristics {
+            // 快照在启发式改界前取得：基、非基贴界、定价历史与绝对deadline一并保留。
+            #[cfg(feature = "root_snapshot_restore")]
+            let root_snapshot = simplex.clone();
             if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
                 maybe_update_local(sense, &mut incumbent, inc);
             }
@@ -1030,10 +1033,24 @@ pub fn parallel_branch_and_bound(
             // worker 的 recorded_cuts 重放恒在冷基上；incumbent 已由
             // maybe_update_local 收取，不受重建影响。迭代记账先进
             // base_iters，不丢数。
-            base_iters = base_iters.saturating_add(simplex.iterations());
-            simplex = Simplex::new(problem, tol)?;
-            simplex.set_time_deadline(time_deadline);
-            sol = simplex.solve(&bounds);
+            #[cfg(not(feature = "root_snapshot_restore"))]
+            {
+                base_iters = base_iters.saturating_add(simplex.iterations());
+                simplex = Simplex::new(problem, tol)?;
+                simplex.set_time_deadline(time_deadline);
+                sol = simplex.solve(&bounds);
+            }
+            #[cfg(feature = "root_snapshot_restore")]
+            {
+                // 快照自带根LP迭代，只把启发式新增迭代记入外部累计，避免重复记账。
+                base_iters = base_iters.saturating_add(simplex.iterations().saturating_sub(root_snapshot.iterations()));
+                simplex = root_snapshot;
+                // 恢复快照不执行LP；原sol仍对应该最优基。超时仍必须诚实终止。
+                if time_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    sol.status = LpStatus::TimeLimit;
+                    sol.objective = f64::NAN;
+                }
+            }
             #[cfg(test)]
             crate::branch_bound::test_root_lp_interrupt::apply("restart", &mut sol);
             crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
