@@ -1,0 +1,18 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-nonfinite-directions/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.00s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-c8204a0947103146)
+
+running 10 tests
+test simplex::tests::nonfinite_direction_phase_two_nan ... ok
+test simplex::tests::nonfinite_direction_phase_two_positive_infinity ... ok
+test simplex::tests::nonfinite_direction_phase_two_negative_infinity ... ok
+test simplex_sparse::tests::nonfinite_direction_phase_two_positive_infinity ... ok
+test simplex_sparse::tests::nonfinite_direction_can_overflow_from_finite_etas ... ok
+test simplex_sparse::tests::nonfinite_direction_phase_two_nan ... ok
+test simplex_sparse::tests::nonfinite_direction_phase_two_negative_infinity ... ok
+test simplex_sparse::tests::nonfinite_direction_with_old_eta_recovers_once ... ok
+test simplex::tests::nonfinite_direction_phase_one_preserves_pending ... ok
+test simplex_sparse::tests::nonfinite_direction_phase_one_preserves_pending ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 395 filtered out; finished in 0.00s
+
