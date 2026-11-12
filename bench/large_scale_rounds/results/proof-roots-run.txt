@@ -1,0 +1,10 @@
+setcover-300x600 root-cuts-off limit_reached 1 44344
+setcover-300x600 root-cuts-on limit_reached 1 55088
+p0201 root-cuts-on limit_reached 1 5885
+p0201 root-cuts-off limit_reached 1 1850
+p0282 root-cuts-off limit_reached 1 5015
+p0282 root-cuts-on limit_reached 1 16252
+p0548 root-cuts-on limit_reached 1 28242
+p0548 root-cuts-off limit_reached 1 3657
+lseu root-cuts-off limit_reached 1 219
+lseu root-cuts-on limit_reached 1 5007

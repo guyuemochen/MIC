@@ -1,0 +1,15 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-proof-diagnostics/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-0ab7671c24267a64)
+
+running 7 tests
+test proof_profile::tests::noncheckpoint_frontier_does_not_evaluate_or_scan ... ok
+test proof_profile::tests::nonoptimal_objectives_and_nonfinite_numbers_never_become_json_bounds ... ok
+test proof_profile::tests::diagnostic_error_is_fresh_per_call_for_both_engines ... ok
+test proof_profile::tests::actual_zero_gain_probe_is_counted_without_learning_it ... ok
+test proof_profile::tests::interrupted_child_is_reported_separately_from_empty_execution_stack ... ok
+test proof_profile::tests::root_cut_rollback_observes_actual_retained_rows ... ok
+test proof_profile::tests::stages_come_from_actual_scaled_work_and_capture_does_not_change_result ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.00s
+
