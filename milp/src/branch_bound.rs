@@ -287,7 +287,8 @@ pub struct SearchControl {
     /// `adaptive_heuristics = true` 且给了时间预算（`BbOptions::time_limit_ms
     /// != 0`）时评估；触发时与 mipgap 同径提前终止（LimitReached +
     /// gap_terminated），另附 `auto_degraded = true` 标记。默认
-    /// [`DegradePolicy::default`]。
+    /// [`DegradePolicy::default`]；[`DegradePolicy::disabled`] 可单独关闭
+    /// 策略提前终止，保留自适应启发式及其它限额。
     pub degrade: DegradePolicy,
 }
 
@@ -1026,7 +1027,7 @@ fn sequential_bb(
                     }
                 }
             }
-            // ③ 策略级自动降级（仅 auto 模式且给了时间预算）：资格预检通过
+            // ③ 策略级自动降级（auto 模式、有时间预算且政策未禁用）：资格预检通过
             // 才聚合前沿界（避免逐节点 O(栈) 开销）；双停滞（incumbent 与界
             // 都不再前进）⇒ 与 ② 同径提前终止，证据口径一致。W3：budget
             // 模式的进度/预算/停滞锚点单位 = 节点数（progress_units 注入，
@@ -4720,6 +4721,95 @@ mod tests {
             heuristics: true,
             ..BbOptions::default()
         }
+    }
+
+    /// 关闭提前退出只屏蔽降级判定；顺序控制器仍会在停滞时请求树内启发式。
+    #[test]
+    fn early_stop_disabled_keeps_sequential_adaptive_decisions() {
+        let mut state = AdaptiveState::new(HeuristicConfig::default(), DegradePolicy::disabled());
+        let snapshot = SearchSnapshot {
+            nodes: 400,
+            incumbent: Some(21.5),
+            nodes_since_improvement: 400,
+            time_budget_secs: Some(100.0),
+            elapsed_secs: 60.0,
+        };
+        assert_eq!(state.controller.decide(&snapshot), HeuristicDecision::Run);
+        let stalled = DegradeSnapshot {
+            sense: Sense::Maximize,
+            elapsed_secs: 60.0,
+            budget_secs: Some(100.0),
+            has_incumbent: true,
+            last_improvement_secs: 0.0,
+            bound: Some(22.0),
+        };
+        assert!(!state.degrade.decide(&stalled));
+        assert!(!state.degrade.decide(&stalled));
+    }
+
+    /// 同一顺序问题在禁用降级后可以证完；节点限额和显式 gap 仍诚实截断。
+    #[test]
+    fn early_stop_disabled_preserves_sequential_completion_and_limits() {
+        let p = dive_problem();
+        let opts = BbOptions { time_limit_ms: 10_000, ..dive_opts() };
+        let mut ctrl = SearchControl {
+            adaptive_heuristics: true,
+            determinism: Determinism::Budget,
+            degrade: DegradePolicy { start_frac: 0.0, plateau_frac: 0.0, ..DegradePolicy::default() },
+            ..SearchControl::default()
+        };
+        let stopped = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(stopped.status, SolveStatus::LimitReached);
+        assert!(stopped.auto_degraded, "旧策略仍按双停滞提前退出");
+        ctrl.degrade = DegradePolicy::disabled();
+        let complete = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(complete.status, SolveStatus::Optimal);
+        assert!(!complete.auto_degraded && !complete.gap_terminated);
+        assert_close(complete.best_objective.unwrap(), 21.5);
+        assert_close(complete.bound.unwrap(), 21.5);
+        assert!(complete.stats.nodes > stopped.stats.nodes);
+
+        let limited = branch_and_bound_controlled(
+            &p, &BbOptions { node_limit: 1, ..opts }, &ctrl, tol(), None,
+        ).unwrap();
+        assert_eq!(limited.status, SolveStatus::LimitReached);
+        assert!(!limited.auto_degraded && !limited.gap_terminated);
+        assert_eq!(limited.stats.nodes, 1);
+        assert_close(limited.best_objective.unwrap(), 21.5);
+        assert!(limited.bound.unwrap() >= 21.5, "截断时不能丢剩余前沿的有效界");
+
+        ctrl.mipgap_percent = Some(3.0);
+        let gap = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(gap.status, SolveStatus::LimitReached);
+        assert!(gap.gap_terminated && !gap.auto_degraded);
+        assert_close(gap.best_objective.unwrap(), 21.5);
+    }
+
+    /// 禁用降级不取消确定性时间预算；截断和单线程复跑结果保持一致。
+    #[test]
+    fn early_stop_disabled_keeps_budget_time_limit_and_determinism() {
+        let p = chain_knapsack(8, 0.5);
+        let opts = BbOptions { time_limit_ms: 1, ..plain_opts() };
+        let ctrl = SearchControl {
+            adaptive_heuristics: true,
+            determinism: Determinism::Budget,
+            degrade: DegradePolicy::disabled(),
+            ..SearchControl::default()
+        };
+        let a = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        let b = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(a.status, SolveStatus::LimitReached);
+        assert_eq!(a.stats.nodes, 6, "1ms 的确定性预算仍为 6 个节点");
+        assert!(!a.auto_degraded && !a.gap_terminated);
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.best_objective, b.best_objective);
+        assert_eq!(a.best_values, b.best_values);
+        assert_eq!(a.bound, b.bound);
+        assert_eq!(a.auto_degraded, b.auto_degraded);
+        assert_eq!(a.gap_terminated, b.gap_terminated);
+        assert!(a.bound.unwrap() >= chain_knapsack_bruteforce(8, 0.5));
     }
 
     /// 顺序确定性 gap 用例（dive 问题，offset=0.5 非整数目标 ⇒ cutoff 关闭）：

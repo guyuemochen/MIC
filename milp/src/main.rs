@@ -1,7 +1,7 @@
 //! milp CLI 入口（WP5 契约实现 + 受控搜索参数包）。
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
-//! [--mipgap P] [--heuristic-mode auto|on|off] `
+//! [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] `
 //! [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
 //!
 //! 输出契约：
@@ -16,10 +16,12 @@
 //!   `nodes = N`、`gap = <%.2f>`（库层触发时刻证据 + 统一 clamp 双保证为
 //!   非负有限，永不 inf/负）、`best = <数值>`（**无 objective 行**——未证明
 //!   最优，绝不冒充）；
-//! - **自动降级终止**（`--heuristic-mode auto` 且给了 `--time-limit-secs N`，
+//! - **自动降级终止**（`--heuristic-mode auto`、`--early-stop on`（默认）
+//!   且给了 `--time-limit-secs N`，
 //!   预算过半后解与对偶界双停滞时触发）：依次 `status = auto_degraded`、
 //!   `nodes = N`、`gap = <%.2f>`、`best = <数值>`（行形状同 gap 终止、
 //!   status 区分原因；同样**无 objective 行**——未证明最优）。
+//!   `--early-stop off` 仅关闭该策略，自适应启发式、硬上限与 mipgap 均保留。
 //!
 //! 错误到 stderr `error: <MilpError>`。退出码：0=最优 2=不可行 3=无界
 //! 4=上限触发与 gap 终止（均未证明最优） 1=错误/用法。
@@ -42,7 +44,8 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]\n\
+--early-stop 默认 on：auto 模式有时间预算时允许停滞提前退出；off 仅关闭此策略，保留自适应启发式。时间、节点、LP迭代上限与 --mipgap 仍生效。";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -94,6 +97,8 @@ struct Config {
     mipgap_percent: Option<f64>,
     /// 启发式模式；默认 Auto。
     heuristic_mode: HeuristicModeCli,
+    /// 是否允许停滞提前退出；默认 true。关闭不影响自适应启发式和硬限额。
+    early_stop: bool,
     /// 分支规则（`--branch-rule`）；默认 None = 类自适应（R3：求解入口按
     /// 结构类检测解析——全 Binary + 全正系数 Le 行 + 行数 ≤ 64 ⇒ Pseudocost
     /// + 可靠性冷启动 8，否则 MostFractional）；显式 most_fractional/
@@ -194,6 +199,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut log_secs: Option<f64> = None;
     let mut mipgap_percent: Option<f64> = None;
     let mut heuristic_mode: Option<HeuristicModeCli> = None;
+    let mut early_stop: Option<bool> = None;
     let mut branch_rule: Option<BranchRule> = None;
     let mut node_rule = None;
     let mut local_cuts = None;
@@ -322,6 +328,23 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             heuristic_mode = Some(mode);
             index += 1; // 额外消费模式 token
+        } else if arg == "--early-stop" || arg.starts_with("--early-stop=") {
+            if early_stop.is_some() {
+                return Err(format!("`--early-stop` 重复出现（{USAGE}）"));
+            }
+            let value = if let Some(value) = arg.strip_prefix("--early-stop=") {
+                value
+            } else {
+                index += 1;
+                args.get(index)
+                    .ok_or_else(|| format!("`--early-stop` 缺少参数 on|off（{USAGE}）"))?
+                    .as_str()
+            };
+            early_stop = Some(match value {
+                "on" => true,
+                "off" => false,
+                _ => return Err(format!("未知 --early-stop 值 `{value}`（期望 on|off，{USAGE}）")),
+            });
         } else if arg == "--node-rule" || arg.starts_with("--node-rule=") {
             if node_rule.is_some() { return Err(format!("`--node-rule` 重复出现（{USAGE}）")); }
             let value = if let Some(v) = arg.strip_prefix("--node-rule=") { v } else {
@@ -562,6 +585,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
         // 节点数 ⇒ 原算例 auto ≡ on，见 README）。
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
+        early_stop: early_stop.unwrap_or(true),
         node_rule,
         local_cuts,
         branch_rule, // None = 类自适应默认（R3）
@@ -625,13 +649,17 @@ fn solve_options_from(config: &Config) -> SolveOptions {
 }
 
 /// 由 [`Config`] 构造搜索控制（`--threads` / `--mipgap` / `--log-secs` /
-/// `--heuristic-mode auto` 直通 [`SearchControl`]）。
+/// `--heuristic-mode auto` / `--early-stop` 直通 [`SearchControl`]）。
 ///
 /// adaptive_heuristics 仅在 auto 模式开启（on/off 均为 false）；默认
 /// （threads=1、无 mipgap、无 log、auto）与升级前行为逐字节一致。
 fn search_control_from(config: &Config) -> SearchControl {
     SearchControl {
-        degrade: milp::search_ctrl::DegradePolicy::default(),
+        degrade: if config.early_stop {
+            milp::search_ctrl::DegradePolicy::default()
+        } else {
+            milp::search_ctrl::DegradePolicy::disabled()
+        },
         threads: config.threads,
         mipgap_percent: config.mipgap_percent,
         adaptive_heuristics: config.heuristic_mode == HeuristicModeCli::Auto,
@@ -839,6 +867,7 @@ mod tests {
             log_secs: None,
             mipgap_percent: None,
             heuristic_mode: HeuristicModeCli::Auto,
+            early_stop: true,
             branch_rule: None,
             scaling: true,
             mitm: true,
@@ -975,6 +1004,64 @@ mod tests {
         assert_eq!(config.log_secs, None, "默认不输出任何进度行");
         assert_eq!(config.mipgap_percent, None, "默认关闭 mipgap");
         assert_eq!(config.heuristic_mode, HeuristicModeCli::Auto);
+        assert!(config.early_stop, "旧默认仍允许策略提前退出");
+        assert_eq!(search_control_from(&config).degrade, milp::search_ctrl::DegradePolicy::default());
+    }
+
+    /// 提前退出与三种启发式模式独立解析；顺序/并行、无预算/极值预算均不互相覆盖。
+    #[test]
+    fn early_stop_cli_is_independent_of_heuristics_and_argument_order() {
+        for mode in ["auto", "on", "off"] {
+            for early in ["on", "off"] {
+                for threads in ["1", "4"] {
+                    for seconds in [None, Some("0"), Some("7"), Some("18446744073709551615")] {
+                        for early_first in [false, true] {
+                            let mut input = vec!["a.milp", "--threads", threads, "--mipgap", "2.5"];
+                            if early_first {
+                                input.extend(["--early-stop", early, "--heuristic-mode", mode]);
+                            } else {
+                                input.extend(["--heuristic-mode", mode, "--early-stop", early]);
+                            }
+                            if let Some(secs) = seconds {
+                                input.extend(["--time-limit-secs", secs]);
+                            }
+                            let config = parse_args(&args(&input)).unwrap();
+                            let ctrl = search_control_from(&config);
+                            let opts = solve_options_from(&config);
+                            assert_eq!(ctrl.degrade.is_enabled(), early == "on");
+                            assert_eq!(ctrl.adaptive_heuristics, mode == "auto");
+                            assert_eq!(opts.bb.heuristics, mode != "off");
+                            assert_eq!(ctrl.threads, threads.parse::<usize>().unwrap());
+                            assert_eq!(ctrl.mipgap_percent, Some(2.5));
+                            assert_eq!(opts.bb.time_limit_ms, seconds.map_or(0, |s| s.parse::<u64>().unwrap().saturating_mul(1000)));
+                            assert_eq!(opts.bb.node_limit, 2_000_000);
+                        }
+                    }
+                }
+            }
+        }
+        let config = parse_args(&args(&["--early-stop=off", "a.milp", "--determinism", "budget"])).unwrap();
+        let ctrl = search_control_from(&config);
+        assert!(!ctrl.degrade.is_enabled());
+        assert!(ctrl.adaptive_heuristics);
+        assert_eq!(ctrl.determinism, Determinism::Budget);
+    }
+
+    /// 缺参、非法值、两种语法混用重复都报错，不静默取最后一个选项。
+    #[test]
+    fn early_stop_cli_rejects_invalid_or_duplicate_values() {
+        let bad: &[&[&str]] = &[
+            &["a.milp", "--early-stop"],
+            &["a.milp", "--early-stop="],
+            &["a.milp", "--early-stop", "auto"],
+            &["a.milp", "--early-stop", "OFF"],
+            &["a.milp", "--early-stop", "--verbose"],
+            &["a.milp", "--early-stop", "off", "--early-stop=on"],
+            &["a.milp", "--early-stop=off", "--early-stop", "off"],
+        ];
+        for input in bad {
+            assert!(parse_args(&args(input)).is_err(), "应拒绝 {input:?}");
+        }
     }
 
     // —— 新 flag 解析：合法全表 ——

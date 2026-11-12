@@ -122,7 +122,8 @@ pub struct ParallelConfig {
     pub log_period_secs: Option<f64>,
     /// 策略级自动降级参数（仅在 `adaptive_heuristics = true` 且
     /// `BbOptions::time_limit_ms != 0` 时评估；触发 ⇒ 与 Gap 同径提前终止，
-    /// 终态映射为 [`ParallelStop::AutoDegrade`]）。
+    /// 终态映射为 [`ParallelStop::AutoDegrade`]）。[`DegradePolicy::disabled`]
+    /// 可单独关闭提前终止，保留自适应启发式及其它限额。
     pub degrade: DegradePolicy,
     /// 进度回调（首行在根阶段结束汇合点无条件发射）。
     pub progress: Option<ProgressCallback>,
@@ -361,7 +362,8 @@ impl Shared {
             controller: Mutex::new(HeuristicController::new(Default::default())),
             degrade: Mutex::new(AutoDegrade::new(degrade_policy)),
             degrade_cfg: degrade_policy,
-            degrade_budget_secs,
+            // 禁用时不为降级聚合整个前沿；自适应控制器和硬时限仍照常运行。
+            degrade_budget_secs: degrade_budget_secs.filter(|_| degrade_policy.is_enabled()),
             start,
             rc_refix: Mutex::new(rc_refix),
             error: Mutex::new(None),
@@ -2947,6 +2949,59 @@ mod tests {
         );
         let gap = out.gap_percent.expect("降级 ⇒ gap 证据必为 Some");
         assert!(gap.is_finite() && gap >= 0.0, "gap = {gap}");
+    }
+
+    /// 禁用政策在共享状态入口关闭降级专用预算，避免每完成一个节点扫描全前沿。
+    /// 全部判定使用固定快照，无等待；自适应启发式和显式 gap 仍独立生效。
+    #[test]
+    fn early_stop_disabled_keeps_parallel_adaptive_and_gap_decisions() {
+        let shared = Shared::new(2, DegradePolicy::disabled(), Some(100.0), Instant::now(), None);
+        assert_eq!(shared.degrade_budget_secs, None);
+        shared.write_incumbent(Some((21.5, vec![2.0, 1.0])));
+        shared.maybe_degrade(Sense::Maximize, Some(22.0));
+        shared.maybe_degrade(Sense::Maximize, Some(22.0));
+        assert_eq!(shared.stop.load(Ordering::SeqCst), STOP_NONE);
+        let snapshot = SearchSnapshot {
+            nodes: 400,
+            incumbent: Some(21.5),
+            nodes_since_improvement: 400,
+            time_budget_secs: Some(100.0),
+            elapsed_secs: 60.0,
+        };
+        assert_eq!(shared.lock_controller().decide(&snapshot), HeuristicDecision::Run);
+        shared.maybe_gap(Sense::Maximize, Some(3.0), Some(22.0));
+        assert_eq!(shared.stop.load(Ordering::SeqCst), STOP_GAP);
+        assert!(shared.lock_gap_evidence().is_some());
+    }
+
+    /// 走真实 worker 路径：禁止降级后可完成证明；节点上限与 mipgap 不被屏蔽。
+    #[test]
+    fn early_stop_disabled_preserves_parallel_completion_and_limits() {
+        let p = dive_problem();
+        let opts = BbOptions { time_limit_ms: 10_000, ..dive_opts() };
+        for threads in [2, 4] {
+            let config = ParallelConfig {
+                adaptive_heuristics: true,
+                degrade: DegradePolicy::disabled(),
+                ..pconfig(threads, None)
+            };
+            let complete = parallel_branch_and_bound(&p, &opts, &config, tol()).unwrap();
+            assert_eq!(complete.root_terminal, None, "必须进入并行树搜索");
+            assert_eq!(complete.stop, None);
+            assert_close(complete.best_objective.unwrap(), 21.5);
+            assert_close(complete.bound.unwrap(), 21.5);
+            let limited = parallel_branch_and_bound(
+                &p, &BbOptions { node_limit: 2, ..opts }, &config, tol(),
+            ).unwrap();
+            assert_eq!(limited.stop, Some(ParallelStop::NodeLimit));
+            assert_eq!(limited.stats.nodes, 2);
+            assert_close(limited.best_objective.unwrap(), 21.5);
+            let gap = parallel_branch_and_bound(
+                &p, &opts, &ParallelConfig { mipgap_percent: Some(3.0), ..config }, tol(),
+            ).unwrap();
+            assert_eq!(gap.stop, Some(ParallelStop::Gap));
+            assert!(gap.gap_percent.unwrap().is_finite());
+        }
     }
 
     /// （M2）并行自适应 stall 锚点初始化与顺序路径对齐：根启发式供应的
