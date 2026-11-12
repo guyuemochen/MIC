@@ -167,7 +167,7 @@ pub struct ParallelOutcome {
     /// - Some(NodeLimit|TimeLimit)：剩余池 est 与未完成子树旧界聚合；
     ///   与 incumbent 取方向极值，不能越过已知可行值；
     /// - None（完备）：有 incumbent ⇒ best_objective、Infeasible ⇒ None；
-    /// - root_terminal：纯 LP Optimal ⇒ Some(objective)。
+    /// - root_terminal：纯 LP Optimal ⇒ Some(objective)；LimitReached 保留此前已证根界。
     pub bound: Option<f64>,
     /// 终局 gap：
     /// - Some(Gap)：触发时刻证据值（clamp 后非负有限）；
@@ -961,6 +961,10 @@ pub fn parallel_branch_and_bound(
 
     // —— 根 LP（计 1 节点）——
     let mut sol = simplex.solve(&bounds);
+    #[cfg(test)]
+    crate::branch_bound::test_root_lp_interrupt::apply("initial", &mut sol);
+    let mut proven_root_bound = None;
+    crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
     stats.nodes = 1;
 
     let mut terminal: Option<SolveStatus> = None;
@@ -1030,6 +1034,9 @@ pub fn parallel_branch_and_bound(
             simplex = Simplex::new(problem, tol)?;
             simplex.set_time_deadline(time_deadline);
             sol = simplex.solve(&bounds);
+            #[cfg(test)]
+            crate::branch_bound::test_root_lp_interrupt::apply("restart", &mut sol);
+            crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
             if let Some(status) = root_terminal_status(sol.status) {
                 terminal = Some(status);
             }
@@ -1062,6 +1069,9 @@ pub fn parallel_branch_and_bound(
                 simplex = Simplex::new(problem, tol)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
+                #[cfg(test)]
+                crate::branch_bound::test_root_lp_interrupt::apply("restart", &mut sol);
+                crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
                 if let Some(status) = root_terminal_status(sol.status) {
                     terminal = Some(status);
                 }
@@ -1077,6 +1087,9 @@ pub fn parallel_branch_and_bound(
                 if terminal.is_none() {
                     // 取回割后的根 LP 解（记账性 resolve，不计节点）。
                     sol = simplex.resolve(&bounds);
+                    #[cfg(test)]
+                    crate::branch_bound::test_root_lp_interrupt::apply("restore", &mut sol);
+                    crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
                     if let Some(status) = root_terminal_status(sol.status) {
                         terminal = Some(status);
                     }
@@ -1125,6 +1138,9 @@ pub fn parallel_branch_and_bound(
             }
             // dive / sub-MIP 扰动了 Simplex 内部基：真实界 resolve 回取（记账性）。
             sol = simplex.resolve(&bounds);
+            #[cfg(test)]
+            crate::branch_bound::test_root_lp_interrupt::apply("restore", &mut sol);
+            crate::branch_bound::remember_root_bound(sense, &mut proven_root_bound, &sol);
             if let Some(status) = root_terminal_status(sol.status) {
                 terminal = Some(status);
             }
@@ -1181,7 +1197,9 @@ pub fn parallel_branch_and_bound(
                 .as_ref()
                 .map(|(obj, _)| *obj)
                 .filter(|v| v.is_finite()),
-            bound: if sol.status == LpStatus::Optimal && sol.objective.is_finite() {
+            bound: if terminal == Some(SolveStatus::LimitReached) {
+                crate::branch_bound::bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+            } else if sol.status == LpStatus::Optimal && sol.objective.is_finite() {
                 Some(sol.objective)
             } else {
                 None
@@ -1200,6 +1218,8 @@ pub fn parallel_branch_and_bound(
         };
         let bound = if pure_lp && status == SolveStatus::Optimal {
             best_objective
+        } else if status == SolveStatus::LimitReached {
+            crate::branch_bound::bound_with_incumbent(sense, proven_root_bound, best_objective)
         } else {
             None
         };

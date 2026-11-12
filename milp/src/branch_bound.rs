@@ -603,6 +603,8 @@ fn sequential_bb(
     #[cfg(feature = "proof_profile")]
     let profile_root_start = Instant::now();
     let mut sol = simplex.solve(&bounds);
+    #[cfg(test)]
+    test_root_lp_interrupt::apply("initial", &mut sol);
     stats.nodes = 1;
     #[cfg(feature = "proof_profile")]
     crate::proof_profile::lp("root_lp", &sol, simplex.iterations(), Some(profile_root_start.elapsed().as_secs_f64()), 0);
@@ -693,6 +695,9 @@ fn sequential_bb(
         ));
     }
 
+    let mut proven_root_bound = None;
+    remember_root_bound(sense, &mut proven_root_bound, &sol);
+
     // —— 根预割启发式（仅 root_cuts 开启时额外执行一轮）——
     // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更紧
     // 但取整/潜水质量下降——max 背包类：纯 LP 贪心顶点仅容量断点一个分数
@@ -745,23 +750,29 @@ fn sequential_bb(
         simplex = new_engine(problem, tol, opts.lp_engine)?;
         simplex.set_time_deadline(time_deadline);
         sol = simplex.solve(&bounds);
+        #[cfg(test)]
+        test_root_lp_interrupt::apply("restart", &mut sol);
+        remember_root_bound(sense, &mut proven_root_bound, &sol);
         #[cfg(feature = "proof_profile")]
         crate::proof_profile::lp("root_restart", &sol, simplex.iterations(), None, stats.cuts);
         #[cfg(feature = "proof_profile")]
         crate::proof_profile::lp_failure("root_restart",&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+            let bound = if status == SolveStatus::LimitReached {
+                bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+            } else { None };
             // 首行进度：根阶段终局汇合点（先发射再返回）。
             if let Some(h) = hooks {
-                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), bound, sense);
             }
             return Ok(finish(
                 status,
-                None,
+                if status == SolveStatus::LimitReached { incumbent } else { None },
                 &mut stats,
                 &simplex,
                 start,
                 base_lp_iterations,
-                None,
+                bound,
                 false,
                 false,
             ));
@@ -797,11 +808,17 @@ fn sequential_bb(
                 simplex = new_engine(problem, tol, opts.lp_engine)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
+                #[cfg(test)]
+                test_root_lp_interrupt::apply("restart", &mut sol);
+                remember_root_bound(sense, &mut proven_root_bound, &sol);
                 #[cfg(feature = "proof_profile")]
                 crate::proof_profile::lp("cut_outer_rollback", &sol, simplex.iterations(), None, stats.cuts);
                 #[cfg(feature = "proof_profile")]
                 crate::proof_profile::lp_failure("cut_outer_rollback",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
                     // 首行进度：根阶段终局汇合点（先发射再返回）。
                     if let Some(h) = hooks {
                         emit_progress(
@@ -809,18 +826,18 @@ fn sequential_bb(
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
@@ -829,53 +846,62 @@ fn sequential_bb(
             _ => {
                 stats.cuts = applied;
                 if let Some(status) = root_terminal(classify_node(st, true))? {
-                    // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
+                    // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
                     if let Some(h) = hooks {
                         emit_progress(
                             h,
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
                 }
                 // 取回割后的根 LP 解（记账性 resolve，不计节点）。
                 sol = simplex.resolve(&bounds);
+                #[cfg(test)]
+                test_root_lp_interrupt::apply("restore", &mut sol);
+                remember_root_bound(sense, &mut proven_root_bound, &sol);
                 #[cfg(feature = "proof_profile")]
                 crate::proof_profile::lp_failure("root_cut_final_resolve",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
-                    // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
+                    // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
                     if let Some(h) = hooks {
                         emit_progress(
                             h,
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
@@ -936,21 +962,27 @@ fn sequential_bb(
         // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
         // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。
         sol = simplex.resolve(&bounds);
+        #[cfg(test)]
+        test_root_lp_interrupt::apply("restore", &mut sol);
+        remember_root_bound(sense, &mut proven_root_bound, &sol);
         #[cfg(feature = "proof_profile")]
         crate::proof_profile::lp_failure("root_heuristic_restore",&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
-            // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+            let bound = if status == SolveStatus::LimitReached {
+                bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+            } else { None };
+            // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
             if let Some(h) = hooks {
-                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), bound, sense);
             }
             return Ok(finish(
                 status,
-                None,
+                if status == SolveStatus::LimitReached { incumbent } else { None },
                 &mut stats,
                 &simplex,
                 start,
                 base_lp_iterations,
-                None,
+                bound,
                 false,
                 false,
             ));
@@ -2782,6 +2814,17 @@ fn frontier_bound(
     aggregate_bound(sense, stack.iter().map(|p| p.est).chain(unresolved).chain(incumbent))
 }
 
+/// 每次完整根松弛都覆盖所有整数可行解（含有效全局割），其最优值是全局界。
+/// 中断解与启发式固定域的解不得进入这里；多个证明取更强方向，输出时再用可行解截断。
+pub(crate) fn remember_root_bound(sense: Sense, saved: &mut Option<f64>, sol: &LpSolution) {
+    if sol.status != LpStatus::Optimal || !sol.objective.is_finite() { return; }
+    *saved = Some(match (*saved, sense) {
+        (Some(old), Sense::Minimize) => old.max(sol.objective),
+        (Some(old), Sense::Maximize) => old.min(sol.objective),
+        (None, _) => sol.objective,
+    });
+}
+
 /// 未完成子树只保留旧的已证界，不读取中断LP返回的目标。极值压缩不丢信息。
 pub(crate) fn remember_unresolved(sense: Sense, saved: &mut Option<f64>, bound: f64) {
     *saved = aggregate_bound(sense, saved.iter().copied().chain(std::iter::once(bound)));
@@ -2795,6 +2838,92 @@ pub(crate) fn bound_with_incumbent(
     incumbent: Option<f64>,
 ) -> Option<f64> {
     bound.and_then(|bound| aggregate_bound(sense, std::iter::once(bound).chain(incumbent)))
+}
+
+/// 仅中断根阶段指定恢复点；线程局部配置不影响其他测试与生产路径。
+#[cfg(test)]
+pub(crate) mod test_root_lp_interrupt {
+    use super::{LpSolution, LpStatus};
+    std::thread_local! {
+        static SPEC: std::cell::Cell<Option<(&'static str, LpStatus)>> = const { std::cell::Cell::new(None) };
+    }
+    pub(crate) struct Guard(Option<(&'static str, LpStatus)>);
+    impl Guard {
+        pub(crate) fn install(stage: &'static str, status: LpStatus) -> Self {
+            Self(SPEC.with(|s| s.replace(Some((stage, status)))))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { SPEC.with(|s| s.set(self.0)); }
+    }
+    pub(crate) fn apply(stage: &str, sol: &mut LpSolution) {
+        SPEC.with(|s| {
+            if let Some((expected, status)) = s.get() {
+                if expected == stage {
+                    s.set(None);
+                    sol.status = status;
+                    sol.objective = f64::NAN;
+                    sol.x.clear();
+                    sol.duals.clear();
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod root_evidence_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+
+    #[test]
+    fn root_bound_uses_only_finite_proofs_and_conservative_incumbent_clip() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut saved = None;
+            for (status, objective) in [(LpStatus::IterationLimit, 999.0), (LpStatus::Optimal, f64::NAN)] {
+                remember_root_bound(sense, &mut saved, &LpSolution { status, objective, x: vec![], duals: vec![] });
+                assert_eq!(saved, None);
+                assert_eq!(bound_with_incumbent(sense, saved, Some(5.0)), None);
+            }
+            for objective in [3.0, 7.0, 5.0] {
+                remember_root_bound(sense, &mut saved, &LpSolution { status: LpStatus::Optimal, objective, x: vec![], duals: vec![] });
+            }
+            assert_eq!(saved, Some(if sense == Sense::Minimize { 7.0 } else { 3.0 }));
+            assert_eq!(bound_with_incumbent(sense, saved, Some(5.0)), Some(5.0));
+        }
+    }
+
+    #[test]
+    fn root_recovery_limit_preserves_only_existing_evidence() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut p = Problem::new("根恢复保留证明", sense);
+            p.add_var("b", VarType::Binary).unwrap();
+            let sign = if sense == Sense::Minimize { -1.0 } else { 1.0 };
+            p.set_objective(vec![(0, sign)], 3.25).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            for (threads, engine) in [(1, LpEngineKind::Tableau), (1, LpEngineKind::Revised), (2, LpEngineKind::Tableau)] {
+                for stage in ["initial", "restart", "restore", "cut_restore"] {
+                    for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                        let opts = BbOptions { heuristics: stage != "cut_restore", work_stack_auto: false,
+                            root_cuts: matches!(stage, "restart" | "cut_restore"),
+                            ..unresolved_bound_tests::options(engine) };
+                        let ctrl = SearchControl { threads, ..SearchControl::default() };
+                        let _guard = test_root_lp_interrupt::Guard::install(if stage == "cut_restore" { "restore" } else { stage }, status);
+                        let result = branch_and_bound_controlled(&p, &opts, &ctrl, Tolerances::default(), None).unwrap();
+                        assert_eq!(result.status, SolveStatus::LimitReached, "{stage}, {threads}, {engine:?}");
+                        if stage == "initial" {
+                            assert_eq!(result.bound, None);
+                            assert_eq!(result.best_objective, None);
+                        } else {
+                            assert_eq!(result.bound, Some(3.25 + sign * 0.5));
+                            assert_eq!(result.best_objective, if stage == "cut_restore" { None } else { Some(3.25) });
+                            assert_eq!(result.best_values, if stage == "cut_restore" { None } else { Some(vec![0.0]) });
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// 测试只替换真实节点resolve的返回状态，不改LP内核。线程局部作用域避免
@@ -3078,7 +3207,7 @@ fn parallel_entry(
 
 /// 并行终态 → [`BbResult`]（与顺序路径口径逐一对应）：
 /// - 根阶段终局（root_terminal）⇒ 直返（bound 引擎已按口径给出：纯 LP
-///   Optimal = Some(objective)，其余 None）；
+///   Optimal = Some(objective)，LimitReached 保留此前已证根界，其余 None）；
 /// - stop ∈ {NodeLimit, TimeLimit}（及其他截断类）⇒ LimitReached，bound =
 ///   引擎上报的剩余聚合（截断不可知时诚实 None）；
 /// - stop = Gap ⇒ LimitReached 且 gap_terminated = true，bound = 触发时刻
