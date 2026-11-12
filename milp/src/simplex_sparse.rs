@@ -49,6 +49,9 @@
 //!   历史上限与纪律同源标记）；数值异常（主元过小 / NaN / 检验数非
 //!   有限）时若非刚重因子化则先重因子化重算再重试本迭代（确定性的
 //!   just_refactored 闸保证至多重试一次，无墙钟决策），仍失败才上报；
+//!   可选 `risk_pivot_refresh`（默认关闭）仅在原始单纯形 Phase-1/2 的
+//!   换基前，以相对小主元预警触发旧基重构并整轮重选；不改变主元接受
+//!   容差，空 ETA 不重试，不扩展到对偶循环或人工变量清理；
 //! - x_B 维护与表格引擎同款口径：主元步 x_B[k] −= δt·α_k、x_B[r] =
 //!   入基旧界值 + δt；界翻转 x_B[k] −= Δ·α_k；
 //! - 定价（**规模分档**：构造期按原始 m×(n+m) 与 [`ENGINE_AUTO_CELL_THRESHOLD`]
@@ -1034,6 +1037,16 @@ enum PhaseOutcome {
     Failed(String),
 }
 
+/// 有界测试观测与确定性时限注入；不进入生产对象或外部接口。
+#[cfg(all(test, feature = "risk_pivot_refresh"))]
+#[derive(Clone, Default)]
+struct RiskRefreshTestState {
+    disabled: bool,
+    attempts: u64,
+    deadline_checks: u64,
+    expire_on_check: Option<u64>,
+}
+
 /// 对偶修复结果（与 simplex.rs::DualRepair 同构）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DualRepair {
@@ -1270,6 +1283,8 @@ pub struct SparseSimplex {
     dual_main_enabled: bool,
     /// 数值异常重试闸：刚重因子化 ⇒ 不再重试（防循环；确定性）。
     just_refactored: bool,
+    #[cfg(all(test, feature = "risk_pivot_refresh"))]
+    risk_refresh_test: RiskRefreshTestState,
     // —— 热路径暂存（容量跨迭代复用）——
     /// FTRAN 入参（稠密列散射）。
     ftran_in: Vec<f64>,
@@ -1427,6 +1442,8 @@ impl SparseSimplex {
                 .saturating_mul(n as u64 + problem.constraints.len() as u64)
                 < DUAL_MAIN_CELL_CEILING,
             just_refactored: false,
+            #[cfg(all(test, feature = "risk_pivot_refresh"))]
+            risk_refresh_test: RiskRefreshTestState::default(),
             ftran_in: Vec::new(),
             alpha: Vec::new(),
             y_vec: Vec::new(),
@@ -3476,6 +3493,15 @@ impl SparseSimplex {
                         }
                         continue;
                     }
+                    // 旧基尚未修改：重构后必须重做定价、FTRAN和比值测试，
+                    // 不能拿新alpha配旧q/r/t。空ETA保证新鲜基只检查一次。
+                    #[cfg(feature = "risk_pivot_refresh")]
+                    if self.risk_pivot_refresh_needed(row) {
+                        match self.refresh_before_risky_pivot() {
+                            PhaseOutcome::Retry => continue,
+                            out => return out,
+                        }
+                    }
                     t_nondegenerate = t > self.tol.feasibility;
                     if let Err(msg) = self.do_pivot(q, row, delta, t, hit_upper) {
                         if let out @ PhaseOutcome::Failed(_) = self.numerical_retry_or_fail(msg) {
@@ -3501,6 +3527,68 @@ impl SparseSimplex {
             }
             self.bland_release_step(t_nondegenerate);
         }
+    }
+
+    /// sqrt(EPS)只作数值预警：主元相对方向很小时，ETA中的除法可能
+    /// 放大累计误差。这不是误差上界，也不是新的接受/拒绝容差；重构后
+    /// 仍由原有price/ratio/tol.pivot决定。非有限值不在此另改异常策略。
+    #[cfg(feature = "risk_pivot_refresh")]
+    fn risk_pivot_refresh_needed(&self, row: usize) -> bool {
+        #[cfg(test)]
+        if self.risk_refresh_test.disabled {
+            return false;
+        }
+        if self.etas.is_empty() {
+            return false;
+        }
+        let mut norm = 1.0_f64;
+        for &a in &self.alpha {
+            if !a.is_finite() {
+                return false;
+            }
+            norm = norm.max(a.abs());
+        }
+        self.alpha[row].abs() <= f64::EPSILON.sqrt() * norm
+    }
+
+    /// 风险处只重构未换基的旧基。失败直接结束当前阶段，保留broken
+    /// 状态；成功清空ETA，下一轮即使仍选小主元也不重复刷新。此维护不
+    /// 算主元，不重置迭代/Bland/Devex/时限。LU内部仍不可被墙钟抢断。
+    #[cfg(feature = "risk_pivot_refresh")]
+    fn refresh_before_risky_pivot(&mut self) -> PhaseOutcome {
+        if self.risk_refresh_deadline_reached() {
+            return PhaseOutcome::TimedOut;
+        }
+        #[cfg(test)]
+        {
+            self.risk_refresh_test.attempts =
+                self.risk_refresh_test.attempts.saturating_add(1);
+        }
+        if let Err(msg) = self.refactor() {
+            return PhaseOutcome::Failed(msg);
+        }
+        if self.risk_refresh_deadline_reached() {
+            return PhaseOutcome::TimedOut;
+        }
+        PhaseOutcome::Retry
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    fn risk_refresh_deadline_reached(&mut self) -> bool {
+        if let Some(deadline) = self.time_deadline {
+            #[cfg(test)]
+            {
+                self.risk_refresh_test.deadline_checks =
+                    self.risk_refresh_test.deadline_checks.saturating_add(1);
+                if self.risk_refresh_test.expire_on_check
+                    == Some(self.risk_refresh_test.deadline_checks)
+                {
+                    return true;
+                }
+            }
+            return std::time::Instant::now() >= deadline;
+        }
+        false
     }
 
     /// 数值异常的确定性重试：非刚重因子化 ⇒ 重因子化 + 重算 x_B 后返回
@@ -3830,6 +3918,284 @@ mod tests {
                     rhs,
                 })
                 .collect(),
+        }
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    const RISK_TEST_DRIFT: f64 = 1.0 / 268_435_456.0;
+
+    /// 在单位基的ETA中注入确定性漂移：真实列(0,1)被读作(e,1)，
+    /// 于是零步出基行会从第二行误选为第一行。原始矩阵保持不变。
+    #[cfg(feature = "risk_pivot_refresh")]
+    fn seed_risk_eta(sp: &mut SparseSimplex) {
+        sp.etas.push(Eta {
+            r: 1,
+            pivot: 1.0,
+            nz: vec![(0, -RISK_TEST_DRIFT)],
+        });
+        sp.just_refactored = false;
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    fn risk_fixture(phase1: bool) -> (Problem, Bounds, SparseSimplex) {
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 2.0), var("y", 0.0, 2.0)],
+            vec![(0, if phase1 { 1.0 } else { -1.0 })],
+            vec![
+                (vec![(1, 1.0)], if phase1 { RelOp::Eq } else { RelOp::Le }, 0.0),
+                (vec![(0, 1.0)], if phase1 { RelOp::Ge } else { RelOp::Le }, 1.0),
+            ],
+        );
+        let bounds = Bounds::from_problem(&p);
+        let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        // 模拟已经调用过的引擎；失败后的resolve须真正走broken恢复入口。
+        sp.has_run = true;
+        sp.prev_bounds = bounds.clone();
+        seed_risk_eta(&mut sp);
+        (p, bounds, sp)
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_scale_threshold_and_nonfinite_are_explicit() {
+        let (_, _, mut sp) = risk_fixture(false);
+        for scale in [1.0, 128.0] {
+            let threshold = f64::EPSILON.sqrt() * scale;
+            for sign in [-1.0, 1.0] {
+                for (magnitude, expected) in [
+                    (f64::from_bits(threshold.to_bits() - 1), true),
+                    (threshold, true),
+                    (f64::from_bits(threshold.to_bits() + 1), false),
+                ] {
+                    sp.alpha = vec![sign * magnitude, scale];
+                    assert_eq!(sp.risk_pivot_refresh_needed(0), expected);
+                }
+            }
+        }
+        sp.alpha = vec![RISK_TEST_DRIFT, 0.25];
+        assert!(sp.risk_pivot_refresh_needed(0), "方向范数小于1时仍保留绝对预警尺度");
+        for nonfinite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            sp.alpha = vec![RISK_TEST_DRIFT, nonfinite];
+            assert!(!sp.risk_pivot_refresh_needed(0), "不能用max吞掉非有限值");
+        }
+        sp.alpha = vec![RISK_TEST_DRIFT, 1.0];
+        sp.etas.clear();
+        assert!(!sp.risk_pivot_refresh_needed(0));
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_refresh_rejects_stale_zero_pivot_by_reselecting_ratio() {
+        let (p, bounds, mut sp) = risk_fixture(false);
+        sp.ftran_col(0);
+        assert_eq!(sp.alpha, vec![RISK_TEST_DRIFT, 1.0]);
+        assert!(matches!(sp.ratio_test(0, 1.0), Step::Leave { row: 0, t: 0.0, .. }));
+        let old_basis = sp.basis.clone();
+        // 同一被污染状态禁用新接线时，确会错误换出第一行；这不是仅测
+        // 预警布尔函数。正常路径必须靠原矩阵重构后改选第二行。
+        let mut baseline = sp.clone();
+        baseline.risk_refresh_test.disabled = true;
+        assert_eq!(baseline.run_two_phase(false), LpStatus::Optimal);
+        assert_eq!(baseline.basis[0], 0);
+        assert_eq!(baseline.risk_refresh_test.attempts, 0);
+        let status = sp.run_two_phase(false);
+        let actual = sp.build_solution(status);
+        let expected = DenseSimplex::new(&p, Tolerances::default()).unwrap().solve(&bounds);
+        assert_eq!(actual.status, LpStatus::Optimal);
+        assert_eq!(actual.objective, -1.0);
+        assert_eq!(actual.objective, expected.objective);
+        assert_eq!(sp.basis[0], old_basis[0]);
+        assert_eq!(sp.basis[1], 0);
+        assert_eq!(sp.risk_refresh_test.attempts, 1);
+        assert_eq!(sp.iter_call, 1);
+        assert_eq!(sp.risk_refresh_test.deadline_checks, 0, "无deadline时零读钟");
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_refresh_reprices_and_keeps_iteration_budget() {
+        let e = RISK_TEST_DRIFT;
+        let p = prob(
+            Sense::Minimize,
+            vec![var("z", 0.0, 2.0), var("x", 0.0, 2.0), var("y", 0.0, 2.0)],
+            vec![(0, 1.0), (1, -2.0 * e), (2, 1.0 - 2.5 * e)],
+            vec![
+                (vec![(0, 1.0), (2, 1.0)], RelOp::Eq, 0.0),
+                (vec![(1, 1.0)], RelOp::Le, 1.0),
+            ],
+        );
+        let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        // 换入成本非零的z后基仍为单位阵，让ETA误差同时影响定价。
+        sp.ftran_col(0);
+        sp.do_pivot(0, 0, 1.0, 0.0, false).unwrap();
+        sp.refactor().unwrap();
+        seed_risk_eta(&mut sp);
+        assert!(matches!(sp.price(2), Pricing::Candidate(1, 1.0)), "旧价格先选x");
+        sp.iter_call = 999;
+        sp.iterations_total = 41;
+        sp.set_iter_limit_hint(Some(1_000));
+        assert!(matches!(sp.run_phase(2), PhaseOutcome::LimitReached));
+        assert_eq!(sp.basis[0], 2, "刷新后应重新定价选y，不能沿用旧x");
+        assert!(!sp.in_basis[1]);
+        assert_eq!(sp.risk_refresh_test.attempts, 1);
+        assert_eq!(sp.iter_call, 1_000, "刷新不虚增主元，也不重置调用预算");
+        assert_eq!(sp.iterations_total, 42);
+        assert_eq!(sp.iter_limit_hint, Some(1_000));
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_fresh_small_legal_pivot_is_accepted_once() {
+        let p = prob(
+            Sense::Minimize,
+            vec![var("x", 0.0, 2.0), var("y", 0.0, 2.0)],
+            vec![(0, -1.0)],
+            vec![
+                (vec![(0, RISK_TEST_DRIFT), (1, 1.0)], RelOp::Le, 0.0),
+                (vec![(0, 1.0)], RelOp::Le, 1.0),
+            ],
+        );
+        for with_eta in [false, true] {
+            let mut sp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            if with_eta {
+                // 恒等ETA：触发预警但实际主元本来就小，刷新不能变成
+                // 新的拒绝容差或无限重试。没有ETA时连这次维护也不做。
+                sp.etas.push(Eta { r: 1, pivot: 1.0, nz: Vec::new() });
+                sp.just_refactored = false;
+            }
+            assert!(matches!(sp.run_phase(2), PhaseOutcome::Optimal));
+            assert_eq!(sp.basis[0], 0);
+            assert_eq!(sp.iter_call, 1);
+            assert_eq!(sp.risk_refresh_test.attempts, u64::from(with_eta));
+            assert_eq!(sp.etas.len(), 1);
+            assert_eq!(sp.etas[0].pivot, RISK_TEST_DRIFT);
+        }
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_refresh_failure_keeps_old_basis_and_phase_debt() {
+        for phase1 in [false, true] {
+            for kind in [refactor_fault::Kind::Lu, refactor_fault::Kind::NonfiniteValue] {
+                let (p, bounds, mut sp) = risk_fixture(phase1);
+                let old_basis = sp.basis.clone();
+                let old_upper = sp.at_upper.clone();
+                let status = {
+                    let fault = refactor_fault::Guard::new(kind, false);
+                    let status = sp.run_two_phase(phase1);
+                    assert!(fault.consumed(), "必须命中换基前的真实refactor");
+                    status
+                };
+                assert_eq!(status, LpStatus::IterationLimit);
+                assert!(sp.build_solution(status).objective.is_nan());
+                assert_eq!(sp.basis, old_basis, "失败发生前不能已经换基");
+                assert_eq!(sp.at_upper, old_upper);
+                assert!(sp.factorization_broken);
+                assert_eq!(sp.phase1_pending, phase1);
+                assert_eq!(sp.risk_refresh_test.attempts, 1, "失败不能再次刷新坏LU");
+                assert_eq!(sp.iter_call, 0);
+                let mut snapshot = sp.clone();
+                let expected = DenseSimplex::new(&p, Tolerances::default()).unwrap().solve(&bounds);
+                for candidate in [&mut sp, &mut snapshot] {
+                    let actual = candidate.resolve(&bounds);
+                    assert_eq!(actual.status, LpStatus::Optimal);
+                    assert_eq!(actual.objective, expected.objective);
+                    assert!(!candidate.factorization_broken);
+                    assert!(!candidate.phase1_pending);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_refresh_deadline_before_and_after_is_honest() {
+        for phase1 in [false, true] {
+            for expire_on_check in [1, 2] {
+                let (_, _, mut sp) = risk_fixture(phase1);
+                let old_basis = sp.basis.clone();
+                let old_x = sp.x_b.clone();
+                // 非单位权重才能识别意外重置；Bland保证仍走同一风险列。
+                sp.devex_active = true;
+                for (j, weight) in sp.devex_w.iter_mut().enumerate() {
+                    *weight = (j + 2) as f64;
+                }
+                let old_weights = sp.devex_w.clone();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3_600);
+                sp.set_time_deadline(Some(deadline));
+                sp.risk_refresh_test.expire_on_check = Some(expire_on_check);
+                sp.iter_call = 17;
+                sp.iterations_total = 29;
+                sp.degenerate_streak = 7;
+                sp.bland = true;
+                sp.bland_permanent = true;
+                sp.bland_dwell = 3;
+                sp.bland_rearms = 5;
+                let status = sp.run_two_phase(phase1);
+                assert_eq!(status, LpStatus::TimeLimit);
+                assert!(sp.build_solution(status).objective.is_nan());
+                assert_eq!(sp.basis, old_basis);
+                assert_eq!(sp.x_b, old_x);
+                assert_eq!(sp.devex_w, old_weights);
+                assert_eq!(sp.iter_call, 17);
+                assert_eq!(sp.iterations_total, 29);
+                assert_eq!(sp.degenerate_streak, 7);
+                assert!(sp.bland);
+                assert!(sp.bland_permanent);
+                assert_eq!(sp.bland_dwell, 3);
+                assert_eq!(sp.bland_rearms, 5);
+                assert_eq!(sp.time_deadline, Some(deadline));
+                assert_eq!(sp.phase1_pending, phase1);
+                assert!(!sp.factorization_broken);
+                assert_eq!(sp.risk_refresh_test.attempts, expire_on_check - 1);
+                assert_eq!(sp.risk_refresh_test.deadline_checks, expire_on_check);
+                assert_eq!(sp.etas.is_empty(), expire_on_check == 2);
+            }
+        }
+    }
+
+    #[cfg(feature = "risk_pivot_refresh")]
+    #[test]
+    fn risk_pivot_healthy_cold_hot_and_cut_snapshot_match_disabled() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+            let p = prob(sense,
+                vec![var("x", 0.0, 2.0), var("y", 0.0, 2.0)],
+                vec![(0, 3.0 * sign), (1, 2.0 * sign)],
+                vec![(vec![(0, 1.0), (1, 1.0)], RelOp::Le, 3.0)]);
+            let tol = Tolerances::default();
+            let mut bounds = Bounds::from_problem(&p);
+            let mut on = SparseSimplex::new(&p, tol).unwrap();
+            let mut off = on.clone();
+            off.risk_refresh_test.disabled = true;
+            let mut dense = DenseSimplex::new(&p, tol).unwrap();
+            let assert_same = |a: &LpSolution, b: &LpSolution, d: &LpSolution| {
+                assert_eq!(a.status, LpStatus::Optimal);
+                assert_eq!(a.status, b.status);
+                assert_eq!(a.status, d.status);
+                assert_eq!(a.objective.to_bits(), b.objective.to_bits());
+                assert_eq!(a.x, b.x);
+                assert_eq!(a.objective, d.objective);
+            };
+            assert_same(&on.solve(&bounds), &off.solve(&bounds), &dense.solve(&bounds));
+            assert_eq!(on.iterations(), off.iterations());
+            let mut snapshot_on = on.clone();
+            let mut snapshot_off = off.clone();
+            let mut snapshot_dense = dense.clone();
+            bounds.lb[1] = 1.5;
+            assert_same(&on.resolve(&bounds), &off.resolve(&bounds), &dense.resolve(&bounds));
+            assert_eq!(on.iterations(), off.iterations());
+            snapshot_on.add_row(&[(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            snapshot_off.add_row(&[(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            snapshot_dense.add_row(&[(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            assert_same(&snapshot_on.resolve(&bounds), &snapshot_off.resolve(&bounds),
+                &snapshot_dense.resolve(&bounds));
+            assert_eq!(snapshot_on.iterations(), snapshot_off.iterations());
+            assert_eq!(on.risk_refresh_test.attempts, 0);
+            assert_eq!(off.risk_refresh_test.attempts, 0);
+            assert_eq!(snapshot_on.risk_refresh_test.attempts, 0);
+            assert_eq!(snapshot_off.risk_refresh_test.attempts, 0);
         }
     }
 

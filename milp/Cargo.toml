@@ -23,3 +23,6 @@ root_heuristic_work_budget = []
 
 # 完整预处理后仅加强负二元系数，默认关闭的证明性能试验。
 binary_coefficient_strengthening = []
+
+# 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
+risk_pivot_refresh = []
