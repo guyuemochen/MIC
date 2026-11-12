@@ -1,0 +1,14 @@
+[
+  {
+    "instance": "milp/instances/knapsack-10.milp",
+    "default_existing_and_auto_fallback_identical": true
+  },
+  {
+    "instance": "milp/instances/hard-knapsack-12.milp",
+    "default_existing_and_auto_fallback_identical": true
+  },
+  {
+    "instance": "bench/instances/mknap-3x100.milp",
+    "default_existing_and_auto_fallback_identical": true
+  }
+]
