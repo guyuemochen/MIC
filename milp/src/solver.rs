@@ -283,6 +283,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn binary_public_bounds_cannot_produce_out_of_domain_solution() {
+        let mut p = Problem::new("二元公开边界入口", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        for use_presolve in [true, false] {
+            let opts = SolveOptions { use_presolve, ..SolveOptions::default() };
+            p.vars[0].lb = 2.0;
+            p.vars[0].ub = 2.0;
+            let result = solve(&p, &opts);
+            assert!(result.is_err(), "非法二元界应在求解前拒绝，实际{result:?}");
+            p.vars[0].lb = 0.2;
+            p.vars[0].ub = 0.8;
+            assert_eq!(solve(&p, &opts).unwrap().status, SolveStatus::Infeasible);
+            p.vars[0].lb = 1.0;
+            p.vars[0].ub = 1.0;
+            let report = solve(&p, &opts).unwrap();
+            assert_eq!(report.status, SolveStatus::Optimal);
+            assert_eq!(report.objective, Some(1.0));
+        }
+    }
+
     /// SolveOptions 默认值逐字段符合契约。
     #[test]
     fn solve_options_default_contract() {
