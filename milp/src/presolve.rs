@@ -104,12 +104,17 @@ fn strengthen_negative_binary_coefficients(p: &mut Problem, tol: &Tolerances) {
         for &(j, original) in &row.expr.terms {
             let var = &p.vars[j];
             let a = sign * original;
-            // 空界与任何非有限界均保守跳过；不借机判断不可行或传播新界。
-            if !a.is_finite() || !var.lb.is_finite() || !var.ub.is_finite() || var.lb > var.ub {
+            // 空界或 NaN 界保守跳过；最大活动度只需要系数最大化方向的界。
+            // 未使用一侧允许无穷，不借机判断不可行或传播新界。
+            if !a.is_finite() || !(var.lb <= var.ub) {
                 valid = false;
                 break;
             }
             let bound = if a >= 0.0 { var.ub } else { var.lb };
+            if !bound.is_finite() {
+                valid = false;
+                break;
+            }
             let product = a * bound;
             if !product.is_finite() {
                 valid = false;
@@ -1204,6 +1209,28 @@ mod binary_strengthening_tests {
         strengthen_negative_binary_coefficients(&mut p, &Tolerances::default());
         // 正的真实乘积虽然下溢为零，但外舍入仍覆盖它，不能低估 4。
         assert!(p.constraints[0].expr.terms[0].1 < -4.0);
+    }
+
+    #[test]
+    fn unused_infinite_bound_preserves_both_binary_branches() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let mut original = toy(op);
+            original.vars[1].lb = -2.0;
+            original.vars[1].ub = f64::INFINITY;
+            original.constraints[0].expr.terms[1].1 *= -1.0;
+            original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
+            let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+            assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+            // x=0 时均要求 y≥1；x=1 时均允许整个 [−2,+∞)。
+            for x in [0.0, 1.0] {
+                for y in [-2.0, -1.0, 0.0, 0.5, 1.0, 2.0, 1e20, f64::MAX] {
+                    assert_eq!(feasible(&original, &[x, y]), feasible(&changed, &[x, y]));
+                }
+            }
+        }
     }
 
     #[test]
