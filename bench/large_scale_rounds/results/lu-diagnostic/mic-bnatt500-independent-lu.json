@@ -1,0 +1,118 @@
+{
+  "captured": true,
+  "phase": "phase1",
+  "reason": "pivot_eta_limit",
+  "rows": 5058,
+  "iterations": 2688,
+  "eta_count": 64,
+  "failed_factor_column": 5055,
+  "max_candidate": 1.3877787807814457e-17,
+  "basis_column_at_failure": 1183,
+  "basis_history_replays": true,
+  "fresh_checks": [
+    {
+      "name": "failed_basis",
+      "error": "LU 第 5055 列未分配候选最大 |v| = 1.3877787807814457e-17 低于主元下限 1e-9（奇异基）",
+      "failed_column": 5055,
+      "max_candidate": 1.3877787807814457e-17,
+      "alpha_r": null,
+      "relative_residual": null
+    },
+    {
+      "name": "before_last_pivot",
+      "error": "LU 第 5055 列未分配候选最大 |v| = 1.3877787807814457e-17 低于主元下限 1e-9（奇异基）",
+      "failed_column": 5055,
+      "max_candidate": 1.3877787807814457e-17,
+      "alpha_r": null,
+      "relative_residual": null
+    },
+    {
+      "name": "last_successful_refactor",
+      "error": null,
+      "failed_column": null,
+      "max_candidate": null,
+      "alpha_r": null,
+      "relative_residual": null
+    }
+  ],
+  "history_factorizations": 64,
+  "history_failed_after_pivots": [
+    62,
+    63
+  ],
+  "first_history_failure_after_pivots": 62,
+  "transition_into_first_failure": {
+    "entering": 8,
+    "row": 786,
+    "leaving": 0,
+    "alpha_r": 1.9005060858390266e-09,
+    "step": 0.0,
+    "eta_before": 61,
+    "iterations_before": 2686,
+    "call_iterations_before": 2686,
+    "phase": "phase1"
+  },
+  "fresh_check_before_first_failure": {
+    "name": "history_basis",
+    "error": null,
+    "failed_column": null,
+    "max_candidate": null,
+    "alpha_r": 0.0,
+    "relative_residual": 6.3437775638422314e-18,
+    "alpha": null
+  },
+  "last_pivot": {
+    "entering": 23,
+    "row": 2220,
+    "leaving": 28,
+    "alpha_r": 1.0,
+    "step": 0.0,
+    "eta_before": 63,
+    "iterations_before": 2688,
+    "call_iterations_before": 2688,
+    "phase": "phase1"
+  },
+  "eta_alpha_relative_residual": 1.7763568394002497e-15,
+  "independent_superlu": {
+    "scipy_version": "1.13.1",
+    "results": [
+      {
+        "after_pivots": 61,
+        "column_order": "NATURAL",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 0.002520410163591171,
+        "max_abs_u": 4.0,
+        "max_abs_basis": 1.0,
+        "alpha_r": 4.298783551348606e-13,
+        "relative_residual": 3.243680776263626e-17
+      },
+      {
+        "after_pivots": 61,
+        "column_order": "COLAMD",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 0.007692307692307709,
+        "max_abs_u": 2.4615384615384617,
+        "max_abs_basis": 1.0,
+        "alpha_r": 2.7565251668550318e-14,
+        "relative_residual": 1.903133269152702e-17
+      },
+      {
+        "after_pivots": 62,
+        "column_order": "NATURAL",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 5.304879181161953e-16,
+        "max_abs_u": 4.0,
+        "max_abs_basis": 1.0
+      },
+      {
+        "after_pivots": 62,
+        "column_order": "COLAMD",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 3.1058880037488953e-16,
+        "max_abs_u": 3.0,
+        "max_abs_basis": 1.0
+      }
+    ]
+  },
+  "source_sha256": "29190aa132975371d9fbf1900679fd259796111274e05700e4eab26127ba2da2"
+}

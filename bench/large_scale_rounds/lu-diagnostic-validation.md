@@ -27,32 +27,46 @@ python3 bench/large_scale_rounds/run_lu_diagnostic_parity.py \
 累计 2688 次迭代后的第 64 次换基重构。源码、探针和各份证据的摘要见
 [捕获对照](results/lu-diagnostic-bnatt500-capture.json)。
 
+归档目录保留原始新捕获、旧历史重放、独立 SuperLU 结果和测试日志。
+新捕获来自带非有限方向保护的诊断基线，风险刷新和系数候选均未纳入这个源码树。
+旧历史来自早期诊断探针，独立结果内的 `source_sha256` 指向这份原始历史。
+旧首条失败记录的哈希在捕获对照中，原件留在生成目录。
+归档文件可用 [SHA-256 清单](results/lu-diagnostic/SHA256SUMS) 核对。
+
 ```sh
 cargo build --manifest-path milp/Cargo.toml --release --features lu_failure_diagnostics --example lu_failure_probe
 milp/target/release/examples/lu_failure_probe \
   /tmp/mic-rounds-miplib2017/bnatt500.milp /tmp/mic-bnatt500-lu-final-capture.json
 shasum -a 256 milp/target/release/examples/lu_failure_probe \
   /tmp/mic-rounds-miplib2017/bnatt500.milp \
-  /tmp/mic-bnatt500-lu-{final-capture,first-failure,history}.json \
-  /tmp/mic-bnatt500-independent-lu.json
+  /tmp/mic-bnatt500-lu-final-capture.json
+(cd bench/large_scale_rounds/results/lu-diagnostic && shasum -a 256 -c SHA256SUMS)
 python3 - <<'PY'
 import json
 from pathlib import Path
 
 root = Path("/tmp")
+archive = Path("bench/large_scale_rounds/results/lu-diagnostic")
 current = json.loads((root / "mic-bnatt500-lu-final-capture.json").read_text())
-for name in ("mic-bnatt500-lu-first-failure.json", "mic-bnatt500-lu-history.json"):
-    previous = json.loads((root / name).read_text())
+previous_paths = [
+    archive / "mic-bnatt500-lu-final-capture.json",
+    archive / "mic-bnatt500-lu-history.json",
+]
+old_first = root / "mic-bnatt500-lu-first-failure.json"
+if old_first.exists():
+    previous_paths.append(old_first)
+for path in previous_paths:
+    previous = json.loads(path.read_text())
     actual, expected = current["failure"], previous["failure"]
-    assert actual is not None and expected is not None, name
+    assert actual is not None and expected is not None, path.name
     fields = actual.keys() | expected.keys()
     changed = sorted(
         key for key in fields
         if key not in actual or key not in expected
         or json.dumps(actual[key], sort_keys=True) != json.dumps(expected[key], sort_keys=True)
     )
-    assert not changed, (name, changed)
+    assert not changed, (path.name, changed)
     assert all(current[key] == previous[key] for key in ("status", "nodes", "lp_iterations"))
-    print(name, "全部失败字段一致")
+    print(path.name, "全部失败字段一致")
 PY
 ```
