@@ -3890,7 +3890,18 @@ mod tests {
         // 割集混沌敏感为既有观察（S13-B 遗留②同性质），净性能裁决按 S14
         // 任务书的算例配对 A/B 守门，本测试只钉确定性与目标恒同。））
         assert_eq!(off_auto.stats.nodes, 1719, "S14-第一步小批施加后的 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 20160);
+        // 快照试验只消除了重复的冷根LP工作，节点/割/目标基线仍保持上面的严格断言。
+        // 独立重解原根松弛给出应扣工作量，不能把观测到的总计差直接改成新基线。
+        #[cfg(feature = "root_snapshot_restore")]
+        let saved_root_iterations = {
+            let mut root = new_engine(&problem, tol(), legacy.lp_engine).unwrap();
+            assert_eq!(root.solve(&Bounds::from_problem(&problem)).status, LpStatus::Optimal);
+            assert_eq!(root.iterations(), 47, "该原始根LP的独立工作量");
+            root.iterations()
+        };
+        #[cfg(not(feature = "root_snapshot_restore"))]
+        let saved_root_iterations = 0;
+        assert_eq!(off_auto.stats.lp_iterations, 20160 - saved_root_iterations);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
     }
 
