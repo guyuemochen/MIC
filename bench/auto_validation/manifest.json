@@ -228,11 +228,11 @@
     },
     {
       "file": "sparse_packing.milp",
-      "sha256": "f41cdd5f1a2c1cb87778a84fa2179f6bcc0c4a7faf4a2048d88b9b9abb41815e",
+      "sha256": "52ec308f3738413d564d3def80a1e1a97d0d295ba7ba162ae1f3869ff6bdc407",
       "parameters": {
         "family": "sparse_packing",
-        "n": 220,
-        "m": 4,
+        "n": 300,
+        "m": 8,
         "capacity_fraction": [
           1,
           5

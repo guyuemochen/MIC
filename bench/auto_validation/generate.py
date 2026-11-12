@@ -63,8 +63,9 @@ def payloads():
                           ("negative_objective", {"negative_objective": True}),
                           ("negative_coefficient", {"negative_coefficient": True}), ("ge_rows", {"greater": True})]:
         seed = 12203
-        params = dict(family=family, n=220, m=4, capacity_fraction=[1, 5], correlated=False, seed=seed, **extra)
-        yield family, params, packing(family, 220, 4, 1, 5, False, seed, **extra)
+        n, m = (300, 8) if family == "sparse_packing" else (220, 4)
+        params = dict(family=family, n=n, m=m, capacity_fraction=[1, 5], correlated=False, seed=seed, **extra)
+        yield family, params, packing(family, n, m, 1, 5, False, seed, **extra)
     for n, m, seed in [(100, 60, 12101), (200, 120, 12109)]:
         name = f"covering_{m}x{n}_s{seed}"
         yield name, dict(family="covering", n=n, m=m, row_nnz=n // 10, seed=seed), covering(name, n, m, seed)
