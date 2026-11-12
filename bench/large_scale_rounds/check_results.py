@@ -88,12 +88,84 @@ def verify_bound(model, row, witness, description, error):
         error(f'界 {bound} 排除了{description} {witness}')
 
 
-def inspect_results(inputs):
+def load_public_truth(path):
+    payload = path.read_bytes()
+    manifest = json.loads(payload)
+    entries = {}
+    for entry in manifest['instances']:
+        name = entry['instance']
+        if name in entries:
+            raise ValueError(f'{path} 官方结论重复：{name}')
+        entries[name] = entry
+    report = {
+        'manifest': str(path), 'manifest_sha256': hashlib.sha256(payload).hexdigest(),
+        'source': manifest.get('source'), 'solution_file': manifest.get('assets', {}).get('solution_file'),
+        'matched_runs': 0, 'hashes_checked': 0, 'checked_runs': 0, 'optimal_runs': 0,
+        'infeasible_runs': 0, 'optimal_claims_checked': 0, 'bounds_checked': 0,
+        'feasible_objectives_checked': 0, 'skipped': {},
+    }
+    return entries, report
+
+
+def verify_public_truth(model, row, objective, entry, report, error):
+    report['matched_runs'] += 1
+    hashes_match = True
+    for key in ('milp_sha256', 'mps_sha256'):
+        expected = entry.get(key)
+        actual = row.get(key)
+        if not expected or actual != expected:
+            hashes_match = False
+            error(f'官方模型 {key} 不符，记录 {actual!r}，清单 {expected!r}')
+    if not hashes_match:
+        return
+    report['hashes_checked'] += 1
+    official = entry.get('solution_status')
+    if official not in ('optimal', 'infeasible'):
+        skipped = report['skipped'].setdefault(row['instance'], {
+            'solution_status': official, 'runs': 0,
+            'reason': '官方记录未给出已证最优或不可行结论',
+        })
+        skipped['runs'] += 1
+        return
+
+    status = row['status']
+    if official == 'infeasible':
+        report['checked_runs'] += 1
+        report['infeasible_runs'] += 1
+        if status in ('optimal', 'unbounded') or row['values'] is not None or row['objective'] is not None:
+            error(f'官方结论为不可行，记录终态 {status} 或所附可行解与之矛盾')
+        return
+
+    optimum = entry.get('solution_value')
+    if not finite(optimum):
+        error(f'官方记录标为最优但没有有限目标值：{optimum!r}')
+        return
+    report['checked_runs'] += 1
+    report['optimal_runs'] += 1
+    if status in ('infeasible', 'unbounded', 'infeasible_or_unbounded'):
+        error(f'终态 {status} 与官方已证最优值 {optimum} 矛盾')
+    if status == 'optimal':
+        report['optimal_claims_checked'] += 1
+        claimed = row['objective']
+        if not finite(claimed) or not close(claimed, optimum):
+            error(f'最优目标 {claimed} 与官方已证最优值 {optimum} 不符')
+    if finite(row['bound']):
+        report['bounds_checked'] += 1
+        verify_bound(model, row, optimum, '官方已证最优值', error)
+    if objective is not None:
+        report['feasible_objectives_checked'] += 1
+        improves = exceeds(optimum, objective) if model['sense'] == 'min' else exceeds(objective, optimum)
+        if improves:
+            error(f'可行目标 {objective} 优于官方已证最优值 {optimum}')
+
+
+def inspect_results(inputs, public_truth=None):
     errors = []
     runs = solutions_checked = mic_with_external_optimum = mic_bounds_checked = 0
     models = {}
     groups = defaultdict(list)
     by_instance = {}
+    truth_entries, truth_report = load_public_truth(public_truth) if public_truth is not None else ({}, None)
     for source in inputs:
         with source.open(encoding='utf-8') as stream:
             for index, line in enumerate(stream, 1):
@@ -120,6 +192,8 @@ def inspect_results(inputs):
                     solutions_checked += 1
                 else:
                     objective = None
+                if row['instance'] in truth_entries:
+                    verify_public_truth(model, row, objective, truth_entries[row['instance']], truth_report, error)
                 groups[(row['instance'], digest)].append((model, row, objective, error))
 
     for members in groups.values():
@@ -152,19 +226,23 @@ def inspect_results(inputs):
                                     else exceeds(objective, optimum))
                         if improves:
                             error(f'MIC 可行目标 {objective} 优于外部已证最优值 {optimum}')
-    return dict(passed=not errors and runs > 0, runs=runs, instances=len(groups),
-                solutions_checked=solutions_checked,
-                mic_with_external_optimum=mic_with_external_optimum,
-                mic_bounds_checked=mic_bounds_checked,
-                errors=errors)
+    result = dict(passed=not errors and runs > 0, runs=runs, instances=len(groups),
+                  solutions_checked=solutions_checked,
+                  mic_with_external_optimum=mic_with_external_optimum,
+                  mic_bounds_checked=mic_bounds_checked,
+                  errors=errors)
+    if truth_report is not None:
+        result['public_truth'] = truth_report
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('inputs', nargs='+', type=Path)
+    parser.add_argument('--public-truth', type=Path, help='冻结的公开模型来源与官方证明清单')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    result = inspect_results(args.inputs)
+    result = inspect_results(args.inputs, public_truth=args.public_truth)
     rendered = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
     if args.output:
         with args.output.open('x', encoding='utf-8') as target:
