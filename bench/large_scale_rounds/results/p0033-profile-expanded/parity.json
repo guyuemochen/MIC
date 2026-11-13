@@ -1,0 +1,121 @@
+{
+  "baseline": {
+    "path": "root_heuristic_work_limit-screen.jsonl",
+    "sha256": "45cf98916459b9f6d634725631bfc5976295633017f54cdeba401bbef1f42440",
+    "source_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+    "source_tree": "073990a459ae989a9bd7b6bd9c6af573690115a7",
+    "binary_sha256": "e9370de693077dcec2b736149a6a63d16de84f1f115fc7db2527ff66f9825f29",
+    "command": [
+      "/private/tmp/mic-r10-binaries/round_probe_base",
+      "solve",
+      "/private/tmp/mic-rounds-public/p0033.milp",
+      "--early-stop",
+      "off",
+      "--probe-reuse",
+      "off",
+      "--binary-propagation",
+      "auto",
+      "--threads",
+      "1",
+      "--time-limit-secs",
+      "10",
+      "--node-limit",
+      "2000000"
+    ]
+  },
+  "previous_profile": {
+    "path": "p0033-guard-profile.jsonl",
+    "sha256": "7e10868566982c1e44bfd82cae1c4eec1dc0615e46f0b8cb10eefccc62c22fab",
+    "binary_sha256": "76e045db57f3724ad7687b3e5bb10614e0d9c791e2f57a42f96349a3d7546162",
+    "failure_sample_limit": 64,
+    "fields_equal_to_baseline": {
+      "status": true,
+      "objective": true,
+      "bound": true,
+      "values": true,
+      "nodes": true,
+      "lp_iterations": true,
+      "cuts": true,
+      "auto_degraded": true,
+      "gap_terminated": true
+    },
+    "lp_failure_samples": 64,
+    "by_status": {
+      "infeasible": 64
+    },
+    "by_stage": {
+      "tree_lp": 64
+    },
+    "failures_omitted": 61,
+    "chosen_omitted": 353,
+    "unresolved_lp_nodes": 1,
+    "unresolved_est": 2849.272637195108,
+    "non_infeasible_or_numerical_error": []
+  },
+  "expanded_profile": {
+    "path": "/private/tmp/mic-p0033-profile",
+    "commit": "1b4b8812ae3f658d72da04e60cc18c16817aaada",
+    "tree": "cb28aec86695a6e37aab84bcdc9e111bc6e052df",
+    "binary_sha256": "a6171cdc39ee9e133578b47fb67144fb20364e34e57e27295f352ee44435c60e",
+    "source_diff_sha256": "62441eaf49057c580d0da612284590581ee3ff8e292a14571ced7717e976216b",
+    "build_log_sha256": "1e35693131c628605dacc34189a9d4bc40823bdeb47830798a644db5d8844334",
+    "failure_sample_limit": 256,
+    "export_command": [
+      "/tmp/mic-p0033-profile-target/release/examples/round_probe",
+      "export",
+      "/private/tmp/mic-rounds-public/p0033.milp"
+    ],
+    "export_model_sha256": "caa177f80d261d8a20333a900fe9d96e27ee5a51ccc1bb89fea4618f5433f563",
+    "command": [
+      "/tmp/mic-p0033-profile-target/release/examples/round_probe",
+      "solve",
+      "/private/tmp/mic-rounds-public/p0033.milp",
+      "--early-stop",
+      "off",
+      "--probe-reuse",
+      "off",
+      "--binary-propagation",
+      "auto",
+      "--threads",
+      "1",
+      "--time-limit-secs",
+      "10",
+      "--node-limit",
+      "2000000"
+    ],
+    "fields_equal_to_baseline": {
+      "status": true,
+      "objective": true,
+      "bound": true,
+      "values": true,
+      "nodes": true,
+      "lp_iterations": true,
+      "cuts": true,
+      "auto_degraded": true,
+      "gap_terminated": true
+    },
+    "lp_failure_samples": 125,
+    "by_status": {
+      "infeasible": 124,
+      "iteration_limit": 1
+    },
+    "by_stage": {
+      "tree_lp": 125
+    },
+    "failures_omitted": 0,
+    "chosen_omitted": 353,
+    "unresolved_lp_nodes": 1,
+    "unresolved_est": 2849.272637195108,
+    "non_infeasible_or_numerical_error": [
+      {
+        "profile_event_index": 150,
+        "kind": "lp_failure",
+        "stage": "tree_lp",
+        "status": "iteration_limit",
+        "numerical_error": "Phase-1 行 4 人工变量值 -0.0015374175338724767 低于零下界容差",
+        "phase1_pending": true
+      }
+    ]
+  },
+  "passed": true
+}

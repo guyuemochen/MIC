@@ -1,0 +1,5 @@
+cargo build --manifest-path milp/Cargo.toml --release --example round_probe --features proof_profile --target-dir /tmp/mic-p0033-profile-target
+cargo 1.97.0 (c980f4866 2026-06-30)
+rustc 1.97.0 (2d8144b78 2026-07-07)
+   Compiling milp v0.1.0 (/private/tmp/mic-p0033-profile/milp)
+    Finished `release` profile [optimized] target(s) in 3.08s

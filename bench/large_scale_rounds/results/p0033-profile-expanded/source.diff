@@ -1,0 +1,13 @@
+diff --git a/milp/src/proof_profile.rs b/milp/src/proof_profile.rs
+index 92b295d..edba416 100644
+--- a/milp/src/proof_profile.rs
++++ b/milp/src/proof_profile.rs
+@@ -492,7 +492,7 @@ pub fn lp_failure(
+         if !t.enabled {
+             return false;
+         }
+-        if t.failure_samples >= 64 {
++        if t.failure_samples >= 256 {
+             t.failures_omitted += 1;
+             false
+         } else {
