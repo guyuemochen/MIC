@@ -1,0 +1,614 @@
+[
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": true,
+    "debug_assertions": false,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": true,
+    "debug_assertions": false,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": true,
+    "debug_assertions": false,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "release",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": true,
+    "debug_assertions": false,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "finite_width_overflow",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": 1e+308,
+    "rows": [],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1e+308,
+    "x": [
+      1e+308
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "finite_width_overflow",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": 1e+308,
+    "rows": [],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1e+308,
+    "x": [
+      1e+308
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "finite_width_overflow",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": -1e+308,
+    "rows": [],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1e+308,
+    "x": [
+      1e+308
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "release",
+    "case": "finite_width_overflow",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": false,
+    "expected_objective": -1e+308,
+    "rows": [],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1e+308,
+    "x": [
+      1e+308
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": true,
+    "debug_assertions": true,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": true,
+    "debug_assertions": true,
+    "expected_objective": 1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": 1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": true,
+    "debug_assertions": true,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0000004768372,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0000004768372,
+        "rhs": 1000.0,
+        "le_violation": 4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0000004768372,
+    "x": [
+      1000.0000004768372,
+      0.0
+    ],
+    "max_constraint_violation": 4.76837158203125e-07
+  },
+  {
+    "profile": "debug",
+    "case": "phase2_negative_slack",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": true,
+    "debug_assertions": true,
+    "expected_objective": -1000.0,
+    "rows": [
+      {
+        "index": 0,
+        "activity": 1000.0,
+        "rhs": 1000.0,
+        "le_violation": 0.0
+      },
+      {
+        "index": 1,
+        "activity": 1000.0,
+        "rhs": 1000.0000004768372,
+        "le_violation": -4.76837158203125e-07
+      }
+    ],
+    "caught_panic": false,
+    "status": "Optimal",
+    "objective": -1000.0,
+    "x": [
+      1000.0,
+      0.0
+    ],
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "finite_width_overflow",
+    "engine": "tableau",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": 1e+308,
+    "rows": [],
+    "caught_panic": true,
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "finite_width_overflow",
+    "engine": "revised",
+    "sense": "Maximize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": 1e+308,
+    "rows": [],
+    "caught_panic": true,
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "finite_width_overflow",
+    "engine": "tableau",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": -1e+308,
+    "rows": [],
+    "caught_panic": true,
+    "max_constraint_violation": 0.0
+  },
+  {
+    "profile": "debug",
+    "case": "finite_width_overflow",
+    "engine": "revised",
+    "sense": "Minimize",
+    "reversed": false,
+    "debug_assertions": true,
+    "expected_objective": -1e+308,
+    "rows": [],
+    "caught_panic": true,
+    "max_constraint_violation": 0.0
+  }
+]

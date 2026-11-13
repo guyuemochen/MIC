@@ -1,0 +1,72 @@
+CASE case=phase2_negative_slack engine=tableau sense=Maximize reversed=false debug_assertions=false expected_objective=1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=1.00000000047683716e3 recomputed=1.00000000047683716e3 x=[1000.0000004768372, 0.0] x_bits=[4652007308845383680, 0]
+ROW index=0 activity=1.00000000047683716e3 rhs=1.00000000047683716e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000047683716e3 rhs=1.00000000000000000e3 le_violation=4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000047683716e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=tableau sense=Maximize reversed=true debug_assertions=false expected_objective=1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=1.00000000000000000e3 recomputed=1.00000000000000000e3 x=[1000.0, 0.0] x_bits=[4652007308841189376, 0]
+ROW index=0 activity=1.00000000000000000e3 rhs=1.00000000000000000e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000000000000e3 rhs=1.00000000047683716e3 le_violation=-4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000000000000e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=revised sense=Maximize reversed=false debug_assertions=false expected_objective=1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=1.00000000047683716e3 recomputed=1.00000000047683716e3 x=[1000.0000004768372, 0.0] x_bits=[4652007308845383680, 0]
+ROW index=0 activity=1.00000000047683716e3 rhs=1.00000000047683716e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000047683716e3 rhs=1.00000000000000000e3 le_violation=4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000047683716e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=revised sense=Maximize reversed=true debug_assertions=false expected_objective=1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=1.00000000000000000e3 recomputed=1.00000000000000000e3 x=[1000.0, 0.0] x_bits=[4652007308841189376, 0]
+ROW index=0 activity=1.00000000000000000e3 rhs=1.00000000000000000e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000000000000e3 rhs=1.00000000047683716e3 le_violation=-4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000000000000e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=tableau sense=Minimize reversed=false debug_assertions=false expected_objective=-1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=-1.00000000047683716e3 recomputed=-1.00000000047683716e3 x=[1000.0000004768372, 0.0] x_bits=[4652007308845383680, 0]
+ROW index=0 activity=1.00000000047683716e3 rhs=1.00000000047683716e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000047683716e3 rhs=1.00000000000000000e3 le_violation=4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000047683716e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=tableau sense=Minimize reversed=true debug_assertions=false expected_objective=-1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=-1.00000000000000000e3 recomputed=-1.00000000000000000e3 x=[1000.0, 0.0] x_bits=[4652007308841189376, 0]
+ROW index=0 activity=1.00000000000000000e3 rhs=1.00000000000000000e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000000000000e3 rhs=1.00000000047683716e3 le_violation=-4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000000000000e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=revised sense=Minimize reversed=false debug_assertions=false expected_objective=-1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=-1.00000000047683716e3 recomputed=-1.00000000047683716e3 x=[1000.0000004768372, 0.0] x_bits=[4652007308845383680, 0]
+ROW index=0 activity=1.00000000047683716e3 rhs=1.00000000047683716e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000047683716e3 rhs=1.00000000000000000e3 le_violation=4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000047683716e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=phase2_negative_slack engine=revised sense=Minimize reversed=true debug_assertions=false expected_objective=-1.00000000000000000e3
+RESULT caught_panic=false status=Optimal objective=-1.00000000000000000e3 recomputed=-1.00000000000000000e3 x=[1000.0, 0.0] x_bits=[4652007308841189376, 0]
+ROW index=0 activity=1.00000000000000000e3 rhs=1.00000000000000000e3 le_violation=0.00000000000000000e0
+ROW index=1 activity=1.00000000000000000e3 rhs=1.00000000047683716e3 le_violation=-4.76837158203125000e-7
+BOUND index=0 lower_violation=-1.00000000000000000e3 upper_violation=-inf
+BOUND index=1 lower_violation=0.00000000000000000e0 upper_violation=-inf
+END
+CASE case=finite_width_overflow engine=tableau sense=Maximize reversed=false debug_assertions=false expected_objective=1.00000000000000001e308
+RESULT caught_panic=false status=Optimal objective=1.00000000000000001e308 recomputed=1.00000000000000001e308 x=[1e308] x_bits=[9214871658872686752]
+BOUND index=0 lower_violation=-inf upper_violation=0.00000000000000000e0
+END
+CASE case=finite_width_overflow engine=revised sense=Maximize reversed=false debug_assertions=false expected_objective=1.00000000000000001e308
+RESULT caught_panic=false status=Optimal objective=1.00000000000000001e308 recomputed=1.00000000000000001e308 x=[1e308] x_bits=[9214871658872686752]
+BOUND index=0 lower_violation=-inf upper_violation=0.00000000000000000e0
+END
+CASE case=finite_width_overflow engine=tableau sense=Minimize reversed=false debug_assertions=false expected_objective=-1.00000000000000001e308
+RESULT caught_panic=false status=Optimal objective=-1.00000000000000001e308 recomputed=-1.00000000000000001e308 x=[1e308] x_bits=[9214871658872686752]
+BOUND index=0 lower_violation=-inf upper_violation=0.00000000000000000e0
+END
+CASE case=finite_width_overflow engine=revised sense=Minimize reversed=false debug_assertions=false expected_objective=-1.00000000000000001e308
+RESULT caught_panic=false status=Optimal objective=-1.00000000000000001e308 recomputed=-1.00000000000000001e308 x=[1e308] x_bits=[9214871658872686752]
+BOUND index=0 lower_violation=-inf upper_violation=0.00000000000000000e0
+END

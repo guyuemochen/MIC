@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--release",
+    "--lib"
+  ],
+  "cwd": "/Users/guyuemochen/Desktop/projects/MIC",
+  "source_commit": "c88c47e1aa69cab5743a8fcdea884c03d1b60b49",
+  "exit_code": 0,
+  "seconds": 2.6338679790496826
+}

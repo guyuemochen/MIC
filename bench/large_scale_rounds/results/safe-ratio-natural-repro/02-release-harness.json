@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "rustc",
+    "--edition=2021",
+    "/private/tmp/mic-certified-row-fallback/bench/large_scale_rounds/results/safe-ratio-natural-repro/primal_ratio_repro.rs",
+    "--extern",
+    "milp=milp/target/release/libmilp.rlib",
+    "-L",
+    "dependency=milp/target/release/deps",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "debug-assertions=no",
+    "-o",
+    "/tmp/mic-primal-ratio-repro-release"
+  ],
+  "cwd": "/Users/guyuemochen/Desktop/projects/MIC",
+  "source_commit": "c88c47e1aa69cab5743a8fcdea884c03d1b60b49",
+  "exit_code": 0,
+  "seconds": 0.250730037689209
+}

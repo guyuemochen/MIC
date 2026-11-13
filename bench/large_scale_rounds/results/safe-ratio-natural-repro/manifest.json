@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "library_source_worktree": "/Users/guyuemochen/Desktop/projects/MIC",
+  "library_source_commit": "c88c47e1aa69cab5743a8fcdea884c03d1b60b49",
+  "library_source_milp_tree": "47e1a83fba69687f61c9052756bbb7b3f908d07e",
+  "harness_git_base": "62dc753",
+  "files": {
+    "01-release-library.json": "7cb27ad2d3bc9b06be7ada2cd6055bca4edf386ab4b1cd5fa557f091be0a02df",
+    "01-release-library.log": "f185e28740357971283c713674bbaaa1e7a129273ec03247449cb980fc0e8034",
+    "02-release-harness.json": "54a8d1f60cfbafe6ef904ad3101b095337f56985f6ca4be79fa2b379b94c665f",
+    "02-release-harness.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "03-release-observations.json": "a43f034ad6d166111f7a6e60f0005ddb596aa42d79bb6bbaa8a8100e9b59b1e0",
+    "03-release-observations.log": "6598768d949eb95ba56e721c747450ca3a49bbb30bac0193e13e96fc949763c9",
+    "04-debug-library.json": "3ac56830681fd1e9ccc8edb9ccef7a4f9dd68f2224e5d899c5b35da215016617",
+    "04-debug-library.log": "967fbe5b5e2f18e551c09155cc663f67882abfa6c62679cb7b0d80b29be997b0",
+    "05-debug-harness.json": "c6e0892aea4d7a6bdf626fb61f4a81125447ffcbe399f24663ba25ef00cf7577",
+    "05-debug-harness.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "06-debug-observations.json": "cdb464316fb663396b90b8f79cb3cfece38f085638ffadc675e1f20eac71689d",
+    "06-debug-observations.log": "1a927827c05ff616b553ff8ee57e2faf93a72a1c5d948279b2589576d0cfdd24",
+    "observations.json": "b4b3d99a3c588ed21b56e18245e6709920f5bad60ca4b1a910f10d786a3c54a7",
+    "primal_ratio_repro.rs": "1b30eb9f12d99e018c1f383bba1b9c8cf37313ee33b557967399273421bbfe02",
+    "safe-ratio-design.md": "151363557f3b3b5bcb4a2a42a40e881b838a5f9ce8ae18bfa5b9f67cc2b1aef7"
+  },
+  "library_hashes": {
+    "release": "820cd714d8560285bd019000d64fb210a8da3fa956fd8295c12f790833a38c43",
+    "debug": "33b1e2a294d13a49412c687831fe31d30401fcf7e5d27d85584347b57d24cb9c"
+  },
+  "binary_hashes": {
+    "release": "c53adff42c1eed5cb4ac71a53669c5cb4a3a1e77d9f8312ccc9dc47b951e76ec",
+    "debug": "97171e7fe4bcd198ba4fed3df565085532209ad75cc541a8f3bfa7415057d05a"
+  },
+  "results": {
+    "public_lp_calls": 24,
+    "phase2_false_optimal": 8,
+    "phase2_reversed_correct": 8,
+    "width_release_correct": 4,
+    "width_debug_caught_panics": 4,
+    "false_unbounded_observed": 0
+  },
+  "scope": "只构建当前主树库并运行微型公开LP API harness；没有全测、没有MILP搜索、没有生产源码修改。四个debug panic均由catch_unwind捕获，程序正常退出不代表LP调用没有panic。"
+}
