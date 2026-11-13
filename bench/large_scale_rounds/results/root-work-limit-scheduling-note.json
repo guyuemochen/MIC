@@ -1,0 +1,18 @@
+{
+  "decision": "当前完整screen继续，paired在基础证明能力诊断后另行决定；不修改冻结门槛",
+  "observed": "p0033两组均找到目标3089但提前LimitReached，未完成此前证明；停止原因尚待实际诊断",
+  "paused_parent_pid": 20807,
+  "screen_child_pid": 20928,
+  "source_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+  "screen_interrupted": false,
+  "paired_started": false,
+  "procedure": "仅SIGSTOP串行调度父进程，当前screen子进程照常执行；完成后独立汇总核验，不丢弃结果",
+  "decision_observed_at_utc": "2026-11-13 03:31:23 UTC",
+  "pause_note_recorded_at_utc": "2026-11-13T03:31:57.995081+00:00",
+  "screen_completed_records": 40,
+  "screen_child_observed_absent": true,
+  "parent_terminated_after_screen": true,
+  "screen_process_exit_code": null,
+  "screen_exit_note": "子进程完整写完40条后结束；暂停调度器未取得其进程退出码，按记录完整性和独立检查验收",
+  "cleanup_recorded_at_utc": "2026-11-13T03:34:17.574859+00:00"
+}
