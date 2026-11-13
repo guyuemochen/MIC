@@ -2164,8 +2164,8 @@ impl Simplex {
             // 后续每步仍走原有限性检查；此处不改变既有上限/期限优先级。
             if check_initial_values {
                 check_initial_values = false;
-                if self.rhs.iter().any(|v| !v.is_finite()) {
-                    return PhaseOutcome::Failed("阶段入口基变量值出现 NaN/Inf".to_string());
+                if let Err(msg) = self.check_phase_basic_values(phase) {
+                    return PhaseOutcome::Failed(msg);
                 }
             }
             // 初始 false 仅在 Flip/Leave 两臂都被覆盖（其余臂直接 return），
@@ -2218,8 +2218,8 @@ impl Simplex {
                     }
                 }
             }
-            if self.rhs.iter().any(|v| !v.is_finite()) {
-                return PhaseOutcome::Failed("基变量值出现 NaN/Inf".to_string());
+            if let Err(msg) = self.check_phase_basic_values(phase) {
+                return PhaseOutcome::Failed(msg);
             }
             if self.iter_call > bland_total && self.degenerate_streak > 0 {
                 // 总迭代触发 + 停滞证据门（W4）：iter_call > 3×(m+n) 且最近
@@ -2389,6 +2389,21 @@ impl Simplex {
         }
     }
 
+    /// 第一阶段人工变量以下界零为前提；比值并列带可能留下超容差负值。
+    /// 定价前和每步后拒绝它，避免下一零步主元将其换出并丢失证据。
+    fn check_phase_basic_values(&self, phase: u8) -> std::result::Result<(), String> {
+        let ncs = self.ncols_static();
+        for (i, &value) in self.rhs.iter().enumerate() {
+            if !value.is_finite() {
+                return Err("阶段入口基变量值出现 NaN/Inf".to_string());
+            }
+            if phase == 1 && self.basis[i] >= ncs && value < -self.tol.feasibility {
+                return Err(format!("Phase-1 行 {i} 人工变量值 {value} 低于零下界容差"));
+            }
+        }
+        Ok(())
+    }
+
     /// Phase-1 最优时的人工正部和，保持原有有限算术顺序和阈值。
     /// NaN 不能被 max(0) 吞掉；单项或总和非有限时保守报告数值失败，
     /// 即使某些正部和溢出的模型事实上不可行，也不拿非有限值作证明。
@@ -2400,6 +2415,9 @@ impl Simplex {
                 let value = self.rhs[i];
                 if !value.is_finite() {
                     return Err(format!("Phase-1 行 {i} 人工变量值非有限"));
+                }
+                if value < -self.tol.feasibility {
+                    return Err(format!("Phase-1 行 {i} 人工变量值 {value} 低于零下界容差"));
                 }
                 sum += value.max(0.0);
                 if !sum.is_finite() {
@@ -2423,6 +2441,11 @@ impl Simplex {
                 return Err(st);
             }
             // 值在容差内（infeasibility 已判 0），强制精确置 0。
+            // 清理换基可能改变后续基本值，逐行置零前重查清理前提。
+            if !self.rhs[i].is_finite() || self.rhs[i].abs() > self.tol.feasibility {
+                self.numerical_error = Some(format!("Phase-1 清理行 {i} 人工变量超出零值容差"));
+                return Err(LpStatus::IterationLimit);
+            }
             self.rhs[i] = 0.0;
             let mut pick = usize::MAX;
             for j in 0..ncs {
@@ -2439,6 +2462,13 @@ impl Simplex {
                 work.charge_step();
                 self.do_pivot(pick, i, delta, 0.0, false);
                 self.count_step(0.0);
+            }
+        }
+        // 后续清理换基/重构可能改写已处理但仍留基的人工变量，阶段交接再查。
+        for (i, &j) in self.basis.iter().enumerate() {
+            if j >= ncs && (!self.rhs[i].is_finite() || self.rhs[i].abs() > self.tol.feasibility) {
+                self.numerical_error = Some(format!("Phase-1 清理结束行 {i} 人工变量超出零值容差"));
+                return Err(LpStatus::IterationLimit);
             }
         }
         Ok(())
@@ -2897,6 +2927,173 @@ mod tests {
     use super::*;
     use crate::error::MilpError;
     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+
+    mod phase1_negative_tests {
+        use super::*;
+
+        const GAP: f64 = 4.76837158203125e-7;
+
+        fn natural_problem(sense: Sense, two_steps: bool, reverse: bool) -> Problem {
+            let mut vars = vec![var("x", 0.0, f64::INFINITY)];
+            let mut second = vec![(0, 1.0)];
+            if two_steps {
+                vars.push(var("y", 0.0, f64::INFINITY));
+                second.push((1, 0.5));
+            }
+            let mut rows = vec![(vec![(0, 1.0)], RelOp::Eq, 1000.0 + GAP),
+                                (second, RelOp::Eq, 1000.0)];
+            if reverse { rows.reverse(); }
+            prob(sense, vars, vec![], rows)
+        }
+
+        fn zero_problem() -> Problem {
+            prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![],
+                vec![(vec![(0, 1.0)], RelOp::Eq, 0.0)])
+        }
+
+        #[test]
+        fn artificial_tolerance_boundaries_and_cleanup_precondition() {
+            let p = zero_problem();
+            let feas = Tolerances::default().feasibility;
+            for value in [-2.0 * feas, -feas, -0.5 * feas, 0.0, 0.5 * feas, feas, 2.0 * feas] {
+                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+                s.rhs[0] = value;
+                assert_eq!(s.check_phase_basic_values(1).is_ok(), value >= -feas);
+                assert!(s.check_phase_basic_values(2).is_ok(), "不改变第二阶段策略");
+                assert_eq!(s.phase1_infeasibility().is_ok(), value >= -feas);
+                if value >= -feas { assert_eq!(s.phase1_infeasibility().unwrap(), value.max(0.0)); }
+                let before = s.basis.clone();
+                let cleanup = s.cleanup_after_phase1(&mut LpWorkLimit::unlimited());
+                assert_eq!(cleanup.is_ok(), value.abs() <= feas);
+                if value.abs() > feas {
+                    assert_eq!(s.rhs[0], value);
+                    assert_eq!(s.basis, before);
+                }
+            }
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+                s.rhs[0] = value;
+                assert!(s.cleanup_after_phase1(&mut LpWorkLimit::unlimited()).is_err());
+                assert_eq!(s.rhs[0].to_bits(), value.to_bits());
+            }
+            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+            assert_eq!(s.solve(&Bounds::from_problem(&p)).status, LpStatus::Optimal);
+        }
+
+        #[test]
+        fn rejected_entry_clone_and_new_bounds_recover() {
+            let p = zero_problem();
+            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+            s.rhs[0] = -GAP;
+
+            s.has_run = true;
+            s.start_call();
+            let status = s.run_two_phase(true);
+            assert_eq!(status, LpStatus::IterationLimit);
+            assert!(s.build_solution(status).objective.is_nan());
+            assert_eq!(s.iterations(), 0);
+            assert!(s.phase1_pending);
+            let mut snapshot = s.clone();
+            let valid = Bounds { lb: vec![0.0], ub: vec![0.0] };
+            for candidate in [&mut s, &mut snapshot] {
+                let result = candidate.resolve(&valid);
+                assert_eq!(result.status, LpStatus::Optimal, "{result:?}");
+                assert!(!candidate.phase1_pending);
+                assert_eq!(result.x, vec![0.0]);
+            }
+        }
+
+        #[test]
+        fn existing_deadline_and_iteration_limit_precede_negative_entry() {
+            let p = zero_problem();
+            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+            s.rhs[0] = -GAP;
+
+            s.set_iter_limit_hint(Some(1234));
+            let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            s.set_time_deadline(Some(past));
+            s.start_call();
+            assert_eq!(s.run_two_phase(true), LpStatus::TimeLimit);
+            assert!(s.numerical_error.is_none());
+            assert_eq!(s.time_deadline(), Some(past));
+            assert_eq!(s.iter_limit_hint, Some(1234));
+            s.set_time_deadline(None);
+            s.start_call();
+            s.iter_call = 1234;
+            assert_eq!(s.run_two_phase(true), LpStatus::IterationLimit);
+            assert!(s.numerical_error.is_none());
+            assert!(s.phase1_pending);
+        }
+
+        #[cfg(feature = "root_heuristic_work_limit")]
+        #[test]
+        fn work_limit_precedes_entry_and_charges_only_executed_step() {
+            let p = zero_problem();
+            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+            s.rhs[0] = -GAP;
+
+            s.start_call();
+            let mut balance = 0;
+            assert_eq!(s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut balance)), LpStatus::IterationLimit);
+            assert!(s.numerical_error.is_none());
+            assert_eq!(s.iterations(), 0);
+            assert_eq!(s.rhs[0], -GAP);
+            for cap in [1, 3] {
+                let p = natural_problem(Sense::Minimize, true, false);
+                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+                s.start_call();
+                let mut balance = cap;
+                let status = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut balance));
+                assert_eq!(status, LpStatus::IterationLimit);
+                assert!(s.phase1_pending);
+                assert_eq!(s.iterations(), 1);
+                assert_eq!(balance, cap - 1, "重构和拒绝不收费，已经执行的主元不退费");
+                assert!(s.build_solution(status).objective.is_nan());
+            }
+        }
+
+        fn natural_case(two_steps: bool) {
+            for sense in [Sense::Minimize, Sense::Maximize] {
+                for first_resolve in [false, true] {
+                    let p = natural_problem(sense, two_steps, false);
+                    p.validate().unwrap();
+                    let bounds = Bounds::from_problem(&p);
+                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
+                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
+                    assert_eq!(result.status, LpStatus::IterationLimit,
+                        "两步={two_steps}, {sense:?}, 首次resolve={first_resolve}: {result:?}");
+                    assert!(result.objective.is_nan());
+                    assert!(s.phase1_pending);
+                    assert_eq!(s.iterations(), 1, "不能让下一零步主元把负人工换出");
+                    assert!(s.basis.iter().enumerate().any(|(i, &j)|
+                        j >= s.ncols_static() && s.rhs[i] < -s.tol.feasibility));
+                    let mut snapshot = s.clone();
+                    for candidate in [&mut s, &mut snapshot] {
+                        let recovered = candidate.resolve(&bounds);
+                        assert_ne!(recovered.status, LpStatus::Optimal);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn natural_negative_artificial_is_not_cleaned_into_optimal() { natural_case(false); }
+
+        #[test]
+        fn natural_negative_artificial_is_not_erased_by_next_zero_pivot() { natural_case(true); }
+
+        #[test]
+        fn swapped_rows_still_prove_infeasible() {
+            for sense in [Sense::Minimize, Sense::Maximize] {
+                for two_steps in [false, true] {
+                    let p = natural_problem(sense, two_steps, true);
+                    let result = Simplex::new(&p, Tolerances::default()).unwrap()
+                        .solve(&Bounds::from_problem(&p));
+                    assert_eq!(result.status, LpStatus::Infeasible, "{result:?}");
+                }
+            }
+        }
+    }
 
     mod phase1_finite_tests {
         use super::*;

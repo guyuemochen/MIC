@@ -1,0 +1,32 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-phase1-negative-guard/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 6 tests
+test simplex::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 433 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-74e169cbd29df55c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-5aa5acce62586069)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-d75ee7dc20ccae91)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
