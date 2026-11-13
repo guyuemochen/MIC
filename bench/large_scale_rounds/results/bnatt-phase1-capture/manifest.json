@@ -1,0 +1,46 @@
+{
+  "source_commit": "af25ba3a7bde059402936e0a13b697f64333d29b",
+  "milp_tree": "413efde92c4403148dcfd189094b2ddbbba1d9d7",
+  "features": [
+    "phase1_progress_diagnostics"
+  ],
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ],
+  "build_command": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--release",
+    "--features",
+    "phase1_progress_diagnostics",
+    "--example",
+    "phase1_progress_probe"
+  ],
+  "build_exit_code": 0,
+  "binary": "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/phase1_progress_probe",
+  "binary_sha256": "bc3cec9163d2b897a004b4d5a9afbcebeadc19cf26817c348826c4335f16d034",
+  "command": [
+    "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/phase1_progress_probe",
+    "/private/tmp/mic-rounds-miplib2017/bnatt500.milp",
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/bnatt-phase1-capture/capture.json",
+    "30",
+    "revised"
+  ],
+  "input_milp_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+  "baseline_model_sha256": "7d48f7d203013102ca06fca727c334b200c32d5cbbbfe87ccaa35a265bbd7359",
+  "exit_code": 0,
+  "configuration_differences": [
+    "显式revised，而默认回归为auto",
+    "SearchControl除threads=1和adaptive_heuristics=true外沿默认；未显式禁用提前停止",
+    "节点上限沿SolveOptions默认，而默认回归为2000000"
+  ],
+  "performance_evidence": false,
+  "full_terminal_parity_claim": false,
+  "capture_sha256": "00247b87e65a6af8370c390e6cc1246dde3188e9197838d6a38ec934c5ee288b",
+  "status": "LimitReached",
+  "nodes": 1,
+  "lp_iterations": 3904
+}
