@@ -1,0 +1,44 @@
+{
+  "source_commit": "921486f8d02e531be09f1ba568e4b22cb50a2202",
+  "milp_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+  "commands": [
+    {
+      "name": "ffi-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp-ffi/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 3.6108083329963847
+    },
+    {
+      "name": "ffi-release-build",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "milp-ffi/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 2.400689667003462
+    },
+    {
+      "name": "python-tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "micpython/tests",
+        "-t",
+        "."
+      ],
+      "returncode": 0,
+      "elapsed_secs": 0.6054480000020703
+    }
+  ]
+}

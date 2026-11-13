@@ -1,0 +1,15 @@
+{
+  "source": "/tmp/mic-safe-ratio-baseline",
+  "source_commit": "ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4",
+  "source_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+  "binary": "/tmp/mic-safe-ratio-binaries/round_probe_default",
+  "binary_sha256": "8fc4745aec9448bbe24e8da2e65207cbe7d45166acd03898dfe65a59f21f1522",
+  "copied_from": "/tmp/mic-safe-primal-ratio/milp/target/release/examples/round_probe",
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ],
+  "explicit_features": [],
+  "build_evidence": "results/safe-primal-ratio-validation/19-p0033-manifest.json",
+  "build_log": "results/safe-primal-ratio-validation/20-p0033-build.log"
+}
