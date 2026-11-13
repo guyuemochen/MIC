@@ -87,7 +87,7 @@ class GateFeatureTrialTest(unittest.TestCase):
                         row['elapsed_secs'] = 0.0625
 
         for feature in FEATURES:
-            strict = feature in ('root_heuristic_work_limit', 'certified_row_fallback')
+            strict = feature in ('root_heuristic_work_limit', 'certified_row_fallback', 'root_cut_recheck')
             for gate in ('rss', 'case_median'):
                 with self.subTest(feature=feature, gate=gate):
                     result = decide(make_summary(feature, 'screen',

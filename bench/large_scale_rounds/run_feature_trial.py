@@ -14,7 +14,7 @@ from run_row_products import source_info
 
 FEATURES = (
     'binary_coefficient_strengthening', 'risk_pivot_refresh', 'root_heuristic_work_limit',
-    'certified_row_fallback',
+    'certified_row_fallback', 'root_cut_recheck',
 )
 VARIANTS = ['base', 'candidate']
 WINDOWS = {(10, 1): 'screen', (30, 3): 'paired'}

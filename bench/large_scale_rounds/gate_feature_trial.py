@@ -200,7 +200,7 @@ def decide(summary):
 
     thresholds = {'max_proof_losses': 0}
     gates = {'correctness': correctness, 'no_proof_loss': proof_losses == 0}
-    if phase == 'paired' or feature in ('root_heuristic_work_limit', 'certified_row_fallback'):
+    if phase == 'paired' or feature in ('root_heuristic_work_limit', 'certified_row_fallback', 'root_cut_recheck'):
         thresholds.update(rss_floor_bytes=MIN_RSS_LIMIT_BYTES, rss_base_multiplier=RSS_BASE_MULTIPLIER,
                           max_case_ratio=MAX_CASE_RATIO)
         gates.update(rss=rss_failures == 0, case_median=not slow)
