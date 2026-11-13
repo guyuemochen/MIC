@@ -1,0 +1,19 @@
+{
+  "source_capture": "../dense-failure-profile/lseu-failures.jsonl",
+  "source_sha256": "a9221c2e205807e733e8ed3efccf06345fddd1749f06ed424cb103ce28095123",
+  "script_sha256": "a78705334b30f23d8990a218609ff7029807a2cddf2fedf0aecabf581175c30e",
+  "command": [
+    "/tmp/mic-rounds-env/bin/python",
+    "bench/large_scale_rounds/results/dense-failure-offline/inspect.py",
+    "bench/large_scale_rounds/results/dense-failure-profile/lseu-failures.jsonl",
+    "bench/large_scale_rounds/results/dense-failure-offline/analysis-reproduced.json"
+  ],
+  "numpy_version": "2.5.4",
+  "thread_environment_requested": {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1"
+  },
+  "reoptimized_lp": false,
+  "basis_solve_type": "独立双精度numpy.linalg.solve；残差用保存浮点输入的Fraction精确算术核验"
+}
