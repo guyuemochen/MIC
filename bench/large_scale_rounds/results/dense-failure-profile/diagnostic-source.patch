@@ -1,0 +1,265 @@
+diff --git a/milp/src/proof_profile.rs b/milp/src/proof_profile.rs
+index 92b295d..2bc9f36 100644
+--- a/milp/src/proof_profile.rs
++++ b/milp/src/proof_profile.rs
+@@ -487,23 +487,26 @@ pub fn lp_failure(
+     if sol.status == LpStatus::Optimal {
+         return;
+     }
+-    let sample = TRACE.with(|trace| {
++    let Some(detail) = TRACE.with(|trace| {
+         let mut t = trace.borrow_mut();
+         if !t.enabled {
+-            return false;
++            return None;
+         }
+         if t.failure_samples >= 64 {
+             t.failures_omitted += 1;
+-            false
+-        } else {
+-            t.failure_samples += 1;
+-            true
++            return None;
+         }
+-    });
+-    if !sample {
++        let detail = engine.proof_diagnostics();
++        // 普通不可行只计数，把有界样本留给中断或数值错误。
++        if sol.status == LpStatus::Infeasible && detail.numerical_error.is_none() {
++            t.failures_omitted += 1;
++            return None;
++        }
++        t.failure_samples += 1;
++        Some(detail)
++    }) else {
+         return;
+-    }
+-    let detail = engine.proof_diagnostics();
++    };
+     record(
+         "lp_failure",
+         vec![
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index 9b92f96..68275ed 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -381,6 +381,12 @@ pub struct LpSolution {
+ /// 成本最低且正确性最直白的机制）。
+ #[derive(Clone)]
+ pub struct Simplex {
++    #[cfg(feature = "proof_profile")]
++    failure_call_id: u64,
++    #[cfg(feature = "proof_profile")]
++    failure_attempt: u8,
++    #[cfg(feature = "proof_profile")]
++    failure_refresh_value: Option<(usize, u64)>,
+     #[cfg(feature = "phase1_progress_diagnostics")]
+     diagnostic_source_id: u64,
+     /// 容差集中配置。
+@@ -693,6 +699,12 @@ impl Simplex {
+         }
+ 
+         let mut s = Simplex {
++            #[cfg(feature = "proof_profile")]
++            failure_call_id: 0,
++            #[cfg(feature = "proof_profile")]
++            failure_attempt: 0,
++            #[cfg(feature = "proof_profile")]
++            failure_refresh_value: None,
+             #[cfg(feature = "phase1_progress_diagnostics")]
+             diagnostic_source_id: phase1_progress_diagnostics::register_source(problem),
+             tol,
+@@ -2280,6 +2292,8 @@ impl Simplex {
+             if check_initial_values {
+                 check_initial_values = false;
+                 if let Err(msg) = self.check_phase_basic_values(phase) {
++                    #[cfg(feature = "proof_profile")]
++                    self.failure_profile(phase, "phase2_entry", &msg, None, None, None);
+                 #[cfg(feature = "phase1_progress_diagnostics")]
+                 if phase == 1 {
+                     phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+@@ -2299,6 +2313,8 @@ impl Simplex {
+             }
+             let (q, delta) = match pricing {
+                 Pricing::Failed(msg) => {
++                    #[cfg(feature = "proof_profile")]
++                    self.failure_profile(phase, "phase2_pricing", &msg, None, None, None);
+                     #[cfg(feature = "phase1_progress_diagnostics")]
+                     if phase == 1 {
+                         phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+@@ -2313,8 +2329,15 @@ impl Simplex {
+             if let Some(value) = direction_fault::take() {
+                 self.matrix[0][q] = value;
+             }
++            #[cfg(feature = "proof_profile")]
++            #[allow(unused_assignments)]
++            let mut failure_step: Option<(&str, [u64; 8])> = None;
++            #[cfg(feature = "proof_profile")]
++            let mut refresh_before: Option<(u64, Vec<f64>)> = None;
+             match self.ratio_test(q, delta, phase) {
+                 Step::FilteredBlock(msg) => {
++                    #[cfg(feature = "proof_profile")]
++                    self.failure_profile(phase, "phase2_ratio", &msg, None, None, None);
+                     #[cfg(feature = "phase1_progress_diagnostics")]
+                     if phase == 1 {
+                         phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+@@ -2331,6 +2354,8 @@ impl Simplex {
+                     );
+                 }
+                 Step::Flip { t } => {
++                    #[cfg(feature = "proof_profile")]
++                    { failure_step = Some(("flip", [q as u64, u64::MAX, u64::MAX, 0, delta.to_bits(), t.to_bits(), u64::from(delta > 0.0), 0])); }
+                     t_nondegenerate = t > self.tol.feasibility;
+                     work.charge_step();
+                     self.do_flip(q, delta, t);
+@@ -2338,11 +2363,13 @@ impl Simplex {
+                 }
+                 Step::Leave { row, t, hit_upper } => {
+                     let p = self.matrix[row][q];
++                    #[cfg(feature = "proof_profile")]
++                    { failure_step = Some(("pivot", [q as u64, row as u64, self.basis[row] as u64, p.to_bits(), delta.to_bits(), t.to_bits(), u64::from(hit_upper), 0])); }
+                     if p.abs() < self.tol.pivot {
+-                        return PhaseOutcome::Failed(format!(
+-                            "主元绝对值 {p} 低于容差 {}",
+-                            self.tol.pivot
+-                        ));
++                        let msg = format!("主元绝对值 {p} 低于容差 {}", self.tol.pivot);
++                        #[cfg(feature = "proof_profile")]
++                        self.failure_profile(phase, "phase2_small_pivot", &msg, None, None, failure_step);
++                        return PhaseOutcome::Failed(msg);
+                     }
+                     t_nondegenerate = t > self.tol.feasibility;
+                     work.charge_step();
+@@ -2350,8 +2377,14 @@ impl Simplex {
+                     self.count_step(t);
+                     self.pivots_since_refresh = self.pivots_since_refresh.saturating_add(1);
+                     if self.pivots_since_refresh >= REFRESH_INTERVAL {
++                        #[cfg(feature = "proof_profile")]
++                        if phase == 2 { refresh_before = Some((self.pivots_since_refresh, self.rhs.clone())); }
+                         self.pivots_since_refresh = 0;
+                         if let Err(msg) = self.refresh_values() {
++                            #[cfg(feature = "proof_profile")]
++                            self.failure_profile(phase, "refresh_nonfinite", &msg,
++                                refresh_before.as_ref().map(|(_, rhs)| rhs.as_slice()),
++                                refresh_before.as_ref().map(|(count, _)| *count), failure_step);
+                             return PhaseOutcome::Failed(msg);
+                         }
+                     }
+@@ -2360,6 +2393,10 @@ impl Simplex {
+             #[cfg(test)]
+             if phase == 2 { recovery_fault::after_step(self); }
+             if let Err(msg) = self.check_phase_basic_values(phase) {
++                #[cfg(feature = "proof_profile")]
++                self.failure_profile(phase, if refresh_before.is_some() { "phase2_post_refresh" } else { "phase2_post_step" }, &msg,
++                    refresh_before.as_ref().map(|(_, rhs)| rhs.as_slice()),
++                    refresh_before.as_ref().map(|(count, _)| *count), failure_step);
+                 #[cfg(feature = "phase1_progress_diagnostics")]
+                 if phase == 1 {
+                     phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+@@ -2434,6 +2471,8 @@ impl Simplex {
+ 
+     /// 用原始数据重算 B⁻¹b（x_B = B⁻¹(b̂ − Σ_非基 Â_j·x_j)），抑制漂移。
+     fn refresh_values(&mut self) -> std::result::Result<(), String> {
++        #[cfg(feature = "proof_profile")]
++        { self.failure_refresh_value = None; }
+         #[cfg(feature = "phase1_progress_diagnostics")]
+         phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
+         let m = self.basis.len();
+@@ -2464,6 +2503,8 @@ impl Simplex {
+                 }
+             }
+             if !acc.is_finite() {
++                #[cfg(feature = "proof_profile")]
++                { self.failure_refresh_value = Some((i, acc.to_bits())); }
+                 #[cfg(feature = "phase1_progress_diagnostics")]
+                 phase1_progress_diagnostics::failed_refresh(self.diagnostic_owner(), i, acc);
+                 #[cfg(feature = "phase1_progress_diagnostics")]
+@@ -2477,6 +2518,66 @@ impl Simplex {
+         Ok(())
+     }
+ 
++    /// 独立诊断分支专用：只在实际失败点保存当前证据，不参与任何求解决策。
++    /// 人工列原始映射未追踪，绝不由逆矩阵反推；全部浮点以位模式无损保存。
++    #[cfg(feature = "proof_profile")]
++    fn failure_profile(&self, phase: u8, site: &str, message: &str,
++        before: Option<&[f64]>, refresh_count: Option<u64>, step: Option<(&str, [u64; 8])>) {
++        if phase != 2 { return; }
++        let Some(path) = std::env::var_os("MIC_DENSE_FAILURE_PROFILE") else { return; };
++        static EVENTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++        let event = EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        if event >= 4 {
++            eprintln!("稠密失败诊断超过四份上限，未保存事件 {}", event + 1);
++            return;
++        }
++        let record = || -> std::io::Result<()> {
++            use std::io::Write;
++            let mut out = std::io::BufWriter::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
++            let bits = |values: &[f64]| values.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
++            let matrix_bits = |rows: &[Vec<f64>]| rows.iter().map(|row| bits(row)).collect::<Vec<_>>();
++            let ncs = self.ncols_static();
++            let artificial = self.basis.iter().copied().filter(|&j| j >= ncs).collect::<Vec<_>>();
++            let violated = self.rhs.iter().enumerate().filter_map(|(i, &value)|
++                (!value.is_finite() || !self.primal_value_within_bounds(self.basis[i], value, 2)).then_some(i)).collect::<Vec<_>>();
++            let mut raw_x = (0..self.num_structural).map(|j| if self.in_basis[j] { f64::NAN } else { self.nonbasic_value(j) }).collect::<Vec<_>>();
++            for (i, &j) in self.basis.iter().enumerate() { if j < self.num_structural { raw_x[j] = self.rhs[i]; } }
++            let bounds = self.basis.iter().map(|&j| {
++                let (lb, ub) = self.col_bounds(j);
++                [lb.to_bits(), ub.to_bits(), if j >= ncs { 0.0_f64.to_bits() } else { ub.to_bits() }]
++            }).collect::<Vec<_>>();
++            let full = self.matrix.len().checked_mul(ncs + self.num_art)
++                .and_then(|a| self.binv.len().checked_mul(self.binv.len()).and_then(|b| a.checked_add(b)))
++                .is_some_and(|cells| cells <= 2_000_000);
++            write!(out, "{{\"schema\":1,\"phase\":2,\"snapshot_cell_cap\":2000000,\"failure_record_cap\":4,\"call_id\":{},\"attempt\":{},\"event\":{},\"site\":{:?},\"message\":{:?},\"iter_call\":{},\"iterations_total\":{},\"pivots_since_refresh\":{},\"refresh_counter_before_reset\":{},\"phase1_pending\":{},\"num_structural\":{},\"num_static\":{},\"num_art\":{},\"feasibility_bits\":{},\"basis_artificial_columns\":{:?},\"basis_artificial_count\":{},\"artificial_mapping\":null,\"current_B_reconstructable\":{},\"snapshot_complete\":{},\"violated_rows\":{:?},\"basis\":{:?},\"basis_bounds_bits\":{:?},\"rhs_bits\":{:?},\"pre_refresh_rhs_bits\":", self.failure_call_id, self.failure_attempt, event + 1, site, message,
++                self.iter_call, self.iterations_total, self.pivots_since_refresh,
++                refresh_count.map_or("null".to_string(), |v| v.to_string()), self.phase1_pending,
++                self.num_structural, ncs, self.num_art, self.tol.feasibility.to_bits(), artificial, artificial.len(), full && artificial.is_empty(), full, violated, self.basis, bounds, bits(&self.rhs))?;
++            if let Some(before) = before { write!(out, "{:?}", bits(before))?; } else { write!(out, "null")?; }
++            if let Some((kind, data)) = step { write!(out, ",\"step_kind\":{:?},\"step_data\":{:?}", kind, data)?; }
++            else { write!(out, ",\"step_kind\":null,\"step_data\":null")?; }
++            write!(out, ",\"raw_x_bits\":{:?}", bits(&raw_x))?;
++            write!(out, ",\"tolerance_bits\":{:?}", bits(&[self.tol.feasibility, self.tol.optimality, self.tol.pivot, self.tol.integrality, self.tol.zero]))?;
++            write!(out, ",\"refresh_completed\":{},\"failed_recomputed_row\":{},\"failed_recomputed_value_bits\":{}",
++                if site == "phase2_post_refresh" { "true" } else if site == "refresh_nonfinite" { "false" } else { "null" },
++                if site == "refresh_nonfinite" { self.failure_refresh_value.map_or("null".to_string(), |v| v.0.to_string()) } else { "null".to_string() },
++                if site == "refresh_nonfinite" { self.failure_refresh_value.map_or("null".to_string(), |v| v.1.to_string()) } else { "null".to_string() })?;
++            if full {
++                let terms = self.row_terms.iter().map(|row| row.iter().map(|&(j, a)| [j as u64, a.to_bits()]).collect::<Vec<_>>()).collect::<Vec<_>>();
++                let ops = self.row_op.iter().map(|op| match op { RelOp::Le => 0, RelOp::Ge => 1, RelOp::Eq => 2 }).collect::<Vec<_>>();
++                let optional_rows = |rows: &[Option<usize>]| rows.iter().map(|v| v.map_or(-1, |v| v as i64)).collect::<Vec<_>>();
++                write!(out, ",\"matrix_bits\":{:?},\"binv_bits\":{:?},\"row_terms_bits\":{:?},\"row_rhs_bits\":{:?},\"row_scale_bits\":{:?},\"row_op\":{:?},\"row_slack\":{:?},\"constraint_row\":{:?},\"cut_row\":{:?},\"lb_bits\":{:?},\"ub_bits\":{:?},\"at_upper\":{:?},\"in_basis\":{:?},\"cost_bits\":{:?},\"slack_sign_bits\":{:?}",
++                    matrix_bits(&self.matrix), matrix_bits(&self.binv), terms, bits(&self.row_rhs), bits(&self.row_scale), ops,
++                    optional_rows(&self.row_slack), optional_rows(&self.constraint_row), optional_rows(&self.cut_row),
++                    bits(&self.bounds.lb), bits(&self.bounds.ub), self.at_upper, self.in_basis, bits(&self.c_internal),
++                    self.layout.slack.iter().map(|col| col.sign.to_bits()).collect::<Vec<_>>())?;
++            }
++            writeln!(out, "}}")?;
++            out.flush()
++        };
++        if let Err(error) = record() { eprintln!("稠密失败诊断写入失败：{error}"); }
++    }
++
+     #[cfg(feature = "phase1_progress_diagnostics")]
+     fn diagnostic_owner(&self) -> usize {
+         self as *const Self as usize
+@@ -2639,6 +2740,8 @@ impl Simplex {
+         }
+         self.numerical_error = None;
+         // 直接调用单次尝试，第二次失败绝不递归恢复。
++        #[cfg(feature = "proof_profile")]
++        { self.failure_attempt = 1; }
+         self.run_two_phase_attempt(true, work, &mut false)
+     }
+ 
+@@ -3132,6 +3235,12 @@ impl Simplex {
+ 
+     /// 重置本次调用计数器。
+     fn start_call(&mut self) {
++        #[cfg(feature = "proof_profile")]
++        {
++            static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++            self.failure_call_id = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
++            self.failure_attempt = 0;
++        }
+         self.iter_call = 0;
+         self.degenerate_streak = 0;
+         self.bland = false;

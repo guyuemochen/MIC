@@ -1,0 +1,98 @@
+[
+  {
+    "call_id": 17086,
+    "attempt": 0,
+    "site": "phase2_post_refresh",
+    "iter_call": 200,
+    "iterations_total": 501260,
+    "pivots_since_refresh": 0,
+    "refresh_counter_before_reset": 200,
+    "phase1_pending": false,
+    "basis_artificial_count": 0,
+    "current_B_reconstructable": true,
+    "snapshot_complete": true,
+    "refresh_completed": true,
+    "violations": [
+      {
+        "row": 74,
+        "basis_col": 52,
+        "lb": 0.0,
+        "phase2_ub": 1.0,
+        "pre_refresh": 0.9999999993187958,
+        "post_refresh": 1.000000822976822
+      }
+    ]
+  },
+  {
+    "call_id": 17086,
+    "attempt": 1,
+    "site": "phase2_post_refresh",
+    "iter_call": 400,
+    "iterations_total": 501460,
+    "pivots_since_refresh": 0,
+    "refresh_counter_before_reset": 200,
+    "phase1_pending": false,
+    "basis_artificial_count": 0,
+    "current_B_reconstructable": true,
+    "snapshot_complete": true,
+    "refresh_completed": true,
+    "violations": [
+      {
+        "row": 74,
+        "basis_col": 52,
+        "lb": 0.0,
+        "phase2_ub": 1.0,
+        "pre_refresh": 0.9999999993187958,
+        "post_refresh": 1.000000822976822
+      }
+    ]
+  },
+  {
+    "call_id": 17153,
+    "attempt": 0,
+    "site": "phase2_post_refresh",
+    "iter_call": 200,
+    "iterations_total": 503645,
+    "pivots_since_refresh": 0,
+    "refresh_counter_before_reset": 200,
+    "phase1_pending": false,
+    "basis_artificial_count": 0,
+    "current_B_reconstructable": true,
+    "snapshot_complete": true,
+    "refresh_completed": true,
+    "violations": [
+      {
+        "row": 74,
+        "basis_col": 52,
+        "lb": 0.0,
+        "phase2_ub": 1.0,
+        "pre_refresh": 0.9999999992834974,
+        "post_refresh": 1.0000008235908044
+      }
+    ]
+  },
+  {
+    "call_id": 17153,
+    "attempt": 1,
+    "site": "phase2_post_refresh",
+    "iter_call": 400,
+    "iterations_total": 503845,
+    "pivots_since_refresh": 0,
+    "refresh_counter_before_reset": 200,
+    "phase1_pending": false,
+    "basis_artificial_count": 0,
+    "current_B_reconstructable": true,
+    "snapshot_complete": true,
+    "refresh_completed": true,
+    "violations": [
+      {
+        "row": 74,
+        "basis_col": 52,
+        "lb": 0.0,
+        "phase2_ub": 1.0,
+        "pre_refresh": 0.9999999992834974,
+        "post_refresh": 1.0000008235908044
+      }
+    ]
+  }
+]
