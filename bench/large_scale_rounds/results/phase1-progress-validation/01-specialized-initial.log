@@ -1,0 +1,16 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-phase1-progress-diagnostic/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.99s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-b57412eeaa1eb9b6)
+
+running 8 tests
+test simplex::phase1_progress_diagnostics::tests::nonfinite_and_negative_zero_json_preserve_exact_bits ... ok
+test simplex::phase1_progress_diagnostics::tests::source_budget_omits_before_clone_and_reports_it ... ok
+test simplex::phase1_progress_diagnostics::tests::first_candidate_pricing_is_explicitly_same_state_and_old_error_is_not_terminal_reason ... ok
+test simplex::phase1_progress_diagnostics::tests::first_candidate_and_reset_do_not_capture_later_clones ... ok
+test simplex::phase1_progress_diagnostics::tests::injected_negative_entry_evidence_is_not_cleaned_away ... ok
+test simplex::phase1_progress_diagnostics::tests::former_negative_counterexample_now_keeps_infeasibility_proof ... ok
+test simplex::phase1_progress_diagnostics::tests::runtime_disabled_and_enabled_keep_public_fixed_limit_results ... ok
+test simplex::phase1_progress_diagnostics::tests::event_and_snapshot_truncation_are_visible_without_fabricating_values ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 474 filtered out; finished in 0.04s
+

@@ -36,6 +36,13 @@ risk_pivot_refresh = []
 # 首次LU失败的基/换基证据捕获；只供显式诊断，不改变算法和默认路径。
 lu_failure_diagnostics = []
 
+# 首个实际第一阶段的有界只读诊断，默认不编译。
+phase1_progress_diagnostics = []
+
 [[example]]
 name = "lu_failure_probe"
 required-features = ["lu_failure_diagnostics"]
+
+[[example]]
+name = "phase1_progress_probe"
+required-features = ["phase1_progress_diagnostics"]

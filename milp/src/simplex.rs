@@ -90,6 +90,10 @@
 //!   映射为 `LpStatus::IterationLimit`（objective=NaN，绝不冒充 Optimal），
 //!   失败原因记入私有字段 `numerical_error` 供调试。
 
+#[cfg(feature = "phase1_progress_diagnostics")]
+#[path = "phase1_progress_diagnostics.rs"]
+pub mod phase1_progress_diagnostics;
+
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, Sense, Tolerances};
 
@@ -372,6 +376,8 @@ pub struct LpSolution {
 /// 成本最低且正确性最直白的机制）。
 #[derive(Clone)]
 pub struct Simplex {
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    diagnostic_source_id: u64,
     /// 容差集中配置。
     tol: Tolerances,
     /// 结构变量数 n。
@@ -627,6 +633,8 @@ impl Simplex {
         }
 
         let mut s = Simplex {
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            diagnostic_source_id: phase1_progress_diagnostics::register_source(problem),
             tol,
             num_structural: n,
             num_constraints: problem.constraints.len(),
@@ -1858,6 +1866,8 @@ impl Simplex {
     /// 翻转个别 ±0.0 符号位）。binv 保持稠密 zip 消元——诚实边界：这是混合
     /// 表格不是修正单纯形，目标域是 1e3–1e4 行入场券，不是百万变量。
     fn do_pivot(&mut self, q: usize, r: usize, delta: f64, t: f64, hit_upper: bool) {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         if self.nz_enabled {
             self.do_pivot_nz(q, r, delta, t, hit_upper);
             return;
@@ -2153,6 +2163,8 @@ impl Simplex {
     /// 执行入基变量自身界翻转（基不变）：非基值移动 Δ = ±(ub−lb) 并按
     /// B⁻¹A_q 传播全部基变量值。
     fn do_flip(&mut self, q: usize, delta: f64, t: f64) {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         let (lb, ub) = self.col_bounds(q);
         let old_v = if delta > 0.0 { lb } else { ub };
         let new_v = if delta > 0.0 { ub } else { lb };
@@ -2209,6 +2221,11 @@ impl Simplex {
             if check_initial_values {
                 check_initial_values = false;
                 if let Err(msg) = self.check_phase_basic_values(phase) {
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                if phase == 1 {
+                    phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+                    self.diagnostic_observe("failure");
+                }
                     return PhaseOutcome::Failed(msg);
                 }
             }
@@ -2216,8 +2233,20 @@ impl Simplex {
             // 尾部释放检查读取的是本步结果——初始值语法上必需但语义上不达。
             #[allow(unused_assignments)]
             let mut t_nondegenerate = false;
-            let (q, delta) = match self.price(phase) {
-                Pricing::Failed(msg) => return PhaseOutcome::Failed(msg),
+            let pricing = self.price(phase);
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            if phase == 1 {
+                self.diagnostic_pricing(&pricing);
+            }
+            let (q, delta) = match pricing {
+                Pricing::Failed(msg) => {
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    if phase == 1 {
+                        phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+                        self.diagnostic_observe("failure");
+                    }
+                    return PhaseOutcome::Failed(msg);
+                }
                 Pricing::Optimal => return PhaseOutcome::Optimal,
                 Pricing::Candidate(q, delta) => (q, delta),
             };
@@ -2226,7 +2255,14 @@ impl Simplex {
                 self.matrix[0][q] = value;
             }
             match self.ratio_test(q, delta, phase) {
-                Step::FilteredBlock(msg) => return PhaseOutcome::Failed(msg),
+                Step::FilteredBlock(msg) => {
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    if phase == 1 {
+                        phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+                        self.diagnostic_observe("failure");
+                    }
+                    return PhaseOutcome::Failed(msg);
+                }
                 Step::NoBlock => {
                     if phase == 2 {
                         return PhaseOutcome::Unbounded;
@@ -2263,7 +2299,16 @@ impl Simplex {
                 }
             }
             if let Err(msg) = self.check_phase_basic_values(phase) {
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                if phase == 1 {
+                    phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+                    self.diagnostic_observe("failure");
+                }
                 return PhaseOutcome::Failed(msg);
+            }
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            if phase == 1 {
+                self.diagnostic_observe("step");
             }
             if self.iter_call > bland_total && self.degenerate_streak > 0 {
                 // 总迭代触发 + 停滞证据门（W4）：iter_call > 3×(m+n) 且最近
@@ -2328,6 +2373,8 @@ impl Simplex {
 
     /// 用原始数据重算 B⁻¹b（x_B = B⁻¹(b̂ − Σ_非基 Â_j·x_j)），抑制漂移。
     fn refresh_values(&mut self) -> std::result::Result<(), String> {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         let m = self.basis.len();
         let n = self.num_structural;
         // 非基结构列取值（非基松弛/人工列恒贴 0，无贡献）。
@@ -2356,11 +2403,120 @@ impl Simplex {
                 }
             }
             if !acc.is_finite() {
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                phase1_progress_diagnostics::failed_refresh(self.diagnostic_owner(), i, acc);
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                self.diagnostic_observe("partial_refresh");
                 return Err("B⁻¹b 重算出现 NaN/Inf".to_string());
             }
             self.rhs[i] = acc;
         }
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        self.diagnostic_observe("refresh_complete");
         Ok(())
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_owner(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_view(&self) -> phase1_progress_diagnostics::View<'_> {
+        phase1_progress_diagnostics::View {
+            n: self.num_structural,
+            ncs: self.ncols_static(),
+            basis: &self.basis,
+            xb: &self.rhs,
+            in_basis: &self.in_basis,
+            at_upper: &self.at_upper,
+            bounds: &self.bounds,
+            iterations: self.iterations_total,
+            call_iterations: self.iter_call,
+            eta: 0,
+            bland: self.bland,
+            feasibility: self.tol.feasibility,
+            broken: false,
+        }
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_begin(&self) -> phase1_progress_diagnostics::Scope {
+        let scope = phase1_progress_diagnostics::begin(
+            self.diagnostic_owner(),
+            self.diagnostic_source_id,
+            "Dense",
+            phase1_progress_diagnostics::MatrixView {
+                tolerances: self.tol,
+                n: self.num_structural,
+                ncs: self.ncols_static(),
+                terms: &self.row_terms,
+                rhs: &self.row_rhs,
+                op: &self.row_op,
+                scale: &self.row_scale,
+                slack: &self.row_slack,
+                constraint_row: &self.constraint_row,
+                cut_row: &self.cut_row,
+                art: None,
+                dense_initial: Some((&self.basis, &self.binv)),
+                art_count: self.num_art,
+            },
+        );
+        self.diagnostic_observe("entry");
+        self.diagnostic_observe("step");
+        scope
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_observe(&self, kind: &'static str) {
+        phase1_progress_diagnostics::observe(
+            self.diagnostic_owner(),
+            kind,
+            self.diagnostic_view(),
+            None,
+        );
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_pricing(&self, pricing: &Pricing) {
+        let value = match pricing {
+            Pricing::Candidate(q, delta) => phase1_progress_diagnostics::Pricing {
+                kind: "candidate",
+                column: Some(*q),
+                direction: Some(*delta),
+                ..Default::default()
+            },
+            Pricing::Optimal => phase1_progress_diagnostics::Pricing {
+                kind: "optimal",
+                ..Default::default()
+            },
+            Pricing::Failed(_) => phase1_progress_diagnostics::Pricing {
+                kind: "failed",
+                ..Default::default()
+            },
+        };
+        phase1_progress_diagnostics::pricing(self.diagnostic_owner(), value, self.bland);
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_end(&self, status: LpStatus) {
+        if matches!(
+            status,
+            LpStatus::IterationLimit | LpStatus::TimeLimit | LpStatus::Unbounded
+        ) {
+            self.diagnostic_observe("failure");
+        }
+        self.diagnostic_observe("terminal");
+        phase1_progress_diagnostics::finish(
+            self.diagnostic_owner(),
+            match status {
+                LpStatus::Optimal => "phase1_cleaned",
+                LpStatus::Infeasible => "infeasible",
+                LpStatus::Unbounded => "unbounded",
+                LpStatus::IterationLimit => "iteration_or_numerical_limit",
+                LpStatus::TimeLimit => "time_limit",
+            },
+        );
     }
 
     /// 两阶段编排：必要时 Phase-1 → 清理人工变量 → Phase-2。
@@ -2375,14 +2531,22 @@ impl Simplex {
 
     fn run_two_phase_with_limit(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
         if phase1_needed && self.num_art > 0 {
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            let _diagnostic_scope = self.diagnostic_begin();
             match self.run_phase(1, work) {
                 PhaseOutcome::Failed(msg) => {
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some(&msg));
                     self.numerical_error = Some(msg);
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::LimitReached => {
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::TimedOut => {
@@ -2390,19 +2554,29 @@ impl Simplex {
                     // ⇒ 下次 resolve 需重跑 Phase-1），但状态码独立——调用方
                     // （含割循环 R8 回滚判定）不把它当迭代上限处理。
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::TimeLimit);
                     return LpStatus::TimeLimit;
                 }
                 PhaseOutcome::Unbounded => {
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some("Phase-1 出现无界方向（数学上不可能）"));
                     self.numerical_error = Some("Phase-1 出现无界方向（数学上不可能）".to_string());
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::Optimal => {
                     let infeasibility = match self.phase1_infeasibility() {
                         Ok(value) => value,
                         Err(msg) => {
+                            #[cfg(feature = "phase1_progress_diagnostics")]
+                            phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some(&msg));
                             self.numerical_error = Some(msg);
                             self.phase1_pending = true;
+                            #[cfg(feature = "phase1_progress_diagnostics")]
+                            self.diagnostic_end(LpStatus::IterationLimit);
                             return LpStatus::IterationLimit;
                         }
                     };
@@ -2411,13 +2585,21 @@ impl Simplex {
                         // 但 snap 传播可能把基值推到容差内，必须记账强制
                         // 下一次 resolve 重跑 Phase-1。
                         self.phase1_pending = true;
+                        #[cfg(feature = "phase1_progress_diagnostics")]
+                        self.diagnostic_end(LpStatus::Infeasible);
                         return LpStatus::Infeasible;
                     }
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_observe("before_cleanup");
                     if let Err(st) = self.cleanup_after_phase1(work) {
                         self.phase1_pending = true;
+                        #[cfg(feature = "phase1_progress_diagnostics")]
+                        self.diagnostic_end(st);
                         return st;
                     }
                     self.phase1_pending = false;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::Optimal);
                 }
             }
         }
@@ -2491,8 +2673,12 @@ impl Simplex {
             // 清理换基可能改变后续基本值，逐行置零前重查清理前提。
             if !self.rhs[i].is_finite() || self.rhs[i].abs() > self.tol.feasibility {
                 self.numerical_error = Some(format!("Phase-1 清理行 {i} 人工变量超出零值容差"));
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                phase1_progress_diagnostics::detail(self.diagnostic_owner(), self.numerical_error.as_deref());
                 return Err(LpStatus::IterationLimit);
             }
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
             self.rhs[i] = 0.0;
             let mut pick = usize::MAX;
             for j in 0..ncs {
@@ -2515,6 +2701,8 @@ impl Simplex {
         for (i, &j) in self.basis.iter().enumerate() {
             if j >= ncs && (!self.rhs[i].is_finite() || self.rhs[i].abs() > self.tol.feasibility) {
                 self.numerical_error = Some(format!("Phase-1 清理结束行 {i} 人工变量超出零值容差"));
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                phase1_progress_diagnostics::detail(self.diagnostic_owner(), self.numerical_error.as_deref());
                 return Err(LpStatus::IterationLimit);
             }
         }

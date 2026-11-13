@@ -185,6 +185,9 @@ pub mod cost_profile {
     }
 }
 
+#[cfg(feature = "phase1_progress_diagnostics")]
+use crate::simplex::phase1_progress_diagnostics;
+
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, Sense, Tolerances};
 use crate::simplex::{
@@ -1666,6 +1669,8 @@ pub struct RowProductStats {
 /// 的等价物，S3 接 B&B 时复用；比稠密表格克隆更便宜）。
 #[derive(Clone)]
 pub struct SparseSimplex {
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    diagnostic_source_id: u64,
     tol: Tolerances,
     num_structural: usize,
     num_constraints: usize,
@@ -1853,6 +1858,8 @@ impl SparseSimplex {
         }
 
         let mut s = SparseSimplex {
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            diagnostic_source_id: phase1_progress_diagnostics::register_source(problem),
             tol,
             num_structural: n,
             num_constraints: problem.constraints.len(),
@@ -3035,6 +3042,8 @@ impl SparseSimplex {
     ///（零填充消元），多元素列按 (nnz 升序, 基位置升序) 排后——LP 基的
     /// 三角形部分先行、结构性内核的规模与 fill 大降（确定性排序）。
     fn refactor(&mut self) -> std::result::Result<(), String> {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         #[cfg(feature = "sparse_profile")]
         let _cost_guard = cost_profile::enter(0);
         let m = self.basis.len();
@@ -3091,6 +3100,10 @@ impl SparseSimplex {
         if let Err(error) = factorized {
             #[cfg(feature = "lu_failure_diagnostics")]
             self.capture_lu_failure(&error, &order);
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &error.message);
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            self.diagnostic_observe("failure");
             return Err(error.message);
         }
         self.lu.col_perm = order;
@@ -3121,6 +3134,19 @@ impl SparseSimplex {
         }
         for v in xb.iter() {
             if !v.is_finite() {
+                #[cfg(feature = "phase1_progress_diagnostics")]
+                {
+                    phase1_progress_diagnostics::failure_reason(
+                        self.diagnostic_owner(),
+                        "x_B 重算出现 NaN/Inf",
+                    );
+                    phase1_progress_diagnostics::observe(
+                        self.diagnostic_owner(),
+                        "failed_recompute",
+                        self.diagnostic_view(),
+                        Some(&xb),
+                    );
+                }
                 self.lu = LuFactors::default();
                 self.etas.clear();
                 return Err("x_B 重算出现 NaN/Inf".to_string());
@@ -3136,6 +3162,8 @@ impl SparseSimplex {
             self.lu_trace.pivots.clear();
             self.lu_trace.alpha_matches_last_pivot = false;
         }
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        self.diagnostic_observe("refactor_complete");
         Ok(())
     }
 
@@ -3982,6 +4010,8 @@ impl SparseSimplex {
         t: f64,
         hit_upper: bool,
     ) -> std::result::Result<(), String> {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         #[cfg(feature = "sparse_profile")]
         let _cost_guard = cost_profile::enter(3);
         let m = self.basis.len();
@@ -4045,6 +4075,8 @@ impl SparseSimplex {
 
     /// 界翻转（基不变）：非基值移动 Δ = ±(ub−lb) 并按 α 传播。
     fn do_flip(&mut self, q: usize, delta: f64, t: f64) {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         let (lb, ub) = self.col_bounds(q);
         let old_v = if delta > 0.0 { lb } else { ub };
         let new_v = if delta > 0.0 { ub } else { lb };
@@ -4064,6 +4096,109 @@ impl SparseSimplex {
 
     // ---- 内部：阶段循环 ----
 
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_owner(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_view(&self) -> phase1_progress_diagnostics::View<'_> {
+        phase1_progress_diagnostics::View {
+            n: self.num_structural,
+            ncs: self.ncols_static(),
+            basis: &self.basis,
+            xb: &self.x_b,
+            in_basis: &self.in_basis,
+            at_upper: &self.at_upper,
+            bounds: &self.bounds,
+            iterations: self.iterations_total,
+            call_iterations: self.iter_call,
+            eta: self.etas.len(),
+            bland: self.bland,
+            feasibility: self.tol.feasibility,
+            broken: self.factorization_broken,
+        }
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_begin(&self) -> phase1_progress_diagnostics::Scope {
+        let scope = phase1_progress_diagnostics::begin(
+            self.diagnostic_owner(),
+            self.diagnostic_source_id,
+            "Revised",
+            phase1_progress_diagnostics::MatrixView {
+                tolerances: self.tol,
+                n: self.num_structural,
+                ncs: self.ncols_static(),
+                terms: &self.row_terms,
+                rhs: &self.row_rhs,
+                op: &self.row_op,
+                scale: &self.row_scale,
+                slack: &self.row_slack,
+                constraint_row: &self.constraint_row,
+                cut_row: &self.cut_row,
+                art: Some(&self.art_info),
+                dense_initial: None,
+                art_count: self.num_art,
+            },
+        );
+        self.diagnostic_observe("entry");
+        self.diagnostic_observe("step");
+        scope
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_observe(&self, kind: &'static str) {
+        phase1_progress_diagnostics::observe(
+            self.diagnostic_owner(),
+            kind,
+            self.diagnostic_view(),
+            None,
+        );
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_pricing(&self, pricing: &Pricing) {
+        let value = match pricing {
+            Pricing::Candidate(q, delta) => phase1_progress_diagnostics::Pricing {
+                kind: "candidate",
+                column: Some(*q),
+                direction: Some(*delta),
+                ..Default::default()
+            },
+            Pricing::Optimal => phase1_progress_diagnostics::Pricing {
+                kind: "optimal",
+                ..Default::default()
+            },
+            Pricing::Failed(_) => phase1_progress_diagnostics::Pricing {
+                kind: "failed",
+                ..Default::default()
+            },
+        };
+        phase1_progress_diagnostics::pricing(self.diagnostic_owner(), value, self.bland);
+    }
+
+    #[cfg(feature = "phase1_progress_diagnostics")]
+    fn diagnostic_end(&self, status: LpStatus) {
+        if matches!(
+            status,
+            LpStatus::IterationLimit | LpStatus::TimeLimit | LpStatus::Unbounded
+        ) {
+            self.diagnostic_observe("failure");
+        }
+        self.diagnostic_observe("terminal");
+        phase1_progress_diagnostics::finish(
+            self.diagnostic_owner(),
+            match status {
+                LpStatus::Optimal => "phase1_cleaned",
+                LpStatus::Infeasible => "infeasible",
+                LpStatus::Unbounded => "unbounded",
+                LpStatus::IterationLimit => "iteration_or_numerical_limit",
+                LpStatus::TimeLimit => "time_limit",
+            },
+        );
+    }
+
     fn run_two_phase(&mut self, phase1_needed: bool) -> LpStatus {
         self.run_two_phase_with_limit(phase1_needed, &mut LpWorkLimit::unlimited())
     }
@@ -4076,26 +4211,40 @@ impl SparseSimplex {
             return LpStatus::IterationLimit;
         }
         if phase1_needed && self.num_art > 0 {
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            let _diagnostic_scope = self.diagnostic_begin();
             match self.run_phase_with_limit(1, work) {
                 PhaseOutcome::Failed(msg) => {
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some(&msg));
                     self.numerical_error = Some(msg);
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::LimitReached => {
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::TimedOut => {
                     // 墙钟超限：与迭代上限同款记账（人工变量未清理），但
                     // 状态码独立——W2/R8 不把墙钟超限当迭代上限处理。
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::TimeLimit);
                     return LpStatus::TimeLimit;
                 }
                 PhaseOutcome::Unbounded => {
                     self.numerical_error =
                         Some("Phase-1 出现无界方向（数学上不可能）".to_string());
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some("Phase-1 出现无界方向（数学上不可能）"));
                     self.phase1_pending = true;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::IterationLimit);
                     return LpStatus::IterationLimit;
                 }
                 PhaseOutcome::Retry => {
@@ -4105,8 +4254,12 @@ impl SparseSimplex {
                     let infeasibility = match self.phase1_infeasibility() {
                         Ok(value) => value,
                         Err(msg) => {
+                            #[cfg(feature = "phase1_progress_diagnostics")]
+                            phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some(&msg));
                             self.numerical_error = Some(msg);
                             self.phase1_pending = true;
+                            #[cfg(feature = "phase1_progress_diagnostics")]
+                            self.diagnostic_end(LpStatus::IterationLimit);
                             return LpStatus::IterationLimit;
                         }
                     };
@@ -4114,19 +4267,30 @@ impl SparseSimplex {
                         // 人工变量带正值留基未清理：状态不可供后续 resolve
                         // 直接跑 Phase-2，记账强制下一次 resolve 重跑。
                         self.phase1_pending = true;
+                        #[cfg(feature = "phase1_progress_diagnostics")]
+                        self.diagnostic_end(LpStatus::Infeasible);
                         return LpStatus::Infeasible;
                     }
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_observe("before_cleanup");
                     if let Err(failure) = self.cleanup_after_phase1(work) {
                         self.phase1_pending = true;
-                        return match failure {
+                        let status = match failure {
                             CleanupFailure::Stopped(st) => st,
                             CleanupFailure::Numerical(msg) => {
+                                #[cfg(feature = "phase1_progress_diagnostics")]
+                                phase1_progress_diagnostics::detail(self.diagnostic_owner(), Some(&msg));
                                 self.numerical_error = Some(msg);
                                 LpStatus::IterationLimit
                             }
                         };
+                        #[cfg(feature = "phase1_progress_diagnostics")]
+                        self.diagnostic_end(status);
+                        return status;
                     }
                     self.phase1_pending = false;
+                    #[cfg(feature = "phase1_progress_diagnostics")]
+                    self.diagnostic_end(LpStatus::Optimal);
                     // Devex：Phase-1 基演进（含清理期 t=0 主元）期间的权重
                     // 对 Phase-2 已失参考意义——切换点重置为当前非基集。
                     self.devex_reset();
@@ -4195,7 +4359,12 @@ impl SparseSimplex {
             }
             #[allow(unused_assignments)]
             let mut t_nondegenerate = false;
-            let (q, delta) = match self.price(phase) {
+            let pricing = self.price(phase);
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            if phase == 1 {
+                self.diagnostic_pricing(&pricing);
+            }
+            let (q, delta) = match pricing {
                 Pricing::Failed(msg) => {
                     if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                         return out;
@@ -4269,6 +4438,10 @@ impl SparseSimplex {
                 }
                 check_initial_values = true;
                 continue;
+            }
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            if phase == 1 {
+                self.diagnostic_observe("step");
             }
             if self.iter_call > bland_total && self.degenerate_streak > 0 {
                 self.bland = true;
@@ -4348,6 +4521,10 @@ impl SparseSimplex {
     /// Retry（外层 continue 重试本迭代；just_refactored 闸保证至多一次，
     /// 无循环）；刚重因子化仍异常 / 重因子化失败 ⇒ Failed。
     fn numerical_retry_or_fail(&mut self, msg: String, work: &mut LpWorkLimit<'_>) -> PhaseOutcome {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::failure_reason(self.diagnostic_owner(), &msg);
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        self.diagnostic_observe("failure");
         if let Some(st) = work.stop_status(self.time_deadline) {
             // 换基已经执行后才重构失败：不退工作步，不清除broken状态，
             // 也不在余额耗尽后偷偷开始另一轮重构。
@@ -4454,6 +4631,8 @@ impl SparseSimplex {
             if !self.x_b[i].is_finite() || self.x_b[i].abs() > self.tol.feasibility {
                 return Err(CleanupFailure::Numerical(format!("Phase-1 清理行 {i} 人工变量超出零值容差")));
             }
+            #[cfg(feature = "phase1_progress_diagnostics")]
+            phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
             self.x_b[i] = 0.0;
             let m = self.basis.len();
             let mut e = vec![0.0f64; m];
