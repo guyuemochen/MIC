@@ -1,0 +1,14 @@
+{
+  "source_commit": "11e1440cfb4b57c0a2d11b9887d3537d63598fdc",
+  "milp_tree": "413efde92c4403148dcfd189094b2ddbbba1d9d7",
+  "tree": "cb167300275abe78e8a037f88dc6f35a56e5b293",
+  "binary": "/tmp/mic-recovery-binaries/round_probe_default",
+  "binary_sha256": "56cf6961bf339d89b1c5525c4f8e7a1f83d53d9eedc60f8cca6bc3207ad42eec",
+  "features": [],
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ],
+  "build_log": "07-default-probe-build.log",
+  "build_log_sha256": "f2554f8031461178e569fbfa12221075e1d67b4b015d86de028ed6a25673e955"
+}

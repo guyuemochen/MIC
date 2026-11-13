@@ -1,0 +1,110 @@
+{
+  "performance_promotion_evidence": false,
+  "source_difference": {
+    "baseline": {
+      "commit": "ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4",
+      "milp_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+      "tree": "f2fb4aaaaa46036027e34861451786fa52bfb604",
+      "binary_sha256": "8fc4745aec9448bbe24e8da2e65207cbe7d45166acd03898dfe65a59f21f1522",
+      "default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "candidate": {
+      "commit": "11e1440cfb4b57c0a2d11b9887d3537d63598fdc",
+      "milp_tree": "413efde92c4403148dcfd189094b2ddbbba1d9d7",
+      "tree": "cb167300275abe78e8a037f88dc6f35a56e5b293",
+      "binary_sha256": "56cf6961bf339d89b1c5525c4f8e7a1f83d53d9eedc60f8cca6bc3207ad42eec",
+      "default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "milp_changes": [
+      "M\tmilp/Cargo.toml",
+      "A\tmilp/examples/phase1_progress_probe.rs",
+      "A\tmilp/examples/phase1_trajectory_probe.rs",
+      "A\tmilp/src/phase1_progress_diagnostics.rs",
+      "M\tmilp/src/simplex.rs",
+      "M\tmilp/src/simplex_sparse.rs"
+    ]
+  },
+  "case_order": [
+    "p0033",
+    "p0201",
+    "lseu"
+  ],
+  "baseline": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/safe-primal-ratio-default.jsonl",
+  "baseline_sha256": "302b1bf966aeb7c360592c941d2ea02cc156fada41beeabd059302a5b79fa493",
+  "external": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl",
+  "external_sha256": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292",
+  "cases": {
+    "p0033": {
+      "baseline_status": "optimal",
+      "status": "optimal",
+      "objective": 3089.0,
+      "bound": 3089.0,
+      "nodes": 634,
+      "lp_iterations": 26319,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": true,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    },
+    "p0201": {
+      "baseline_status": "limit_reached",
+      "status": "limit_reached",
+      "objective": 7615.0,
+      "bound": 7227.000000639117,
+      "nodes": 7395,
+      "lp_iterations": 946944,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": false,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    },
+    "lseu": {
+      "baseline_status": "limit_reached",
+      "status": "limit_reached",
+      "objective": 1120.0,
+      "bound": 1120.0,
+      "nodes": 49514,
+      "lp_iterations": 1562778,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": false,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    }
+  },
+  "correctness_passed": true,
+  "proofs_completed": 1,
+  "rss_passed": true
+}

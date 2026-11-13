@@ -1,0 +1,94 @@
+[
+  {
+    "log": "01-combined-debug.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--features",
+      "phase1_progress_diagnostics,root_heuristic_work_limit,proof_profile,root_snapshot_restore,risk_pivot_refresh,certified_row_fallback,lu_failure_diagnostics"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "02-combined-release-acceptance.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--features",
+      "phase1_progress_diagnostics,root_heuristic_work_limit,proof_profile,root_snapshot_restore,risk_pivot_refresh,certified_row_fallback,lu_failure_diagnostics",
+      "--test",
+      "acceptance",
+      "--",
+      "--include-ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "03-default-release-acceptance.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--test",
+      "acceptance",
+      "--",
+      "--include-ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "04-ffi.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp-ffi/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "05-ffi-build.log",
+    "command": [
+      "cargo",
+      "build",
+      "--release",
+      "--manifest-path",
+      "milp-ffi/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "06-python.log",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "micpython/tests",
+      "-t",
+      "."
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "07-default-probe-build.log",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--example",
+      "round_probe"
+    ],
+    "exit_code": 0
+  }
+]
