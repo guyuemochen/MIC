@@ -1,0 +1,239 @@
+{
+  "schema": 1,
+  "requested_threads": 1,
+  "single_thread_enabled": true,
+  "natural_optimal_calls": 188,
+  "anomalous_calls": 98,
+  "invalid_side_calls": 0,
+  "phase1_pending_calls": 0,
+  "augmented_available": 188,
+  "augmented_unavailable": 0,
+  "finite_dual_bounds": 169,
+  "infinite_box_dual_bounds": 19,
+  "invalid_dual_bounds": 0,
+  "dual_nonfinite_calls": 0,
+  "basis_stationarity_fixed_columns": 0,
+  "snapshot_budget_omitted": 0,
+  "later_anomalies_omitted": 94,
+  "snapshot_bytes": 7063695,
+  "metrics": {
+    "raw_bounds": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 9.358012975635432e-10
+    },
+    "reported_bounds": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    },
+    "raw_rows": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 8.990641564565749e-10
+    },
+    "reported_rows": {
+      "observed": 188,
+      "over_tolerance": 1,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": 104,
+      "last": 104,
+      "max_finite": 1.529708582026501e-09
+    },
+    "augmented_equations": {
+      "observed": 188,
+      "over_tolerance": 98,
+      "over_10_tolerance": 98,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": 88,
+      "last": 188,
+      "max_finite": 5.4912391078687506e-08
+    },
+    "basic_bounds": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 9.358012975635432e-10
+    },
+    "static_basis_stationarity": {
+      "observed": 188,
+      "over_tolerance": 95,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": 88,
+      "last": 188,
+      "max_finite": 1.7070078683900647e-09
+    },
+    "side_optimality": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 7.812559488229454e-10
+    },
+    "dual_gap_absolute": {
+      "observed": 169,
+      "over_tolerance": 90,
+      "over_10_tolerance": 90,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": 94,
+      "last": 184,
+      "max_finite": 2.598986611701548e-06
+    },
+    "dual_bound_above_primal": {
+      "observed": 169,
+      "over_tolerance": 2,
+      "over_10_tolerance": 2,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": 183,
+      "last": 184,
+      "max_finite": 2.598986611701548e-06
+    },
+    "reported_objective_consistency": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    },
+    "raw_reported_delta": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 9.358012975635432e-10
+    },
+    "invalid_nonbasic_side": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    },
+    "phase1_pending": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    },
+    "nonfinite_dual_data": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    },
+    "invalid_dual_bound_arithmetic": {
+      "observed": 188,
+      "over_tolerance": 0,
+      "over_10_tolerance": 0,
+      "nonfinite_calls": 0,
+      "nonfinite_values": 0,
+      "first": null,
+      "last": null,
+      "max_finite": 0.0
+    }
+  },
+  "sample_metadata": [
+    {
+      "optimal_ordinal": 88,
+      "anomaly_categories_mask": 80,
+      "iter_call": 1721,
+      "iterations_total": 4781,
+      "num_structural": 201,
+      "num_static": 399,
+      "num_art": 115,
+      "snapshot_complete": true,
+      "estimated_bytes": 4168120,
+      "augmented_reconstruction_available": true,
+      "internal_box_lower_bound_kind": "negative_infinity_from_box",
+      "basis_artificial_count": 0
+    },
+    {
+      "optimal_ordinal": 89,
+      "anomaly_categories_mask": 80,
+      "iter_call": 1721,
+      "iterations_total": 1721,
+      "num_structural": 201,
+      "num_static": 399,
+      "num_art": 115,
+      "snapshot_complete": true,
+      "estimated_bytes": 4168120,
+      "augmented_reconstruction_available": true,
+      "internal_box_lower_bound_kind": "negative_infinity_from_box",
+      "basis_artificial_count": 0
+    },
+    {
+      "optimal_ordinal": 90,
+      "anomaly_categories_mask": 80,
+      "iter_call": 0,
+      "iterations_total": 1721,
+      "num_structural": 201,
+      "num_static": 399,
+      "num_art": 115,
+      "snapshot_complete": true,
+      "estimated_bytes": 4168120,
+      "augmented_reconstruction_available": true,
+      "internal_box_lower_bound_kind": "negative_infinity_from_box",
+      "basis_artificial_count": 0
+    },
+    {
+      "optimal_ordinal": 91,
+      "anomaly_categories_mask": 80,
+      "iter_call": 3,
+      "iterations_total": 1724,
+      "num_structural": 201,
+      "num_static": 399,
+      "num_art": 115,
+      "snapshot_complete": true,
+      "estimated_bytes": 4168120,
+      "augmented_reconstruction_available": true,
+      "internal_box_lower_bound_kind": "negative_infinity_from_box",
+      "basis_artificial_count": 0
+    }
+  ]
+}

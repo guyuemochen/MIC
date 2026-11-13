@@ -1,0 +1,30 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-failure-profile/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.62s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-8d9cf2cc8628642c)
+
+running 4 tests
+test simplex::dense_optimal_profile::tests::snapshot_estimate_checks_overflow_before_large_allocations ... ok
+test simplex::dense_optimal_profile::tests::clone_does_not_rollback_counts_and_final_downgrades_are_excluded ... ok
+test simplex::dense_optimal_profile::tests::natural_min_max_offset_outputs_are_unchanged ... ok
+test simplex::dense_optimal_profile::tests::synthetic_row_corruption_is_sampled_without_changing_return_or_growing_unbounded ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 501 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-61a420f144ac8c92)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-ea4114de4e10f525)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-3983c098162a9457)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

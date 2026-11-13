@@ -1,0 +1,438 @@
+diff --git a/milp/examples/round_probe.rs b/milp/examples/round_probe.rs
+index 7db2597..c742edb 100644
+--- a/milp/examples/round_probe.rs
++++ b/milp/examples/round_probe.rs
+@@ -165,6 +165,8 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
+     }
+     #[cfg(feature = "proof_profile")]
+     milp::proof_profile::reset(ctrl.threads);
++    #[cfg(feature = "proof_profile")]
++    milp::simplex::dense_optimal_profile::reset(ctrl.threads);
+     let start = Instant::now();
+     let result = solve_controlled(problem, &opts, &ctrl, None)?;
+     let elapsed = start.elapsed().as_secs_f64();
+@@ -201,6 +203,8 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
+     {
+         write!(out, ",\"proof_profile\":")?;
+         milp::proof_profile::take().write_json(out)?;
++        write!(out, ",\"dense_optimal_profile\":")?;
++        milp::simplex::dense_optimal_profile::take().write_json(out)?;
+     }
+     let prop = stats.propagation;
+     write!(out, ",\"prop_accepted_rows\":{},\"prop_skipped_rows\":{},\"prop_calls\":{},\"prop_row_visits\":{},\"prop_term_visits\":{},\"prop_fixes\":{},\"prop_conflicts\":{}",
+diff --git a/milp/src/dense_optimal_profile.rs b/milp/src/dense_optimal_profile.rs
+new file mode 100644
+index 0000000..ca7abb3
+--- /dev/null
++++ b/milp/src/dense_optimal_profile.rs
+@@ -0,0 +1,386 @@
++//! 独立分支的自然Optimal出口只读诊断，不参与求解或状态判定。
++//! 只接受显式单线程reset；全部调用只累加标量，前四个异常可保存有界快照。
++use super::{RelOp, Simplex};
++use std::cell::RefCell;
++use std::fmt::Write as FmtWrite;
++use std::io::{self, Write};
++
++const SNAPSHOTS: usize = 4;
++const SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
++const TOTAL_BYTES: usize = 32 * 1024 * 1024;
++const NAMES: [&str; 16] = ["raw_bounds", "reported_bounds", "raw_rows", "reported_rows",
++    "augmented_equations", "basic_bounds", "static_basis_stationarity", "side_optimality",
++    "dual_gap_absolute", "dual_bound_above_primal", "reported_objective_consistency", "raw_reported_delta", "invalid_nonbasic_side", "phase1_pending", "nonfinite_dual_data", "invalid_dual_bound_arithmetic"];
++
++#[derive(Default, Clone, Copy)]
++struct Scan { max: f64, nonfinite: u64 }
++impl Scan {
++    fn add(&mut self, value: f64) {
++        if value.is_finite() { self.max = self.max.max(value); }
++        else { self.nonfinite += 1; }
++    }
++    fn bounds(&mut self, value: f64, lb: f64, ub: f64) {
++        if !value.is_finite() || lb.is_nan() || ub.is_nan() || lb == f64::INFINITY || ub == f64::NEG_INFINITY { self.nonfinite += 1; return; }
++        if lb.is_finite() { self.add(lb - value); }
++        if ub.is_finite() { self.add(value - ub); }
++    }
++}
++#[derive(Default)]
++struct Metric {
++    observed: u64, over_tolerance: u64, over_10_tolerance: u64,
++    nonfinite_calls: u64, nonfinite_values: u64, first: Option<u64>, last: Option<u64>, max_finite: f64,
++}
++impl Metric {
++    fn add(&mut self, scan: Scan, tolerance: f64, ordinal: u64) -> bool {
++        self.observed += 1;
++        self.max_finite = self.max_finite.max(scan.max);
++        self.nonfinite_values += scan.nonfinite;
++        if scan.nonfinite > 0 { self.nonfinite_calls += 1; }
++        if scan.max > tolerance { self.over_tolerance += 1; }
++        if scan.max > 10.0 * tolerance { self.over_10_tolerance += 1; }
++        let abnormal = scan.nonfinite > 0 || scan.max > tolerance;
++        if abnormal { self.first.get_or_insert(ordinal); self.last = Some(ordinal); }
++        abnormal
++    }
++}
++
++#[derive(Default)]
++pub struct Trace {
++    enabled: bool, requested_threads: usize, optimal_calls: u64, anomalous_calls: u64,
++    invalid_side_calls: u64, phase1_pending_calls: u64,
++    augmented_available: u64, augmented_unavailable: u64,
++    finite_dual_bounds: u64, infinite_box_dual_bounds: u64, invalid_dual_bounds: u64,
++    dual_nonfinite_calls: u64, basis_stationarity_fixed_columns: u64,
++    metrics: [Metric; 16], samples: Vec<String>, sampled_anomalies: usize,
++    snapshot_budget_omitted: usize, later_anomalies_omitted: u64, snapshot_bytes: usize,
++}
++thread_local! { static TRACE: RefCell<Trace> = RefCell::new(Trace::default()); }
++pub fn reset(requested_threads: usize) {
++    TRACE.with(|trace| *trace.borrow_mut() = Trace { enabled: requested_threads == 1, requested_threads, ..Default::default() });
++}
++pub fn take() -> Trace { TRACE.with(|trace| std::mem::take(&mut *trace.borrow_mut())) }
++
++fn row_violation(s: &Simplex, x: &[f64]) -> Scan {
++    let mut scan = Scan::default();
++    for (i, row) in s.row_terms.iter().enumerate() {
++        let value = row.iter().map(|&(j, a)| a * x[j]).sum::<f64>();
++        let residual = value - s.row_rhs[i];
++        scan.add(match s.row_op[i] { RelOp::Le => residual, RelOp::Ge => -residual, RelOp::Eq => residual.abs() });
++    }
++    scan
++}
++
++pub(super) fn observe(s: &Simplex, reported: &[f64], objective: f64, y: &[f64], duals: &[f64]) {
++    TRACE.with(|trace| {
++        let mut trace = trace.borrow_mut();
++        if !trace.enabled { return; }
++        trace.optimal_calls += 1;
++        let ordinal = trace.optimal_calls;
++        let n = s.num_structural;
++        let ncs = s.ncols_static();
++        let ncols = ncs + s.num_art;
++        let mut values = vec![f64::NAN; ncols];
++        let mut invalid_sides = 0;
++        for j in 0..ncols {
++            if !s.in_basis[j] {
++                if j >= n && s.at_upper[j] { invalid_sides += 1; }
++                values[j] = s.nonbasic_value(j);
++            }
++        }
++        for (i, &j) in s.basis.iter().enumerate() { values[j] = s.rhs[i]; }
++        let raw = &values[..n];
++        let mut scans = [Scan::default(); 16];
++        for j in 0..n {
++            scans[0].bounds(raw[j], s.bounds.lb[j], s.bounds.ub[j]);
++            scans[1].bounds(reported[j], s.bounds.lb[j], s.bounds.ub[j]);
++            scans[11].add((raw[j] - reported[j]).abs());
++        }
++        scans[2] = row_violation(s, raw);
++        scans[3] = row_violation(s, reported);
++        for (i, &j) in s.basis.iter().enumerate() {
++            let (lb, ub) = if j >= ncs { (0.0, 0.0) } else { s.col_bounds(j) };
++            scans[5].bounds(s.rhs[i], lb, ub);
++        }
++        // 非零人工缺原列映射时不能伪造增广等式；精确零人工无贡献。
++        let augmented_available = invalid_sides == 0 && values[ncs..].iter().all(|&value| value == 0.0);
++        if augmented_available {
++            trace.augmented_available += 1;
++            for (i, row) in s.row_terms.iter().enumerate() {
++                let mut value = row.iter().map(|&(j, a)| a * raw[j]).sum::<f64>();
++                if let Some(j) = s.row_slack[i] { value += s.layout.slack[j - n].sign * values[j]; }
++                scans[4].add((value - s.row_rhs[i]).abs());
++            }
++        } else { trace.augmented_unavailable += 1; }
++        // 复用本次真正返回的内部y，按原列重算r；不读取表格检验数缓存。
++        let mut reduced = vec![0.0; ncs];
++        reduced[..n].copy_from_slice(&s.c_internal);
++        for (i, row) in s.row_terms.iter().enumerate() {
++            for &(j, a) in row { reduced[j] -= a * y[i]; }
++            if let Some(j) = s.row_slack[i] { reduced[j] -= s.layout.slack[j - n].sign * y[i]; }
++        }
++        let dual_nonfinite = y.iter().chain(reduced.iter()).any(|v| !v.is_finite());
++        if dual_nonfinite { trace.dual_nonfinite_calls += 1; }
++        for j in 0..ncs {
++            let (lb, ub) = s.col_bounds(j);
++            if s.in_basis[j] {
++                scans[6].add(reduced[j].abs());
++                if lb == ub && reduced[j].abs() > s.tol.optimality { trace.basis_stationarity_fixed_columns += 1; }
++            } else if lb != ub {
++                scans[7].add(if s.at_upper[j] { reduced[j] } else { -reduced[j] });
++            }
++        }
++        let internal_offset = if s.sense_max { -s.obj_offset } else { s.obj_offset };
++        let reported_internal = if s.sense_max { -objective } else { objective };
++        let reported_recomputed = s.c_internal.iter().zip(reported).map(|(&c, &v)| c * v).sum::<f64>() + internal_offset;
++        scans[10].add((reported_recomputed - reported_internal).abs());
++        let raw_internal = s.c_internal.iter().zip(raw).map(|(&c, &v)| c * v).sum::<f64>() + internal_offset;
++        let mut bound = y.iter().zip(&s.row_rhs).map(|(&yi, &b)| yi * b).sum::<f64>() + internal_offset;
++        let mut invalid_bound = dual_nonfinite || !bound.is_finite();
++        let mut infinite_box = false;
++        for j in 0..ncs {
++            let r = reduced[j];
++            if !r.is_finite() { invalid_bound = true; continue; }
++            if r == 0.0 { continue; }
++            let (lb, ub) = s.col_bounds(j);
++            let endpoint = if r > 0.0 { lb } else { ub };
++            if endpoint.is_infinite() {
++                if r * endpoint == f64::NEG_INFINITY { infinite_box = true; }
++                else { invalid_bound = true; }
++            } else {
++                let contribution = r * endpoint;
++                bound += contribution;
++                if !contribution.is_finite() || !bound.is_finite() { invalid_bound = true; }
++            }
++        }
++        let bound_kind = if invalid_bound {
++            trace.invalid_dual_bounds += 1; "invalid_arithmetic"
++        } else if infinite_box {
++            trace.infinite_box_dual_bounds += 1; bound = f64::NEG_INFINITY; "negative_infinity_from_box"
++        } else {
++            trace.finite_dual_bounds += 1;
++            scans[8].add((reported_internal - bound).abs());
++            scans[9].add(bound - reported_internal);
++            "finite"
++        };
++        scans[12].add(invalid_sides as f64);
++        scans[13].add(f64::from(u8::from(s.phase1_pending)));
++        scans[14].nonfinite = y.iter().chain(reduced.iter()).filter(|v| !v.is_finite()).count() as u64;
++        scans[15].nonfinite = u64::from(invalid_bound);
++        let mut anomalous = invalid_sides > 0 || s.phase1_pending || dual_nonfinite || invalid_bound;
++        if invalid_sides > 0 { trace.invalid_side_calls += 1; }
++        if s.phase1_pending { trace.phase1_pending_calls += 1; }
++        let mut anomaly_mask = 0u64;
++        for k in 0..NAMES.len() {
++            if (k == 4 && !augmented_available) || ((k == 8 || k == 9) && bound_kind != "finite") { continue; }
++            let tolerance = if k >= 12 { 0.0 } else if (6..=10).contains(&k) { s.tol.optimality } else { s.tol.feasibility };
++            let abnormal = trace.metrics[k].add(scans[k], tolerance, ordinal);
++            if abnormal { anomaly_mask |= 1 << k; }
++            anomalous |= abnormal;
++        }
++        if !anomalous { return; }
++        trace.anomalous_calls += 1;
++        if trace.sampled_anomalies >= SNAPSHOTS { trace.later_anomalies_omitted += 1; return; }
++        trace.sampled_anomalies += 1;
++        let estimate = snapshot_estimate(s, duals.len());
++        let full = estimate.is_some_and(|bytes| bytes <= SNAPSHOT_BYTES && bytes <= TOTAL_BYTES.saturating_sub(trace.snapshot_bytes));
++        let text = snapshot(s, ordinal, anomaly_mask, reported, objective, y, duals, &values, &reduced,
++            bound, bound_kind, raw_internal, reported_internal, augmented_available, full, estimate);
++        if full && text.len() <= SNAPSHOT_BYTES && text.len() <= TOTAL_BYTES.saturating_sub(trace.snapshot_bytes) {
++            trace.snapshot_bytes += text.len();
++            trace.samples.push(text);
++        } else {
++            trace.snapshot_budget_omitted += 1;
++            trace.samples.push(snapshot(s, ordinal, anomaly_mask, reported, objective, y, duals, &values, &reduced,
++                bound, bound_kind, raw_internal, reported_internal, augmented_available, false, estimate));
++        }
++    });
++}
++
++fn snapshot_estimate(s: &Simplex, reported_duals_len: usize) -> Option<usize> {
++    let m = s.basis.len();
++    let ncols = s.ncols_static().checked_add(s.num_art)?;
++    let matrices = m.checked_mul(ncols)?.checked_add(m.checked_mul(m)?)?;
++    let terms = s.row_terms.iter().try_fold(0usize, |sum, row| sum.checked_add(row.len()))?;
++    matrices.checked_add(terms.checked_mul(2)?)?.checked_add(ncols.checked_mul(10)?)?
++        .checked_add(m.checked_mul(12)?)?
++        .checked_add(s.constraint_row.len())?.checked_add(s.cut_row.len())?
++        .checked_add(reported_duals_len)?.checked_mul(24)?.checked_add(16_384)
++}
++fn bits(out: &mut String, values: &[f64]) {
++    out.push('[');
++    for (i, value) in values.iter().enumerate() { if i > 0 { out.push(','); } write!(out, "{}", value.to_bits()).unwrap(); }
++    out.push(']');
++}
++fn matrix_bits(out: &mut String, rows: &[Vec<f64>]) {
++    out.push('[');
++    for (i, row) in rows.iter().enumerate() { if i > 0 { out.push(','); } bits(out, row); }
++    out.push(']');
++}
++fn optional_rows(out: &mut String, rows: &[Option<usize>]) {
++    out.push('[');
++    for (i, row) in rows.iter().enumerate() { if i > 0 { out.push(','); } match row { Some(v) => write!(out, "{v}").unwrap(), None => out.push_str("null") } }
++    out.push(']');
++}
++#[allow(clippy::too_many_arguments)]
++fn snapshot(s: &Simplex, ordinal: u64, anomaly_mask: u64, reported: &[f64], objective: f64, y: &[f64], duals: &[f64],
++    values: &[f64], reduced: &[f64], bound: f64, bound_kind: &str, raw_internal: f64, reported_internal: f64,
++    augmented_available: bool, full: bool, estimate: Option<usize>) -> String {
++    let mut out = String::new();
++    write!(&mut out, "{{\"optimal_ordinal\":{ordinal},\"anomaly_categories_mask\":{anomaly_mask},\"iter_call\":{},\"iterations_total\":{},\"num_structural\":{},\"num_static\":{},\"num_art\":{},\"phase1_pending\":{},\"sense_max\":{},\"snapshot_complete\":{full},\"estimated_bytes\":{},\"augmented_reconstruction_available\":{augmented_available},\"artificial_mapping\":null,\"internal_box_lower_bound_kind\":{bound_kind:?},\"internal_box_lower_bound_bits\":{},\"raw_internal_objective_bits\":{},\"reported_internal_objective_bits\":{},\"reported_objective_bits\":{},\"obj_offset_bits\":{}",
++        s.iter_call, s.iterations_total, s.num_structural, s.ncols_static(), s.num_art, s.phase1_pending, s.sense_max,
++        estimate.map_or("null".into(), |v| v.to_string()), bound.to_bits(), raw_internal.to_bits(), reported_internal.to_bits(), objective.to_bits(), s.obj_offset.to_bits()).unwrap();
++    write!(&mut out, ",\"basis_artificial_count\":{},\"coordinates\":\"normalized_current_lp\",\"phase2_artificial_effective_bounds\":[0,0]", s.basis.iter().filter(|&&j| j >= s.ncols_static()).count()).unwrap();
++    out.push_str(",\"tolerance_bits\":"); bits(&mut out, &[s.tol.feasibility, s.tol.optimality, s.tol.pivot, s.tol.integrality, s.tol.zero]);
++    if full {
++        write!(&mut out, ",\"basis\":{:?},\"in_basis\":{:?},\"at_upper\":{:?}", s.basis, s.in_basis, s.at_upper).unwrap();
++        for (name, data) in [("raw_x", &values[..s.num_structural]), ("rhs", s.rhs.as_slice()), ("raw_static_and_art_values", values), ("reported_x", reported),
++            ("lb", s.bounds.lb.as_slice()), ("ub", s.bounds.ub.as_slice()), ("c_internal", s.c_internal.as_slice()),
++            ("y_internal_all_rows", y), ("reported_duals", duals), ("original_static_reduced_costs", reduced),
++            ("row_rhs", s.row_rhs.as_slice()), ("row_scale", s.row_scale.as_slice())] {
++            write!(&mut out, ",\"{name}_bits\":").unwrap(); bits(&mut out, data);
++        }
++        out.push_str(",\"matrix_bits\":"); matrix_bits(&mut out, &s.matrix);
++        out.push_str(",\"binv_bits\":"); matrix_bits(&mut out, &s.binv);
++        out.push_str(",\"row_terms_bits\":[");
++        for (i, row) in s.row_terms.iter().enumerate() {
++            if i > 0 { out.push(','); } out.push('[');
++            for (k, &(j, a)) in row.iter().enumerate() { if k > 0 { out.push(','); } write!(&mut out, "[{j},{}]", a.to_bits()).unwrap(); }
++            out.push(']');
++        }
++        out.push(']');
++        out.push_str(",\"row_op\":[");
++        for (i, op) in s.row_op.iter().enumerate() { if i > 0 { out.push(','); } out.push_str(match op { RelOp::Le => "0", RelOp::Ge => "1", RelOp::Eq => "2" }); }
++        out.push(']');
++        out.push_str(",\"row_slack\":"); optional_rows(&mut out, &s.row_slack);
++        out.push_str(",\"constraint_row\":"); optional_rows(&mut out, &s.constraint_row);
++        out.push_str(",\"cut_row\":"); optional_rows(&mut out, &s.cut_row);
++        out.push_str(",\"slack_sign_bits\":[");
++        for (i, col) in s.layout.slack.iter().enumerate() { if i > 0 { out.push(','); } write!(&mut out, "{}", col.sign.to_bits()).unwrap(); }
++        out.push(']');
++    }
++    out.push('}');
++    out
++}
++impl Trace {
++    pub fn write_json(&self, out: &mut impl Write) -> io::Result<()> {
++        write!(out, "{{\"schema\":1,\"requested_threads\":{},\"single_thread_enabled\":{},\"natural_optimal_calls\":{},\"anomalous_calls\":{},\"invalid_side_calls\":{},\"phase1_pending_calls\":{},\"augmented_available\":{},\"augmented_unavailable\":{},\"finite_dual_bounds\":{},\"infinite_box_dual_bounds\":{},\"invalid_dual_bounds\":{},\"dual_nonfinite_calls\":{},\"basis_stationarity_fixed_columns\":{},\"snapshot_budget_omitted\":{},\"later_anomalies_omitted\":{},\"snapshot_bytes\":{},\"metrics\":{{",
++            self.requested_threads, self.enabled, self.optimal_calls, self.anomalous_calls, self.invalid_side_calls, self.phase1_pending_calls,
++            self.augmented_available, self.augmented_unavailable, self.finite_dual_bounds, self.infinite_box_dual_bounds,
++            self.invalid_dual_bounds, self.dual_nonfinite_calls, self.basis_stationarity_fixed_columns,
++            self.snapshot_budget_omitted, self.later_anomalies_omitted, self.snapshot_bytes)?;
++        for (k, metric) in self.metrics.iter().enumerate() {
++            if k > 0 { write!(out, ",")?; }
++            write!(out, "{:?}:{{\"observed\":{},\"over_tolerance\":{},\"over_10_tolerance\":{},\"nonfinite_calls\":{},\"nonfinite_values\":{},\"first\":{},\"last\":{},\"max_finite\":{:?}}}", NAMES[k], metric.observed,
++                metric.over_tolerance, metric.over_10_tolerance, metric.nonfinite_calls, metric.nonfinite_values,
++                metric.first.map_or("null".into(), |v| v.to_string()), metric.last.map_or("null".into(), |v| v.to_string()), metric.max_finite)?;
++        }
++        write!(out, "}},\"samples\":[")?;
++        for (i, sample) in self.samples.iter().enumerate() {
++            if i > 0 { write!(out, ",")?; }
++            out.write_all(sample.as_bytes())?;
++        }
++        write!(out, "]}}")
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::model::{Constraint, LinearExpr, Problem, Sense, Tolerances, VarType, Variable};
++    use crate::simplex::{Bounds, LpStatus};
++
++    fn fixture(sense: Sense) -> (Simplex, Bounds) {
++        let p = Problem {
++            name: "出口诊断测试".into(), sense,
++            vars: vec![Variable { name: "x".into(), var_type: VarType::Continuous, lb: 1.0, ub: 3.0 }],
++            obj: LinearExpr { terms: vec![(0, if sense == Sense::Minimize { -2.0 } else { 2.0 })] },
++            obj_offset: 7.0,
++            constraints: vec![Constraint { name: None, expr: LinearExpr { terms: vec![(0, 1.0)] }, op: RelOp::Le, rhs: 2.0 }],
++        };
++        (Simplex::new(&p, Tolerances::default()).unwrap(), Bounds::from_problem(&p))
++    }
++
++    #[test]
++    fn natural_min_max_offset_outputs_are_unchanged() {
++        for sense in [Sense::Minimize, Sense::Maximize] {
++            let (mut original, bounds) = fixture(sense);
++            let mut observed = original.clone();
++            reset(0);
++            let expected = original.solve(&bounds);
++            reset(1);
++            let actual = observed.solve(&bounds);
++            let trace = take();
++            assert_eq!(actual.status, LpStatus::Optimal);
++            assert_eq!(actual.status, expected.status);
++            assert_eq!(actual.objective.to_bits(), expected.objective.to_bits());
++            assert_eq!(actual.x, expected.x);
++            assert_eq!(actual.duals, expected.duals);
++            assert_eq!(observed.basis, original.basis);
++            assert_eq!(observed.matrix, original.matrix);
++            assert_eq!(observed.binv, original.binv);
++            assert_eq!(observed.iterations(), original.iterations());
++            assert_eq!(trace.optimal_calls, 1);
++            assert_eq!(trace.anomalous_calls, 0);
++            assert_eq!(trace.finite_dual_bounds, 1);
++        }
++    }
++
++    #[test]
++    fn clone_does_not_rollback_counts_and_final_downgrades_are_excluded() {
++        let (mut s, bounds) = fixture(Sense::Minimize);
++        reset(0);
++        s.solve(&bounds);
++        let mut clone = s.clone();
++        reset(1);
++        assert_eq!(s.resolve(&bounds).status, LpStatus::Optimal);
++        assert_eq!(clone.resolve(&bounds).status, LpStatus::Optimal);
++        s.rhs[0] = f64::NAN;
++        assert_eq!(s.build_solution(LpStatus::Optimal).status, LpStatus::IterationLimit);
++        let trace = take();
++        assert_eq!(trace.optimal_calls, 2);
++        assert_eq!(trace.anomalous_calls, 0);
++    }
++
++    #[test]
++    fn synthetic_row_corruption_is_sampled_without_changing_return_or_growing_unbounded() {
++        let (mut s, bounds) = fixture(Sense::Minimize);
++        reset(0);
++        s.solve(&bounds);
++        // 人工污染只检验采样覆盖，不是自然误Optimal的证据。
++        s.rhs[0] = 2.5;
++        reset(1);
++        for _ in 0..7 {
++            let result = s.build_solution(LpStatus::Optimal);
++            assert_eq!(result.status, LpStatus::Optimal);
++            assert_eq!(result.x, vec![2.5]);
++            assert_eq!(s.rhs, vec![2.5]);
++        }
++        let trace = take();
++        assert_eq!(trace.optimal_calls, 7);
++        assert_eq!(trace.anomalous_calls, 7);
++        assert_eq!(trace.metrics[2].over_tolerance, 7);
++        assert_eq!(trace.metrics[2].first, Some(1));
++        assert_eq!(trace.metrics[2].last, Some(7));
++        assert_eq!(trace.samples.len(), 4);
++        assert_eq!(trace.later_anomalies_omitted, 3);
++        assert_eq!(trace.snapshot_budget_omitted, 0);
++        assert!(trace.snapshot_bytes <= TOTAL_BYTES);
++        let mut bytes = Vec::new();
++        trace.write_json(&mut bytes).unwrap();
++        let text = String::from_utf8(bytes).unwrap();
++        assert!(text.contains("\"snapshot_complete\":true"));
++        assert!(!text.contains(":NaN") && !text.contains(":inf"));
++    }
++
++    #[test]
++    fn snapshot_estimate_checks_overflow_before_large_allocations() {
++        let (mut s, _) = fixture(Sense::Minimize);
++        assert!(snapshot_estimate(&s, s.num_constraints).unwrap() < SNAPSHOT_BYTES);
++        let before = snapshot_estimate(&s, s.num_constraints).unwrap();
++        s.constraint_row.extend([None; 100]);
++        s.cut_row.extend([None; 100]);
++        assert_eq!(snapshot_estimate(&s, s.num_constraints + 100).unwrap() - before, 300 * 24);
++        s.num_art = usize::MAX;
++        assert_eq!(snapshot_estimate(&s, s.num_constraints), None);
++    }
++}
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index ab23b94..0f1f17a 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -100,6 +100,10 @@
+ #[path = "phase1_progress_diagnostics.rs"]
+ pub mod phase1_progress_diagnostics;
+ 
++#[cfg(feature = "proof_profile")]
++#[path = "dense_optimal_profile.rs"]
++pub mod dense_optimal_profile;
++
+ use crate::error::{MilpError, Result};
+ use crate::model::{Problem, RelOp, Sense, Tolerances};
+ 
+@@ -3420,6 +3424,8 @@ impl Simplex {
+                     duals[ci] = y[r] * self.row_scale[r];
+                 }
+             }
++            #[cfg(feature = "proof_profile")]
++            dense_optimal_profile::observe(self, &x, objective, &y, &duals);
+             LpSolution {
+                 status,
+                 objective,
