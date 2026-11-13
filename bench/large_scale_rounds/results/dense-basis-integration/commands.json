@@ -1,0 +1,50 @@
+[
+  {
+    "log": "01-ffi.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp-ffi/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "02-ffi-build.log",
+    "command": [
+      "cargo",
+      "build",
+      "--release",
+      "--manifest-path",
+      "milp-ffi/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "03-python.log",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "micpython/tests",
+      "-t",
+      "."
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "04-default-probe-build.log",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--example",
+      "round_probe"
+    ],
+    "exit_code": 0
+  }
+]

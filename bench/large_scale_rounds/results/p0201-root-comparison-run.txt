@@ -1,0 +1,12 @@
+{
+  "r8_coefficient": {
+    "status": "limit_reached",
+    "retained_cuts": 55,
+    "profile_passed": true
+  },
+  "safe_default": {
+    "status": "limit_reached",
+    "retained_cuts": 65,
+    "profile_passed": true
+  }
+}
