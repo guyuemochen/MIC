@@ -1,0 +1,105 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-phase1-finite-guard/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.06s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-c8204a0947103146)
+
+running 21 tests
+
+thread 'simplex::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing' (1035185) panicked at src/simplex.rs:3059:21:
+assertion failed: s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'simplex::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover' (1035186) panicked at src/simplex.rs:3072:17:
+assertion `left == right` failed
+  left: Infeasible
+ right: IterationLimit
+
+thread 'simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal' (1035182) panicked at src/simplex.rs:2930:21:
+assertion `left == right` failed: 有限输入载体 1 / Minimize / 首次resolve=false: LpSolution { status: Optimal, objective: 0.0, x: [1e308, 1e308], duals: [0.0] }
+  left: Optimal
+ right: IterationLimit
+
+thread 'simplex::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit' (1035184) panicked at src/simplex.rs:2977:21:
+assertion `left == right` failed: NaN: LpSolution { status: Optimal, objective: 0.0, x: [0.0], duals: [0.0] }
+  left: Optimal
+ right: IterationLimit
+test simplex::tests::phase1_finite_tests::existing_deadline_and_iteration_hint_keep_priority ... 
+thread 'simplex::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial' (1035187) panicked at src/simplex.rs:3001:54:
+called `Result::unwrap_err()` on an `Ok` value: 0.0
+ok
+
+thread 'simplex::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers' (1035179) panicked at src/simplex.rs:3019:21:
+assertion `left == right` failed: LpSolution { status: Infeasible, objective: NaN, x: [0.0], duals: [0.0, 0.0] }
+  left: Infeasible
+ right: IterationLimit
+test simplex::tests::phase1_finite_tests::finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved ... 
+thread 'simplex::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible' (1035181) panicked at src/simplex.rs:2930:21:
+assertion `left == right` failed: 有限输入载体 0 / Minimize / 首次resolve=false: LpSolution { status: Infeasible, objective: NaN, x: [1e308, 1e308, 1e308, 1e308], duals: [0.0] }
+  left: Infeasible
+ right: IterationLimit
+ok
+
+thread 'simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot' (1035183) panicked at src/simplex.rs:2930:21:
+assertion `left == right` failed: 有限输入载体 2 / Minimize / 首次resolve=false: LpSolution { status: Optimal, objective: 0.0, x: [1e308, 1e308, 0.0], duals: [0.0] }
+  left: Optimal
+ right: IterationLimit
+test simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal ... FAILED
+test simplex::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers ... FAILED
+test simplex::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit ... FAILED
+
+thread 'simplex_sparse::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers' (1035189) panicked at src/simplex_sparse.rs:4723:21:
+assertion `left == right` failed: LpSolution { status: Infeasible, objective: NaN, x: [0.0], duals: [0.0, 0.0] }
+  left: Infeasible
+ right: IterationLimit
+test simplex::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing ... FAILED
+test simplex::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial ... FAILED
+test simplex::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover ... FAILED
+test simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot ... FAILED
+test simplex::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible ... FAILED
+
+thread 'simplex_sparse::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit' (1035194) panicked at src/simplex_sparse.rs:4681:21:
+assertion `left == right` failed: NaN: LpSolution { status: Optimal, objective: 0.0, x: [0.0], duals: [0.0] }
+  left: Optimal
+ right: IterationLimit
+test simplex_sparse::tests::phase1_finite_tests::existing_deadline_and_iteration_hint_keep_priority ... ok
+
+thread 'simplex_sparse::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing' (1035195) panicked at src/simplex_sparse.rs:4764:21:
+assertion failed: s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值")
+
+thread 'simplex_sparse::tests::phase1_finite_tests::old_eta_bad_basic_keeps_one_fresh_recovery' (1035196) panicked at src/simplex_sparse.rs:4835:17:
+assertion `left == right` failed: inf: LpSolution { status: Infeasible, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Infeasible
+ right: Optimal
+test simplex_sparse::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers ... FAILED
+
+thread 'simplex_sparse::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial' (1035198) panicked at src/simplex_sparse.rs:4705:54:
+called `Result::unwrap_err()` on an `Ok` value: 0.0
+test simplex_sparse::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved ... ok
+test simplex_sparse::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit ... FAILED
+test simplex_sparse::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing ... FAILED
+test simplex_sparse::tests::phase1_finite_tests::old_eta_bad_basic_keeps_one_fresh_recovery ... FAILED
+test simplex_sparse::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover ... ok
+test simplex_sparse::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial ... FAILED
+
+failures:
+
+failures:
+    simplex::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers
+    simplex::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible
+    simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal
+    simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot
+    simplex::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit
+    simplex::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing
+    simplex::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover
+    simplex::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial
+    simplex_sparse::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers
+    simplex_sparse::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit
+    simplex_sparse::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing
+    simplex_sparse::tests::phase1_finite_tests::old_eta_bad_basic_keeps_one_fresh_recovery
+    simplex_sparse::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial
+
+test result: FAILED. 8 passed; 13 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

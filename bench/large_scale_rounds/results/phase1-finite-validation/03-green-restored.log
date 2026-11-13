@@ -1,0 +1,47 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-phase1-finite-guard/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.10s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-c8204a0947103146)
+
+running 21 tests
+test simplex::tests::phase1_finite_tests::existing_deadline_and_iteration_hint_keep_priority ... ok
+test simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal ... ok
+test simplex::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot ... ok
+test simplex::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial ... ok
+test simplex::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing ... ok
+test simplex::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible ... ok
+test simplex::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover ... ok
+test simplex::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit ... ok
+test simplex::tests::phase1_finite_tests::finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved ... ok
+test simplex::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers ... ok
+test simplex_sparse::tests::phase1_finite_tests::existing_deadline_and_iteration_hint_keep_priority ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_input_nan_residual_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_input_cancellation_overflow_is_not_infeasible ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_input_nan_residual_is_not_erased_by_zero_pivot ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved ... ok
+test simplex_sparse::tests::phase1_finite_tests::old_eta_bad_basic_keeps_one_fresh_recovery ... ok
+test simplex_sparse::tests::phase1_finite_tests::overflow_failure_new_bounds_and_snapshot_can_recover ... ok
+test simplex_sparse::tests::phase1_finite_tests::phase_one_sum_rejects_each_nonfinite_artificial ... ok
+test simplex_sparse::tests::phase1_finite_tests::nonartificial_bad_basic_cannot_bypass_first_pricing ... ok
+test simplex_sparse::tests::phase1_finite_tests::finite_artificial_sum_overflow_is_conservative_and_recovers ... ok
+test simplex_sparse::tests::phase1_finite_tests::first_pricing_rejects_injected_artificial_before_no_action_exit ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-fe0094c2e0b64aa4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-9c6f90a05fe570f1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-e5b5e59d77d18d9a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
