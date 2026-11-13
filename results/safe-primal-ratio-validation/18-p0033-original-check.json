@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "runs": 3,
+  "instances": 1,
+  "solutions_checked": 3,
+  "mic_with_external_optimum": 1,
+  "mic_bounds_checked": 1,
+  "errors": [],
+  "external_source": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl",
+  "external_source_sha256": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292"
+}

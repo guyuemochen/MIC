@@ -33,4 +33,12 @@
 
 六特性为 `root_heuristic_work_limit,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore,certified_row_fallback`，保留既有默认特性。每个最终日志首行记录完整命令。milp普通全测原有4个库测试和2个debug验收忽略项未额外运行；两组release验收均使用 `--include-ignored`。planner原有2个忽略项未额外运行。`git diff --check` 通过。最终生产源哈希保存在 `source-sha256.json`。
 
-本提交不包含p0033当前源公开probe或20例正确性/性能筛选结果；这些由主任务协调独立窗口，不据此声称p0033已完成最优性证明，也不推断全类性能。
+## p0033当前源单例核对
+
+在主任务分配的独占窗口，以干净源提交 `ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4`、默认特性构建release `round_probe`。完全沿用冻结screen base参数，仅替换可执行文件路径：单线程、10秒、200万节点、early-stop关闭、probe-reuse关闭、binary-propagation为auto。新导出的原模型哈希与基线完全相同，原始MILP文件哈希也独立核对一致。
+
+结果为 `Optimal`，目标和证明界均为3089，gap为零；634节点、26319次LP迭代、50条割，单次时间0.114304375秒。相比冻结基线 `LimitReached`、界2849.272637195108，完整安全修复已在本参数组恢复证明闭合；这不能进一步区分旧故障中并列窗、小主元与其他数值路径的各自贡献。
+
+`16-p0033-current-source.jsonl` 保存完整解与结果，`17-p0033-external-witnesses.jsonl` 保留同原模型冻结HiGHS/SCIP最优记录。独立检查器从新导出的原模型重算三个解的变量界、整数性、每行残差和目标，并将MIC界与外部已证最优值对账；`18-p0033-original-check.json` 为3/3解通过、0错误。`19-p0033-manifest.json` 记录源提交/树、可执行文件SHA-256、完整命令及基线字段，`20-p0033-build.log` 为默认特性构建输出；`run_p0033_probe.py` 保存此次执行和校验流程。
+
+此单例仅用于正确性与证明能力核对，不是新的promotion性能证据；20例正确性/性能筛选仍由主任务协调，未在这里运行。
