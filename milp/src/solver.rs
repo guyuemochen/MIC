@@ -122,8 +122,12 @@ pub fn solve_controlled(
     } else {
         (problem.clone(), None)
     };
-    let (work, map, reductions) = if opts.use_presolve {
-        let (reduced, map) = presolve::presolve(&pre_work, &opts.tol)?;
+    let (work, map, reductions, preserved) = if opts.use_presolve {
+        // 按最外层请求门控；并行小树前缀不能因临时 threads=1 捕获旧行。
+        let capture = cfg!(feature = "certified_row_fallback") && ctrl.threads == 1
+            && opts.bb.binary_row_propagation.resolve(ctrl.threads)
+                == branch_bound::BinaryPropagationMode::On;
+        let (reduced, map, preserved) = presolve::presolve_for_solve(&pre_work, &opts.tol, capture)?;
         // W5：聚合掉的重复列（组成员数 − 1）一并计入消减量。
         let reductions = map.fixed.len()
             + map.dropped_rows.len()
@@ -132,12 +136,12 @@ pub fn solve_controlled(
                 .iter()
                 .map(|(members, _, _)| members.len().saturating_sub(1))
                 .sum::<usize>();
-        (reduced, Some(map), reductions)
+        (reduced, Some(map), reductions, preserved)
     } else {
-        (pre_work, None, 0)
+        (pre_work, None, 0, crate::binary_propagation::PreservedBinaryRows::default())
     };
 
-    let bb = branch_bound::branch_and_bound_controlled(&work, &opts.bb, ctrl, opts.tol, hooks)?;
+    let bb = branch_bound::branch_and_bound_with_preserved(&work, &opts.bb, ctrl, opts.tol, hooks, preserved)?;
 
     // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
     // 带回取值则不带解返回。
@@ -994,5 +998,140 @@ mod tests {
         eprintln!(
             "revised acceptance: mknap-5x300=4762 @{mknap_secs:.1}s, setcover-300x600=144 @{setcover_secs:.1}s"
         );
+    }
+}
+
+#[cfg(all(test, feature = "certified_row_fallback"))]
+mod certified_fallback_tests {
+    use super::*;
+    use crate::binary_propagation::{CaptureAudit, TestDeadlineGuard};
+    use crate::branch_bound::{BinaryPropagationMode, BranchRule, NodeRule};
+    use crate::presolve::certified_fallback_tests::branch_model;
+    use crate::search_ctrl::Determinism;
+    use crate::simplex_sparse::LpEngineKind;
+
+    fn options(engine: LpEngineKind) -> SolveOptions {
+        SolveOptions { use_scaling: false, bb: BbOptions { lp_engine: engine,
+            binary_row_propagation: BinaryPropagationMode::Auto, branch_rule_auto: false,
+            branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
+            local_cuts: false, root_rc_fixing: false, ..BbOptions::default() }, ..SolveOptions::default() }
+    }
+
+    #[test]
+    fn certified_fallback_solver_matches_known_optimum_across_engines_and_domains() {
+        let p = branch_model();
+        let mut total_fixes = 0;
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for scaling in [false, true] {
+                for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
+                    for rc in [false, true] {
+                        let mut opts = options(engine);
+                        opts.use_scaling = scaling;
+                        opts.bb.node_rule = rule;
+                        opts.bb.root_rc_fixing = rc;
+                        let auto = solve(&p, &opts).unwrap();
+                        opts.bb.binary_row_propagation = BinaryPropagationMode::On;
+                        let on = solve(&p, &opts).unwrap();
+                        opts.bb.binary_row_propagation = BinaryPropagationMode::Off;
+                        let off = solve(&p, &opts).unwrap();
+                        for report in [&auto, &on, &off] {
+                            assert_eq!(report.status, SolveStatus::Optimal);
+                            assert_eq!(report.objective, Some(2.125));
+                            let mut values = report.values.clone().unwrap();
+                            final_check(&p, &mut values).unwrap();
+                        }
+                        assert_eq!(auto.stats.nodes, on.stats.nodes);
+                        assert_eq!(auto.stats.lp_iterations, on.stats.lp_iterations);
+                        assert_eq!(auto.values, on.values);
+                        assert_eq!(auto.stats.propagation.fixes, on.stats.propagation.fixes);
+                        assert_eq!(off.stats.propagation.accepted_rows, 0);
+                        assert!(auto.stats.propagation.calls > 0);
+                        assert_eq!(auto.stats.propagation.accepted_rows, 2);
+                        assert_eq!(auto.stats.propagation.skipped_rows, 0);
+                        total_fixes += auto.stats.propagation.fixes;
+                    }
+                }
+            }
+        }
+        assert!(total_fixes > 0, "必须实际使用被救回的传播能力");
+    }
+
+    #[test]
+    fn certified_fallback_capture_gate_and_root_lazy_statistics() {
+        let p = branch_model();
+        for presolve in [false, true] {
+            for mode in [BinaryPropagationMode::Auto, BinaryPropagationMode::On, BinaryPropagationMode::Off] {
+                let mut opts = options(LpEngineKind::Tableau);
+                opts.use_presolve = presolve;
+                opts.bb.binary_row_propagation = mode;
+                opts.bb.node_limit = 1;
+                let audit = CaptureAudit::new();
+                let result = solve(&p, &opts).unwrap();
+                assert_eq!(result.status, SolveStatus::LimitReached);
+                let expected = if presolve && mode != BinaryPropagationMode::Off { 1 } else { 0 };
+                assert_eq!(audit.count(), expected);
+                assert_eq!(result.stats.propagation.calls, 0);
+                assert_eq!(result.stats.propagation.accepted_rows, 0,
+                    "未展开孩子时不能提前发布传播数据库统计");
+            }
+        }
+        let mut root_closed = p;
+        root_closed.set_objective(vec![(0, -1.0), (1, -2.0), (2, -3.0)], 0.25).unwrap();
+        let audit = CaptureAudit::new();
+        let closed = solve(&root_closed, &options(LpEngineKind::Tableau)).unwrap();
+        assert_eq!(closed.status, SolveStatus::Optimal);
+        assert_eq!(closed.objective, Some(0.25));
+        assert_eq!(audit.count(), 1, "根部闭合也已支付旧行认证成本");
+        assert_eq!(closed.stats.propagation.accepted_rows, 0);
+    }
+
+    #[test]
+    fn certified_fallback_parallel_prefix_stays_off_and_explicit_on_errors() {
+        let p = branch_model();
+        let opts = options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let audit = CaptureAudit::new();
+        let parallel = {
+            // 若最外层Auto被顺序前缀重开，传播会立即中断并使本断言失败。
+            let _deadline = TestDeadlineGuard::on_check(1);
+            solve_controlled(&p, &opts, &ctrl, None).unwrap()
+        };
+        assert_eq!(parallel.report.status, SolveStatus::Optimal);
+        assert_eq!(parallel.report.objective, Some(2.125));
+        assert_eq!(parallel.report.stats.propagation.calls, 0);
+        assert_eq!(audit.count(), 0);
+        let mut explicit = opts;
+        explicit.bb.binary_row_propagation = BinaryPropagationMode::On;
+        let error = solve_controlled(&p, &explicit, &ctrl, None).unwrap_err();
+        assert!(error.to_string().contains("二元静态行传播"));
+        assert_eq!(audit.count(), 0);
+    }
+
+    #[test]
+    fn certified_fallback_deadline_keeps_frontier_and_budget_run_is_deterministic() {
+        let p = branch_model();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = options(engine);
+            let interrupted = {
+                let _deadline = TestDeadlineGuard::on_check(1);
+                solve_controlled(&p, &opts, &SearchControl::default(), None).unwrap()
+            };
+            assert_eq!(interrupted.report.status, SolveStatus::LimitReached);
+            assert_eq!(interrupted.report.stats.nodes, 1);
+            assert_eq!(interrupted.report.stats.propagation.accepted_rows, 2);
+            assert_eq!(interrupted.report.stats.propagation.calls, 1);
+            assert_eq!(interrupted.report.objective, None);
+            assert!(interrupted.bound.unwrap() >= 2.125 - 1e-8);
+            let ctrl = SearchControl { determinism: Determinism::Budget, ..SearchControl::default() };
+            let a = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+            let b = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+            assert_eq!(a.report.status, SolveStatus::Optimal);
+            assert_eq!(a.report.objective, Some(2.125));
+            assert_eq!(a.bound, b.bound);
+            assert_eq!(a.report.values, b.report.values);
+            assert_eq!(a.report.stats.nodes, b.report.stats.nodes);
+            assert_eq!(a.report.stats.lp_iterations, b.report.stats.lp_iterations);
+            assert_eq!(format!("{:?}", a.report.stats.propagation), format!("{:?}", b.report.stats.propagation));
+        }
     }
 }

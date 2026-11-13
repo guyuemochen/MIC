@@ -157,7 +157,7 @@ impl BinaryPropagationMode {
 }
 
 pub use crate::binary_propagation::PropagationStats;
-use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome};
+use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome, PreservedBinaryRows};
 
 /// 分支定界参数。
 #[derive(Debug, Clone, Copy)]
@@ -492,6 +492,18 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default())
+}
+
+/// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
+pub(crate) fn branch_and_bound_with_preserved(
+    problem: &Problem,
+    opts: &BbOptions,
+    ctrl: &SearchControl,
+    tol: Tolerances,
+    hooks: Option<&SearchHooks>,
+    preserved: PreservedBinaryRows,
+) -> Result<BbResult> {
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
@@ -508,6 +520,10 @@ pub fn branch_and_bound_controlled(
     // 必须早于并行分派：小树探测会临时把ctrl.threads改为1，不能重新开启Auto。
     resolved_opts.binary_row_propagation = opts.binary_row_propagation.resolve(ctrl.threads);
     let opts = &resolved_opts;
+    if !preserved.is_empty() && (ctrl.threads != 1 || opts.binary_row_propagation != BinaryPropagationMode::On) {
+        return Err(MilpError::Internal("旧认证行只能移交本次单线程传播求解".into()));
+    }
+    // 工作模型从这里起只读；逐位见证留到首次建库核验，根部闭合无需再扫描。
     if ctrl.threads >= 2 {
         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
         // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
@@ -528,7 +544,7 @@ pub fn branch_and_bound_controlled(
         }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
-    sequential_bb(problem, opts, ctrl, tol, hooks)
+    sequential_bb(problem, opts, ctrl, tol, hooks, preserved)
 }
 
 /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
@@ -539,6 +555,7 @@ fn sequential_bb(
     ctrl: &SearchControl,
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
+    mut preserved: PreservedBinaryRows,
 ) -> Result<BbResult> {
     debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
     let start = Instant::now();
@@ -1078,7 +1095,8 @@ fn sequential_bb(
         ))
     });
 
-    // 关闭或根部已闭合时不构造、不扫描模型；首次展开孩子才认证静态行。
+    // 完整传播库仍延迟到首次孩子。旧行回退试验已在 presolve 认证少量改动行，
+    // 根部闭合会直接释放该载荷；不开启试验时维持旧有的完全延迟认证路径。
     let mut propagation: Option<BinaryPropagation> = None;
 
     // —— DFS 主循环状态 ——
@@ -1335,7 +1353,13 @@ fn sequential_bb(
             }
         }
         if opts.binary_row_propagation == BinaryPropagationMode::On {
-            let state = propagation.get_or_insert_with(|| BinaryPropagation::new(problem, tol));
+            if propagation.is_none() {
+                propagation = Some(BinaryPropagation::with_preserved(problem, tol,
+                    std::mem::take(&mut preserved)).ok_or_else(||
+                        MilpError::Internal("旧认证行建库前核验失败".into()))?);
+            }
+            let state = propagation.as_mut().ok_or_else(||
+                MilpError::Internal("二元传播数据库未完成初始化".into()))?;
             // RC 覆盖层不记 trail；即使本次取交未改界，也必须重播种全部日志。
             // 深层父域已闭包，只有分支界与 RC 前提可能新增静态行推论。
             let seeds = std::iter::once(p.var).chain(
@@ -3263,7 +3287,7 @@ fn parallel_entry(
         probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
         let mut probe_ctrl = *ctrl;
         probe_ctrl.threads = 1;
-        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks)?;
+        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default())?;
         let budget_exhausted = probe.status == SolveStatus::LimitReached
             && !probe.gap_terminated
             && !probe.auto_degraded
@@ -6465,6 +6489,105 @@ mod binary_propagation_tests {
         BbOptions { binary_row_propagation: BinaryPropagationMode::On, branch_rule_auto: false,
             branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
             local_cuts: false, root_rc_fixing: false, lp_engine: engine, ..BbOptions::default() }
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_replays_rc_after_dfs_and_hybrid_domain_restore() {
+        let tol = Tolerances::default();
+        let mut original = crate::presolve::certified_fallback_tests::branch_model();
+        original.add_var("unrelated", VarType::Binary).unwrap();
+        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
+        assert_eq!(saved.len(), 1);
+        let root = Bounds::from_problem(&problem);
+        let snapshot = DomainSnapshot::capture(&root, None);
+        let cache = RootRcCache { sense: Sense::Maximize, obj_offset: 0.25, obj_integral: false,
+            int_vars: vec![0, 1, 2, 3], z_lp: 3.0, rc: vec![0.0; 4], side: vec![0; 4],
+            n_struct: 4, base: root.clone() };
+        let mut rc = RcRefixState::new(cache);
+        rc.log.push(RcFixEntry { var: 0, tighten_lb: false, value: 0.0 });
+        let mut state = BinaryPropagation::with_preserved(&problem, tol, saved).unwrap();
+        assert_eq!(state.stats.accepted_rows, 2);
+        let mut bounds = root;
+        let mut trail = Vec::new();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
+        unwind(&mut trail, &mut bounds, 0);
+        assert_eq!(bounds.ub[0], 0.0, "RC固定不在DFS trail中");
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0));
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, [3], None, |_, _, _| {}), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0), "无关分支不能代替RC日志播种");
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
+        snapshot.restore(&mut bounds);
+        trail.clear();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0), "Hybrid完整域恢复后须重得旧行推论");
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_public_bb_has_no_hidden_payload_and_off_rejects_internal_payload() {
+        let tol = Tolerances::default();
+        let original = crate::presolve::certified_fallback_tests::branch_model();
+        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
+        let opts = options(LpEngineKind::Tableau);
+        let public = branch_and_bound(&problem, &opts, tol).unwrap();
+        assert_eq!(public.status, SolveStatus::Optimal);
+        assert_eq!(public.best_objective, Some(2.125));
+        assert_eq!(public.stats.propagation.accepted_rows, 1, "公开入口只认证传入的强化LP行");
+        let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts };
+        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved).unwrap_err();
+        assert!(error.to_string().contains("旧认证行只能移交"));
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_keeps_static_rows_outside_real_local_cut_scopes() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let original = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        let tol = Tolerances::default();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut problem = original.clone();
+            // 生产强化只改负系数，必然不命中局部割的全正系数类门控。
+            // 此处专测载荷和真实割作用域的隔离：人工封存一个二元等价的
+            // 正系数行，不能把该测试载体当成 presolve 实际会捕获的模型。
+            let mut saved = PreservedBinaryRows::for_problem(&problem, tol);
+            assert!(saved.capture(0, &problem.vars, &problem.constraints[0], tol));
+            let coefficient = &mut problem.constraints[0].expr.terms[0].1;
+            let old = *coefficient;
+            *coefficient = f64::from_bits(old.to_bits() - 1);
+            let perturbation = old - *coefficient;
+            // 原行格距至少1；只有一项变动，二元赋值的总扰动至多为该差值。
+            // 连同认证保留的验收容差仍不足1，不能跨过原整数不可行间隔。
+            let norm: f64 = original.constraints[0].expr.terms.iter().map(|&(_, a)| a.abs()).sum();
+            let allowance = 10.0 * tol.feasibility + tol.integrality * norm;
+            assert!(old > 0.0 && old.fract() == 0.0 && norm < (1_u64 << 50) as f64);
+            assert!(perturbation > 0.0 && allowance.is_finite() && perturbation + allowance < 1.0);
+            assert_eq!(problem.constraints[0].rhs.fract(), 0.0);
+            assert!(original.constraints[0].expr.terms.iter().all(|&(_, a)| a.fract() == 0.0));
+            saved.seal_last(0, &problem.constraints[0]);
+            assert_eq!(saved.len(), 1);
+            assert!(detect_pseudocost_favorable(&problem), "测试必须保留真实局部割入口");
+            assert_eq!(BinaryPropagation::new(&problem, tol).stats.skipped_rows, 1,
+                "扰动行必须认证失败，才能实际检查旧行回退");
+            let audit = LocalScopeAudit::new();
+            let opts = BbOptions { root_cuts: false, local_cuts: true, lp_engine: engine,
+                binary_row_propagation: BinaryPropagationMode::On, ..BbOptions::default() };
+            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(2331.0));
+            assert!(result.stats.cuts > 0 && audit.count() > 0, "须实际退出局部割作用域");
+            assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
+            assert_eq!(result.stats.propagation.accepted_rows, problem.constraints.len() as u64,
+                "旧行回退只替代同号静态行，局部割不得进入全局传播库");
+        }
     }
 
     #[test]

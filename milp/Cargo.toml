@@ -27,6 +27,9 @@ root_heuristic_work_limit = ["root_heuristic_work_budget"]
 # 完整预处理后仅加强负二元系数，通过独立证明性能门槛，默认开启。
 binary_coefficient_strengthening = []
 
+# 强化行无法精确认证时回退到同一缩减列空间中的旧认证行，默认关闭。
+certified_row_fallback = ["binary_coefficient_strengthening"]
+
 # 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
 risk_pivot_refresh = []
 
