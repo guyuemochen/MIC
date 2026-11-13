@@ -1,0 +1,12 @@
+{
+  "base": {
+    "binary": "/tmp/mic-r10-binaries/round_probe_base",
+    "features": []
+  },
+  "candidate": {
+    "binary": "/tmp/mic-r10-binaries/round_probe_candidate",
+    "features": [
+      "root_heuristic_work_limit"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "old": {
+    "binary": "/tmp/mic-r10-binaries/round_probe_diagnostic_old",
+    "features": [
+      "root_heuristic_work_budget",
+      "proof_profile"
+    ]
+  },
+  "new": {
+    "binary": "/tmp/mic-r10-binaries/round_probe_diagnostic_new",
+    "features": [
+      "root_heuristic_work_limit",
+      "proof_profile"
+    ]
+  }
+}
