@@ -239,3 +239,40 @@ python3 bench/large_scale_rounds/gate_feature_trial.py \
 ```sh
 python3 -m unittest discover -s bench/large_scale_rounds -p test_gate_feature_trial.py
 ```
+
+## 安全比值修复后的默认配置回归（事前冻结）
+
+使用同一干净冻结源码的默认 release 二进制，复跑第七轮固定的 20 例。每例单线程、30 秒、
+2000000 节点，各运行一次。关闭停滞提前停止和强分支证明复用，二元行传播使用 Auto，
+其余继承当前生产默认。执行器先验证峰值 RSS 计时，再重新导出每个原模型并核对外部基线哈希。
+完整解、界、终态、工作量和 RSS 写入 JSONL，记录源码提交、MILP 源码树、二进制哈希和 Cargo
+声明的默认特性。构建时使用 Cargo 默认特性，无额外特性或诊断。保留构建命令和构建日志，
+用于确认传入的二进制确实来自该源码和构建设置。
+
+汇总使用原模型、HiGHS/SCIP 外部基线和归档的 MIPLIB 2017 官方结论复核正确性。
+逐模型列出第八轮系数加强候选组在 30 秒正式配对中的三次终态，并标明当时三次均证优的
+10 例是否在本次复现证明。第八轮记录是跨源码的证明能力参考，本次每例只跑一次。
+本轮用于正确性和证明回归，耗时只作留档，不参与新优化晋级或与旧 10 秒筛查的计时比较。
+
+若旧证明未复现，保留该算例的诊断与实际终态，安全守卫继续生效。发现原模型可行性、
+有效界或最优性错误时先修复。模型名单、时间与节点预算、证明判定和容差在运行前固定。
+
+使用 Python 3.11 或更新版本。在仓库根目录运行：
+
+```sh
+rounds=bench/large_scale_rounds
+archive="$rounds/results"
+python3 "$rounds/run_default_validation.py" \
+  --binary /path/to/default/round_probe --source /path/to/frozen-source \
+  --legacy-baseline "$archive/external-baseline.jsonl" \
+  --modern-baseline "$archive/miplib2017-baseline.jsonl" \
+  --output "$archive/safe-primal-ratio-default.jsonl"
+python3 "$rounds/summarize_default_validation.py" \
+  "$archive/safe-primal-ratio-default.jsonl" \
+  --legacy-baseline "$archive/external-baseline.jsonl" \
+  --modern-baseline "$archive/miplib2017-baseline.jsonl" \
+  --output "$archive/safe-primal-ratio-default-summary.json"
+```
+
+结果和汇总都保留已有文件。汇总分别记录正确性与证明复现结论。任一未通过时返回 1，
+输入或输出无效时返回 2。即使运行器报告单例失败，只要矩阵完整，也应汇总已保存记录。
