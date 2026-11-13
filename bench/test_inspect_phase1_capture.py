@@ -3,7 +3,7 @@ from pathlib import Path
 import struct
 import unittest
 
-from inspect_phase1_capture import inspect
+from inspect_phase1_capture import Binary64, artificial_report, inspect
 
 
 FIXTURES = Path(__file__).parent / 'large_scale_rounds/results/phase1-progress-validation'
@@ -58,6 +58,59 @@ class InspectPhase1CaptureTest(unittest.TestCase):
         self.assertEqual(result['rows']['normalized']['max_violation'], 1.0)
         self.assertEqual(result['rows']['engine_input']['raw_max_violation'], 1.0)
         self.assertEqual(result['rows']['normalized']['worst']['source'], {'kind': 'constraint', 'index': 0})
+
+    def test_exact_boundary_violation_reaches_candidate_conclusion(self):
+        source = FIXTURES.parent / 'phase1-offline-validation' / 'boundary-capture.json'
+        for side in ('lower', 'upper'):
+            with self.subTest(side=side):
+                doc = json.loads(source.read_bytes())
+                capture = doc['capture']
+                snapshot = candidate(doc)
+                if side == 'upper':
+                    # 对称反射使同一个临界差落在上界，并给出合法有限下界。
+                    x = bits(float.fromhex('0x1.353cd652bb168p-31'))
+                    upper = bits(-float.fromhex('0x1.e1094d643f785p-32'))
+                    lower = bits(-1.0)
+                    snapshot.update(lower=[lower], upper=[upper], x_unclipped=[x], basic_values=[x])
+                    capture['normalized_matrix']['row_rhs'] = [x]
+                    capture['engine_input_lp']['rows'][0]['rhs'] = x
+                    capture['engine_input_lp']['variables'][0].update(lower=lower, upper=upper)
+                report = inspect(doc)
+                self.assertEqual(report['issues'], [])
+                self.assertEqual(report['candidate_conclusion'], 'near_zero_but_primal_infeasible')
+                result = candidate(report)
+                self.assertTrue(result['rows']['normalized']['passed'])
+                self.assertTrue(result['rows']['augmented']['passed'])
+                for key in ('current_structural_bounds', 'current_augmented_bounds', 'construction_bounds'):
+                    check = result[key]
+                    self.assertEqual(check['max_violation'], 1e-9)
+                    self.assertEqual(check['violations'], 1)
+                    self.assertEqual(check['worst']['exact_violation'],
+                                     '19342813113834069/19342813113834066795298816')
+
+        # 负零下界和正无穷上界仍是合法界，等于容差仍通过。
+        doc = json.loads(source.read_bytes())
+        capture = doc['capture']
+        snapshot = candidate(doc)
+        x = bits(-1e-9)
+        snapshot.update(lower=[bits(-0.0)], x_unclipped=[x], basic_values=[x])
+        capture['normalized_matrix']['row_rhs'] = [x]
+        capture['engine_input_lp']['rows'][0]['rhs'] = x
+        capture['engine_input_lp']['variables'][0]['lower'] = bits(-0.0)
+        result = inspect(doc)
+        self.assertEqual(result['candidate_conclusion'], 'primal_and_augmented_pass')
+        self.assertEqual(candidate(result)['current_structural_bounds']['violations'], 0)
+
+    def test_artificial_sum_rounds_to_tolerance_but_is_strictly_larger(self):
+        values = [float.fromhex('0x1.353cd652bb168p-31'), float.fromhex('0x1.e1094d643f785p-32')]
+        numbers = [Binary64(bits(value), value) for value in values]
+        summary = {'artificial_basic': 2, 'artificial_nonzero': 2, 'positive_sum': bits(1e-9),
+                   'negative_sum': bits(0.0), 'minimum': bits(min(values)), 'maximum': bits(max(values))}
+        result = artificial_report(numbers, numbers, summary, 1e-9)
+        self.assertTrue(result['each_within_tolerance'])
+        self.assertEqual(result['positive_sum'], 1e-9)
+        self.assertFalse(result['near_zero'])
+        self.assertEqual(result['positive_sum_exact'], '19342813113834069/19342813113834066795298816')
 
     def test_artificial_location_is_not_basis_position(self):
         doc = fixture()

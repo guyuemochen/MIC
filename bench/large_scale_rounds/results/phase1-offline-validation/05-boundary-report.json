@@ -1,0 +1,217 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "candidate_conclusion": "near_zero_but_primal_infeasible",
+  "issues": [],
+  "snapshots": [
+    {
+      "kind": "first_candidate",
+      "call_iterations": 1,
+      "iterations": 1,
+      "state_revision": 1,
+      "factorization_broken": false,
+      "failed_recomputed_values": null,
+      "failed_refresh_row_value": null,
+      "x_unclipped_bits": [
+        "be0353cd652bb168"
+      ],
+      "x_bit_mismatches": [],
+      "nonfinite_reconstructed_columns": [],
+      "invalid_bounds": [],
+      "artificial": {
+        "positive_sum": 0.0,
+        "negative_sum": 0.0,
+        "absolute_sum": 0.0,
+        "positive_sum_exact": null,
+        "minimum": 0.0,
+        "maximum": 0.0,
+        "nonfinite": [],
+        "sum_overflow": [],
+        "near_zero": true,
+        "each_within_tolerance": true,
+        "summary_comparable": true,
+        "saved_summary_bits": {
+          "positive_sum": "0000000000000000",
+          "negative_sum": "0000000000000000",
+          "minimum": null,
+          "maximum": null
+        },
+        "summary_differences": []
+      },
+      "issues": [],
+      "saved_basic_bound_violation_bits": "3e112e0be826d695",
+      "reconstructed_column_bits": [
+        "be0353cd652bb168",
+        "0000000000000000"
+      ],
+      "current_structural_bounds": {
+        "passed": false,
+        "violations": 1,
+        "max_violation": 1e-09,
+        "worst": {
+          "column": 0,
+          "value": "be0353cd652bb168",
+          "exact_violation": "19342813113834069/19342813113834066795298816"
+        }
+      },
+      "current_augmented_bounds": {
+        "passed": false,
+        "violations": 1,
+        "max_violation": 1e-09,
+        "worst": {
+          "column": 0,
+          "value": "be0353cd652bb168",
+          "exact_violation": "19342813113834069/19342813113834066795298816"
+        }
+      },
+      "construction_bounds": {
+        "passed": false,
+        "violations": 1,
+        "max_violation": 1e-09,
+        "worst": {
+          "column": 0,
+          "value": "be0353cd652bb168",
+          "exact_violation": "19342813113834069/19342813113834066795298816"
+        },
+        "tightened_columns": 0,
+        "relaxed_columns": 0
+      },
+      "rows": {
+        "normalized": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          }
+        },
+        "cuts": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": null
+        },
+        "augmented": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          },
+          "max_relative_backward_error": 0.0,
+          "rows": [
+            {
+              "row": 0,
+              "source": {
+                "kind": "constraint",
+                "index": 0
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": false
+            }
+          ]
+        },
+        "engine_input": {
+          "raw_max_violation": 0.0,
+          "raw_worst": {
+            "constraint": 0,
+            "normalized_row": 0
+          },
+          "scaled": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": {
+              "constraint": 0,
+              "normalized_row": 0
+            }
+          },
+          "dropped_near_zero": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": null
+          },
+          "rows": [
+            {
+              "constraint": 0,
+              "normalized_row": 0,
+              "raw_violation": 0.0,
+              "scaled_violation": 0.0,
+              "passed": true,
+              "exact_recheck": false
+            }
+          ]
+        },
+        "exact_recheck_count": 0,
+        "binary64_arithmetic_issues": []
+      },
+      "conclusion": "near_zero_but_primal_infeasible"
+    }
+  ],
+  "capture": {
+    "engine": "Revised",
+    "terminal": "phase1_cleaned",
+    "first_failure_detail": null,
+    "terminal_detail": null,
+    "source_id": 1,
+    "events_omitted": 0,
+    "objects_omitted": 0,
+    "omitted_estimated_bytes": 0,
+    "estimated_bytes": 838418,
+    "byte_limit": 268435456,
+    "source_unavailable": false,
+    "artificial_mapping_unavailable": false,
+    "slots": {
+      "entry": {
+        "attempt_iteration": null,
+        "state": "not_triggered"
+      },
+      "first_candidate": {
+        "attempt_iteration": 1,
+        "state": "captured"
+      },
+      "first_failure": {
+        "attempt_iteration": null,
+        "state": "not_triggered"
+      },
+      "before_cleanup": {
+        "attempt_iteration": null,
+        "state": "not_triggered"
+      }
+    },
+    "tolerances_bits": {
+      "feasibility": "3e112e0be826d695",
+      "optimality": "3e112e0be826d695",
+      "pivot": "3e112e0be826d695",
+      "zero": "3d719799812dea11",
+      "integrality": "3eb0c6f7a0b5ed8d"
+    },
+    "skipped_cut_indices": [],
+    "mapping_mismatches": []
+  },
+  "external_input_coordinates_used": false,
+  "probe_result": {
+    "status": "Optimal",
+    "nodes": 1,
+    "lp_iterations": 2
+  },
+  "same_state_candidate_pricing": [],
+  "feasible_candidate_with_entering_column": false,
+  "provenance": {
+    "capture_sha256": "1392216baffb0740879650247ccf6e287a3628086dafb0d169cdd400789cd988",
+    "solver_commit": null,
+    "build_options": null,
+    "probe_args": null,
+    "input_sha256": null
+  }
+}

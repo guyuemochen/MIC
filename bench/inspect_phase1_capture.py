@@ -296,17 +296,25 @@ def measure(entries, tolerance):
             "worst": worst[0] if worst else None}
 
 
-def bound_violation(value, lo, hi):
+def bound_violation(value, lo, hi, tolerance):
     if lo <= value <= hi:
         return 0.0
     left, right = (lo, value) if value < lo else (value, hi)
     delta = left - right
-    return delta if math.isfinite(delta) else Fraction.from_float(left) - Fraction.from_float(right)
+    # 两个有限 binary64 数的差若舍入到阈值，精确差仍可能在阈值任一侧。
+    if delta == tolerance or not math.isfinite(delta):
+        return Fraction.from_float(left) - Fraction.from_float(right)
+    return delta
 
 
 def bounds_report(values, limits, tolerance):
-    entries = [({"column": j, "value": number.bits}, bound_violation(number.value, *limit))
-               for j, (number, limit) in enumerate(zip(values, limits))]
+    entries = []
+    for j, (number, limit) in enumerate(zip(values, limits)):
+        delta = bound_violation(number.value, *limit, tolerance)
+        column = {"column": j, "value": number.bits}
+        if isinstance(delta, Fraction):
+            column["exact_violation"] = str(delta)
+        entries.append((column, delta))
     return measure(entries, tolerance)
 
 
@@ -382,7 +390,9 @@ def artificial_report(values, basic_artificial, summary, tolerance):
                                             and isinstance(saved_value, float) and math.isnan(saved_value)):
             differences.append({"field": name, "saved": saved, "recomputed": metric(expected)})
     near_zero = not bad and sums["positive_sum"] <= tolerance and all(v >= -tolerance for v in finite_values)
+    positive_sum = sums.get("positive_sum")
     return {**{name: metric(sums.get(name)) for name in ("positive_sum", "negative_sum", "absolute_sum")},
+            "positive_sum_exact": str(positive_sum) if isinstance(positive_sum, Fraction) else None,
             "minimum": metric(min(finite_values, default=None)) if not bad else None,
             "maximum": metric(max(finite_values, default=None)) if not bad else None,
             "nonfinite": bad, "sum_overflow": sum_overflow, "near_zero": near_zero,
