@@ -1,0 +1,50 @@
+{
+  "source": "/tmp/mic-dense-basis-refactor",
+  "source_commit": "3d136d6905516292b5885121c5c6cf7b29d72eea",
+  "source_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+  "repository_tree": "7d68752d1ac411c129f16bce10d959648c5b4914",
+  "manifest_sha256": "bc5ab6c018d10c7b96b15ef0db99d7843830a4e9df4f9271224103356a44b321",
+  "builds": {
+    "base": {
+      "binary": "/tmp/mic-r11-binaries/round_probe_base",
+      "features": [],
+      "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+      "cargo_default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ],
+      "cargo_dependencies_of_explicit_features": [],
+      "effective_features": [
+        "binary_coefficient_strengthening",
+        "sparse_row_products"
+      ],
+      "build_log": "base-build.log",
+      "build_log_sha256": "5a8b2c4a8936b8bebccd85e0bbe29c51eb0e52e1b9a21f27f30d27b7005c843b"
+    },
+    "candidate": {
+      "binary": "/tmp/mic-r11-binaries/round_probe_candidate",
+      "features": [
+        "certified_row_fallback"
+      ],
+      "binary_sha256": "ab829e786415f8fcac6cb4b262a8036e3b0be266962ddcc3703488cb386e23f3",
+      "cargo_default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ],
+      "cargo_dependencies_of_explicit_features": [
+        "binary_coefficient_strengthening"
+      ],
+      "effective_features": [
+        "binary_coefficient_strengthening",
+        "certified_row_fallback",
+        "sparse_row_products"
+      ],
+      "build_log": "candidate-build.log",
+      "build_log_sha256": "2032e06add80a9eae19a7e87a76f1d4bfeb402c8bbada47351538115a792ec1f"
+    }
+  },
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)\nrelease: 1.97.0\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: aarch64-apple-darwin\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.7.1 (sys:0.4.88+curl-8.20.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Mac OS 26.5.2 [64-bit]",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "python": "3.13.14 (main, Jun 10 2026, 12:24:04) [Clang 21.0.0 (clang-2100.0.123.102)]"
+}

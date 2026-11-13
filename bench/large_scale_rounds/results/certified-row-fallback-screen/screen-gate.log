@@ -1,0 +1,67 @@
+/opt/homebrew/bin/python3.13 /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/gate_feature_trial.py /tmp/mic-r11-screen/certified_row_fallback-screen-summary.json --output /tmp/mic-r11-screen/certified_row_fallback-screen-gates.json 
+{
+  "feature": "certified_row_fallback",
+  "phase": "screen",
+  "time_limit_secs": 10,
+  "repetitions": 1,
+  "source": {
+    "source_commit": "3d136d6905516292b5885121c5c6cf7b29d72eea",
+    "source_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+    "binary_manifest_sha256": "bc5ab6c018d10c7b96b15ef0db99d7843830a4e9df4f9271224103356a44b321",
+    "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  },
+  "variants": {
+    "base": {
+      "binary": "/private/tmp/mic-r11-binaries/round_probe_base",
+      "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+      "features": [],
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r11-binaries/round_probe_candidate",
+      "binary_sha256": "ab829e786415f8fcac6cb4b262a8036e3b0be266962ddcc3703488cb386e23f3",
+      "features": [
+        "certified_row_fallback"
+      ],
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7
+    }
+  },
+  "thresholds": {
+    "max_proof_losses": 0,
+    "rss_floor_bytes": 67108864,
+    "rss_base_multiplier": 2,
+    "max_case_ratio": 1.25
+  },
+  "gates": {
+    "correctness": true,
+    "no_proof_loss": true,
+    "rss": true,
+    "case_median": true
+  },
+  "overall_passed": true,
+  "eligible_for_paired": true,
+  "correctness_errors": [],
+  "paired_proof_losses": 0,
+  "rss_failures": 0,
+  "timing": {
+    "common_optimal_models": 7,
+    "eligible_models": 6,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.9124825236723588,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "new_stable_proof_models": [],
+  "new_proof_evidence": {},
+  "input_summary": "/tmp/mic-r11-screen/certified_row_fallback-screen-summary.json"
+}
