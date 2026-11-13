@@ -1,0 +1,38 @@
+{
+  "destination": "bench/large_scale_rounds/results/certified-row-fallback-paired",
+  "changed_field": "model",
+  "raw_sha256": "636a053af6eb52e4d1e621522a02fc39290df868b681ea7e6edf1a593e717c75",
+  "repo_relative_sha256": "21fec0fdbd1db9afddb5afcfdb23773a2a1acca0b5f6847db012f9de500731c4",
+  "original_sha256": {
+    "certified_row_fallback-binaries.json": "bc5ab6c018d10c7b96b15ef0db99d7843830a4e9df4f9271224103356a44b321",
+    "certified_row_fallback-builds.json": "624bc43983c171d7712cb93a9f51d30967fa84f9e282a7b9767b8c49c4a54c15",
+    "certified_row_fallback-paired-check.json": "6fca3795dae7cbe7fd481e785233160a106de3d7033d31533218fc93ca25ab9d",
+    "certified_row_fallback-paired-gates.json": "b6b3aa1a0f7e585c69c49bc39d0c69b6d6f1c4b8fa004a1b6f0d73bf4f519341",
+    "certified_row_fallback-paired-summary.json": "10ccf3dfd6ff04b681e4f8a78399e57ca9636e2a434ce795144cf9a551daf9d6",
+    "certified_row_fallback-paired.jsonl": "636a053af6eb52e4d1e621522a02fc39290df868b681ea7e6edf1a593e717c75",
+    "certified_row_fallback-screen-gates.json": "a003bbc318dcb6919efce513831521729cfd441a4d39f0402ac18e95bb7541a5",
+    "execution.sh": "d45dfa4b91261a6905fe045ffd5f150bcf9bab795ea22b1fd4a7274899d78b22",
+    "freeze-check.log": "e3e25d62ae636f962f0aec29488cbafe7619ba9f2075cbc622cc2ad383ab63f8",
+    "paired-check.log": "fbac5b614dce081ad6d8e89dbd7d44a434186c1bba2ce0c4fe602c2115b9a39a",
+    "paired-exit-codes.txt": "7dda4cc12aa59aa33f9b67b93652e041bd0559b55c83f7819d3d9cc6e5cc2f0b",
+    "paired-gate.log": "efdf24278a04cd799b155313402c5254cfcd84f8c941212e45176538cabceec1",
+    "paired-run.log": "d6aa4b5f085ba5f3f194ed92a1ecf7ae51273537c7feb10af76d65c3253a2e25",
+    "paired-summary.log": "df4adda15220570fe0043dce758102c455188e4a7a07907a21916d7156e97f83",
+    "rss-preflight.log": "9c1185895ef141767e89584fff3d74d394c4a52c8db65637a6304589012c3557"
+  },
+  "archive_replay_sha256": {
+    "check": "6fca3795dae7cbe7fd481e785233160a106de3d7033d31533218fc93ca25ab9d",
+    "summary": "10ccf3dfd6ff04b681e4f8a78399e57ca9636e2a434ce795144cf9a551daf9d6",
+    "gates": "b432346ba36d04b36e12922702e76172cc4b5f64348a65ae0dec53305d06826a"
+  },
+  "archive_replay_exit_codes": {
+    "check": 0,
+    "summary": 0,
+    "gates": 1
+  },
+  "archive_replay_comparison": {
+    "check_exact": true,
+    "summary_exact": true,
+    "gates_exact_except_input_summary": true
+  }
+}

@@ -1,0 +1,25 @@
+/opt/homebrew/bin/python3.13 - /tmp/mic-dense-basis-refactor /tmp/mic-r11-paired /tmp/mic-r11-binaries /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds certified_row_fallback /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-baseline.jsonl /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json 
+{
+  "source_commit": "3d136d6905516292b5885121c5c6cf7b29d72eea",
+  "source_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+  "repository_tree": "7d68752d1ac411c129f16bce10d959648c5b4914",
+  "binary_manifest_sha256": "bc5ab6c018d10c7b96b15ef0db99d7843830a4e9df4f9271224103356a44b321",
+  "binaries_sha256": {
+    "base": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+    "candidate": "ab829e786415f8fcac6cb4b262a8036e3b0be266962ddcc3703488cb386e23f3"
+  },
+  "inputs_sha256": {
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292",
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-baseline.jsonl": "d084c6b5a972d27686ddee7d5efa698c8eb5879a56b84ae39c26808c75d545b6",
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6"
+  },
+  "tools_sha256": {
+    "run_feature_trial.py": "d2d7b02146bcc60dbaa6ce77403e1d67a27e2b1af154f82984dc8519b39c9ac2",
+    "check_results.py": "2d4719bb875c0a106ef441e008b243867d0d02577a9eec40cd18bcf8ef091413",
+    "summarize_feature_trial.py": "f316ab3b1a07744873c758f67a3ba380f578eff1561f7235146248fa8da92e63",
+    "gate_feature_trial.py": "1b5005954e7b7f33400a7d76f2863db56e4a4653d2bd22b047245fc7c21c23f8"
+  },
+  "time_limit_secs": 30,
+  "repetitions": 3,
+  "expected_rows": 120
+}
