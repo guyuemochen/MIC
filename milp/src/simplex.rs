@@ -36,6 +36,11 @@
 //!   `infeasible_flag`（后续 solve/resolve 直接 Infeasible），满足则永久剔除
 //!   （duals 恒 0，`row_of_constraint` 返回 None）。
 //!
+//! - 第二阶段本轮数值失败且无人工欠账时，同一公开调用至多额外冷重建一次：
+//!   保留当前界、原行和割，完整重跑两阶段；迭代、工作步、期限与 Bland
+//!   预算不重置。真实上限、第一阶段失败及最终解检查降级不进入恢复；
+//!   再次失败仍诚实停止。稀疏引擎使用自身的一次整基重因子化策略。
+//!
 //! # 定价与终止
 //! - 双侧合格性：贴下界且 rc < −tol.optimality（增向入基）或 贴上界且
 //!   rc > +tol.optimality（减向入基）。贴上界列的减向入基是二进制/有限上界
@@ -528,17 +533,21 @@ enum Step {
     FilteredBlock(String),
 }
 
-/// 仅测试：定价完成后污染一次入基方向，覆盖真实阶段循环的失败出口。
+/// 仅测试：定价完成后按指定次数污染入基方向，覆盖真实阶段循环的失败出口。
 /// 线程局部配置和作用域回退保证并行测试之间互不干扰。
 #[cfg(test)]
 mod direction_fault {
     std::thread_local! {
-        static VALUE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+        static VALUE: std::cell::Cell<Option<(f64, usize)>> = const { std::cell::Cell::new(None) };
     }
-    pub(super) struct Guard(Option<f64>);
+    pub(super) struct Guard(Option<(f64, usize)>);
     impl Guard {
         pub(super) fn new(value: f64) -> Self {
-            Self(VALUE.with(|v| v.replace(Some(value))))
+            Self::repeated(value, 1)
+        }
+        pub(super) fn repeated(value: f64, count: usize) -> Self {
+            assert!(count > 0);
+            Self(VALUE.with(|v| v.replace(Some((value, count)))))
         }
         pub(super) fn consumed(&self) -> bool {
             VALUE.with(|v| v.get().is_none())
@@ -550,7 +559,58 @@ mod direction_fault {
         }
     }
     pub(super) fn take() -> Option<f64> {
-        VALUE.with(|v| v.take())
+        VALUE.with(|v| {
+            let (value, count) = v.get()?;
+            v.set((count > 1).then_some((value, count - 1)));
+            Some(value)
+        })
+    }
+}
+
+/// 仅测试：在真实步骤后的守卫前制造有限越界，并确定性覆盖恢复两侧期限。
+#[cfg(test)]
+mod recovery_fault {
+    use super::Simplex;
+    #[derive(Clone, Copy, Default)]
+    pub(super) struct State {
+        pub faults: usize,
+        pub rebuilds: usize,
+        pub expire_before: bool,
+        pub expire_after: bool,
+    }
+    std::thread_local! {
+        static STATE: std::cell::Cell<State> = const { std::cell::Cell::new(State {
+            faults: 0, rebuilds: 0, expire_before: false, expire_after: false,
+        }) };
+    }
+    pub(super) struct Guard(State);
+    impl Guard {
+        pub(super) fn new(state: State) -> Self { Self(STATE.with(|s| s.replace(state))) }
+        pub(super) fn state(&self) -> State { STATE.with(|s| s.get()) }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { STATE.with(|s| s.set(self.0)); }
+    }
+    pub(super) fn after_step(s: &mut Simplex) {
+        STATE.with(|state| {
+            let mut config = state.get();
+            if config.faults > 0 {
+                config.faults -= 1;
+                let (lb, ub) = s.col_bounds(s.basis[0]);
+                s.rhs[0] = if lb.is_finite() { lb - 1.0 } else { ub + 1.0 };
+                state.set(config);
+            }
+        });
+    }
+    pub(super) fn recovery_boundary(s: &mut Simplex, after: bool) {
+        STATE.with(|state| {
+            let mut config = state.get();
+            if after { config.rebuilds += 1; }
+            if (after && config.expire_after) || (!after && config.expire_before) {
+                s.time_deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            }
+            state.set(config);
+        });
     }
 }
 
@@ -773,7 +833,7 @@ impl Simplex {
         self.bounds.lb.clone_from(&bounds.lb);
         self.bounds.ub.clone_from(&bounds.ub);
         self.rebuild_initial_basis();
-        let st = self.run_two_phase(true);
+        let st = self.run_two_phase_with_recovery(true, &mut LpWorkLimit::unlimited());
         self.has_run = true;
         self.build_solution(st)
     }
@@ -807,7 +867,7 @@ impl Simplex {
             self.bounds.lb.clone_from(&bounds.lb);
             self.bounds.ub.clone_from(&bounds.ub);
             self.rebuild_initial_basis();
-            let st = self.run_two_phase_with_limit(true, work);
+            let st = self.run_two_phase_with_recovery(true, work);
             self.has_run = true;
             return self.build_solution(st);
         }
@@ -849,7 +909,7 @@ impl Simplex {
         } else if need_repair {
             self.rebuild_initial_basis();
         }
-        let st = self.run_two_phase_with_limit(need_repair && !dual_repaired, work);
+        let st = self.run_two_phase_with_recovery(need_repair && !dual_repaired, work);
         self.has_run = true;
         self.build_solution(st)
     }
@@ -2187,8 +2247,7 @@ impl Simplex {
     fn run_phase(&mut self, phase: u8, work: &mut LpWorkLimit<'_>) -> PhaseOutcome {
         let m = self.basis.len();
         let n = self.num_structural;
-        let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
-        let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
+        let limit = self.call_iteration_limit();
         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
         let mut check_initial_values = true;
         loop {
@@ -2298,6 +2357,8 @@ impl Simplex {
                     }
                 }
             }
+            #[cfg(test)]
+            if phase == 2 { recovery_fault::after_step(self); }
             if let Err(msg) = self.check_phase_basic_values(phase) {
                 #[cfg(feature = "phase1_progress_diagnostics")]
                 if phase == 1 {
@@ -2525,11 +2586,64 @@ impl Simplex {
     /// （不可行/迭代上限/数值失败/无界）都置 `phase1_pending`——人工变量
     /// 未清理留基，该状态不可供后续 resolve 直接跑 Phase-2；只有清理完成
     /// 才复位（残基人工变量值恒 0 且行系数近零，Phase-2 不会再移动它）。
+    #[cfg(test)]
     fn run_two_phase(&mut self, phase1_needed: bool) -> LpStatus {
         self.run_two_phase_with_limit(phase1_needed, &mut LpWorkLimit::unlimited())
     }
 
+    #[cfg(test)]
     fn run_two_phase_with_limit(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        self.run_two_phase_attempt(phase1_needed, work, &mut false)
+    }
+
+    /// 恢复与原阶段共用同一调用限额，不能靠重建重领迭代额度。
+    fn call_iteration_limit(&self) -> u64 {
+        let base = 10_000.max(20u64.saturating_mul((self.basis.len() + self.num_structural) as u64));
+        self.iter_limit_hint.map_or(base, |h| h.max(1_000))
+    }
+
+    fn recovery_stop_status(&self, work: &LpWorkLimit<'_>) -> Option<LpStatus> {
+        if let Some(status) = work.stop_status(self.time_deadline) {
+            return Some(status);
+        }
+        if self.iter_call >= self.call_iteration_limit() {
+            return Some(LpStatus::IterationLimit);
+        }
+        if self.time_deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Some(LpStatus::TimeLimit);
+        }
+        None
+    }
+
+    /// 每次公开调用至多一次额外冷恢复；资格只来自本轮第二阶段失败。
+    /// 保留当前界、原行与割及全部调用预算，不把真实上限、第一阶段欠账
+    /// 或最终解检查降级当成恢复机会。稀疏引擎已有自己的整基重因子化。
+    fn run_two_phase_with_recovery(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        let mut phase2_failed = false;
+        let status = self.run_two_phase_attempt(phase1_needed, work, &mut phase2_failed);
+        if !phase2_failed || status != LpStatus::IterationLimit || self.phase1_pending {
+            return status;
+        }
+        #[cfg(test)]
+        recovery_fault::recovery_boundary(self, false);
+        if let Some(status) = self.recovery_stop_status(work) {
+            return status;
+        }
+        self.rebuild_initial_basis();
+        // 重建会清旧欠账；新人工列必须在任何可能提前停止的检查前立账。
+        self.phase1_pending = self.num_art > 0;
+        #[cfg(test)]
+        recovery_fault::recovery_boundary(self, true);
+        if let Some(status) = self.recovery_stop_status(work) {
+            return status;
+        }
+        self.numerical_error = None;
+        // 直接调用单次尝试，第二次失败绝不递归恢复。
+        self.run_two_phase_attempt(true, work, &mut false)
+    }
+
+    fn run_two_phase_attempt(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>, phase2_failed: &mut bool) -> LpStatus {
+        *phase2_failed = false;
         if phase1_needed && self.num_art > 0 {
             #[cfg(feature = "phase1_progress_diagnostics")]
             let _diagnostic_scope = self.diagnostic_begin();
@@ -2609,6 +2723,7 @@ impl Simplex {
             PhaseOutcome::LimitReached => LpStatus::IterationLimit,
             PhaseOutcome::TimedOut => LpStatus::TimeLimit,
             PhaseOutcome::Failed(msg) => {
+                *phase2_failed = true;
                 self.numerical_error = Some(msg);
                 LpStatus::IterationLimit
             }
@@ -3163,6 +3278,268 @@ mod tests {
     use crate::error::MilpError;
     use crate::model::{Constraint, LinearExpr, VarType, Variable};
 
+
+    mod dense_cold_recovery_tests {
+        use super::*;
+
+        fn fixture() -> (Simplex, Bounds) {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)],
+                vec![(0, -1.0), (1, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 2.0),
+                     (vec![(1, 1.0)], RelOp::Le, 3.0)]);
+            (Simplex::new(&p, tol()).unwrap(), Bounds::from_problem(&p))
+        }
+
+        #[test]
+        fn healthy_infeasible_and_unbounded_paths_do_not_rebuild() {
+            for op in [RelOp::Le, RelOp::Ge] {
+                let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
+                    vec![(vec![(0, 1.0)], op, 2.0)]);
+                let mut old = Simplex::new(&p, tol()).unwrap();
+                let mut new = old.clone();
+                new.numerical_error = Some("旧诊断".to_string());
+                let expected = old.run_two_phase(true);
+                let guard = recovery_fault::Guard::new(Default::default());
+                let actual = new.run_two_phase_with_recovery(true, &mut LpWorkLimit::unlimited());
+                assert_eq!(actual, expected);
+                assert_eq!(new.basis, old.basis);
+                assert_eq!(new.rhs, old.rhs);
+                assert_eq!(new.iterations(), old.iterations());
+                assert_eq!(guard.state().rebuilds, 0);
+            }
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, f64::INFINITY)], vec![(0, -1.0)], vec![]);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            let guard = recovery_fault::Guard::new(Default::default());
+            assert_eq!(s.solve(&Bounds::from_problem(&p)).status, LpStatus::Unbounded);
+            assert_eq!(guard.state().rebuilds, 0);
+        }
+
+        #[test]
+        fn finite_post_step_failure_retries_once_and_counts_both_attempts() {
+            for faults in [1, 2] {
+                let (mut s, bounds) = fixture();
+                let guard = recovery_fault::Guard::new(recovery_fault::State { faults, ..Default::default() });
+                let result = s.solve(&bounds);
+                assert_eq!(guard.state().rebuilds, 1);
+                assert_eq!(guard.state().faults, 0);
+                if faults == 1 {
+                    assert_eq!(result.status, LpStatus::Optimal);
+                    assert_eq!(result.x, vec![2.0, 3.0]);
+                    assert_eq!(result.objective, -5.0);
+                    assert_eq!(s.iterations(), 3);
+                    assert_eq!(s.iter_call, 3);
+                    assert!(s.numerical_error.is_none());
+                    assert!(s.check_phase_basic_values(2).is_ok());
+                } else {
+                    assert_eq!(result.status, LpStatus::IterationLimit);
+                    assert!(result.objective.is_nan());
+                    assert_eq!(s.iterations(), 2);
+                    assert!(s.numerical_error.as_deref().unwrap().contains("绝对界容差"));
+                }
+            }
+        }
+
+        #[test]
+        fn hot_resolve_and_snapshot_share_current_rows_but_not_retry_state() {
+            let (mut s, bounds) = fixture();
+            let mut fixed = bounds.clone();
+            fixed.ub.fill(0.0);
+            assert_eq!(s.solve(&fixed).status, LpStatus::Optimal);
+            s.add_row(&[(0, 1.0), (1, 1.0)], RelOp::Le, 4.0).unwrap();
+            let snapshot = s.clone();
+            for mut candidate in [s, snapshot] {
+                let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
+                let result = candidate.resolve(&bounds);
+                assert_eq!(result.status, LpStatus::Optimal);
+                assert_eq!(result.objective, -4.0);
+                assert!(result.x[0] <= 2.0 && result.x[1] <= 3.0);
+                assert!(result.x.iter().sum::<f64>() <= 4.0);
+                assert_eq!(candidate.num_rows(), 3);
+                assert_eq!(guard.state().rebuilds, 1);
+                let mut sibling = bounds.clone();
+                sibling.ub[0] = 0.5;
+                let result = candidate.resolve(&sibling);
+                assert_eq!(result.status, LpStatus::Optimal);
+                assert_eq!(result.objective, -3.5);
+                assert_eq!(result.x, vec![0.5, 3.0]);
+                assert_eq!(guard.state().rebuilds, 1, "健康兄弟节点不重建恢复");
+            }
+        }
+
+        #[test]
+        fn recovery_keeps_bland_refresh_clock_and_total_counters() {
+            let (mut s, _) = fixture();
+            s.iter_call = 41;
+            s.iterations_total = 99;
+            s.bland = true;
+            s.bland_permanent = true;
+            s.bland_rearms = BLAND_REARM_MAX;
+            s.bland_dwell = 7;
+            s.pivots_since_refresh = 100;
+            s.pivots_since_time_check = 17;
+            s.set_iter_limit_hint(Some(1234));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            s.set_time_deadline(Some(deadline));
+            let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
+            assert_eq!(s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited()), LpStatus::Optimal);
+            assert_eq!(guard.state().rebuilds, 1);
+            assert_eq!(s.iter_call, 44);
+            assert_eq!(s.iterations(), 102);
+            assert!(s.bland && s.bland_permanent);
+            assert_eq!(s.bland_rearms, BLAND_REARM_MAX);
+            assert!(s.bland_dwell >= 7);
+            assert_eq!(s.pivots_since_refresh, 103);
+            assert_eq!(s.pivots_since_time_check, 21);
+            assert_eq!(s.iter_limit_hint, Some(1234));
+            assert_eq!(s.time_deadline(), Some(deadline));
+        }
+
+        #[test]
+        fn actual_iteration_budget_is_never_reissued() {
+            for spent in [998, 999, 1000] {
+                let (mut s, _) = fixture();
+                s.set_iter_limit_hint(Some(1000));
+                s.iter_call = spent;
+                s.numerical_error = Some("旧诊断不提供恢复资格".to_string());
+                let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
+                let status = s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited());
+                assert_eq!(status, LpStatus::IterationLimit);
+                assert_eq!(s.iter_call, 1000);
+                assert_eq!(s.iterations(), 1000 - spent);
+                assert_eq!(guard.state().rebuilds, usize::from(spent == 998));
+                assert_eq!(s.iter_limit_hint, Some(1000));
+            }
+        }
+
+        #[test]
+        fn deadline_on_each_recovery_boundary_preserves_new_artificial_debt() {
+            for after in [false, true] {
+                let p = prob(Sense::Minimize,
+                    vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)], vec![(0, -1.0)],
+                    vec![(vec![(0, 1.0)], RelOp::Le, 2.0),
+                         (vec![(1, 1.0)], RelOp::Eq, 0.0)]);
+                let bounds = Bounds::from_problem(&p);
+                let mut s = Simplex::new(&p, tol()).unwrap();
+                let guard = recovery_fault::Guard::new(recovery_fault::State {
+                    faults: 1, expire_before: !after, expire_after: after, ..Default::default()
+                });
+                let status = s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited());
+                assert_eq!(status, LpStatus::TimeLimit);
+                assert_eq!(guard.state().rebuilds, usize::from(after));
+                assert_eq!(s.iterations(), 1, "期限到期后不得执行第二次尝试");
+                assert_eq!(s.phase1_pending, after);
+                if after { assert!(s.num_art > 0); }
+                drop(guard);
+                s.set_time_deadline(None);
+                s.has_run = true;
+                let result = s.resolve(&bounds);
+                assert_eq!(result.status, LpStatus::Optimal);
+                assert_eq!(result.x, vec![2.0, 0.0]);
+                assert!(!s.phase1_pending);
+            }
+        }
+
+        #[test]
+        fn completed_old_phase_one_debt_allows_new_phase_two_recovery() {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, 10.0), var("y", 0.0, 10.0)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 2.0),
+                     (vec![(1, 1.0)], RelOp::Eq, 0.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            s.phase1_pending = true;
+            s.has_run = true;
+            let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
+            let result = s.resolve(&bounds);
+            assert_eq!(result.status, LpStatus::Optimal);
+            assert_eq!(result.x, vec![2.0, 0.0]);
+            assert_eq!(guard.state().rebuilds, 1);
+            assert_eq!(s.iterations(), 4, "两次完整人工清理和两个第二阶段主元均须记账");
+            assert!(!s.phase1_pending);
+            let mut reference = s.clone();
+            reference.start_call();
+            let expected = reference.run_two_phase(false);
+            let actual = s.resolve(&bounds);
+            assert_eq!(actual.status, expected);
+            assert_eq!(s.basis, reference.basis);
+            assert_eq!(s.rhs, reference.rhs);
+            assert_eq!(s.iter_call, reference.iter_call);
+            assert_eq!(s.iterations(), reference.iterations());
+            assert_eq!(guard.state().rebuilds, 1, "健康热启动不触发额外恢复");
+        }
+
+        #[test]
+        fn phase_one_failure_and_unfinished_debt_never_recover() {
+            for phase_one in [false, true] {
+                let (mut s, _) = fixture();
+                s.phase1_pending = true;
+                if phase_one {
+                    // 有人工列的真正第一阶段失败仍须保留欠账。
+                    s.add_row(&[(0, 1.0)], RelOp::Eq, 1.0).unwrap();
+                    s.rhs[0] = f64::NAN;
+                } else {
+                    s.rhs[0] = -1.0;
+                }
+                let guard = recovery_fault::Guard::new(Default::default());
+                let status = s.run_two_phase_with_recovery(phase_one, &mut LpWorkLimit::unlimited());
+                assert_eq!(status, LpStatus::IterationLimit);
+                assert_eq!(guard.state().rebuilds, 0);
+                assert!(s.phase1_pending);
+                assert_eq!(s.iterations(), 0);
+            }
+        }
+
+        #[cfg(feature = "root_heuristic_work_limit")]
+        #[test]
+        fn borrowed_work_counts_failed_and_recovery_steps_without_refund() {
+            for cap in [0, 1, 2, 3, 4] {
+                let (mut s, bounds) = fixture();
+                let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
+                let mut balance = cap;
+                let result = s.resolve_with_work_limit(&bounds, &mut balance);
+                assert_eq!(s.iterations(), cap.min(3));
+                assert_eq!(balance, cap.saturating_sub(3));
+                assert_eq!(guard.state().rebuilds, usize::from(cap > 1));
+                assert_eq!(result.status, if cap > 3 { LpStatus::Optimal } else { LpStatus::IterationLimit });
+                if cap > 3 { assert_eq!(result.x, vec![2.0, 3.0]); }
+                else { assert!(result.objective.is_nan()); }
+            }
+        }
+
+        #[test]
+        fn one_phase_two_fault_recovers_same_bounds_and_cut() {
+            for first_resolve in [false, true] {
+                let p = prob(Sense::Minimize, vec![var("x", 0.0, 10.0)], vec![(0, -1.0)],
+                    vec![(vec![(0, 1.0)], RelOp::Le, 8.0)]);
+                let mut s = Simplex::new(&p, tol()).unwrap();
+                s.add_row(&[(0, 1.0)], RelOp::Le, 3.0).unwrap();
+                let mut bounds = Bounds::from_problem(&p);
+                bounds.lb[0] = 1.0;
+                bounds.ub[0] = 4.0;
+                let rows = s.row_terms.clone();
+                let rhs = s.row_rhs.clone();
+                let origins = s.layout.slack.iter().map(|col| col.origin).collect::<Vec<_>>();
+                let fault = direction_fault::Guard::new(f64::NAN);
+                let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
+                assert!(fault.consumed());
+                assert_eq!(result.status, LpStatus::Optimal, "{result:?}");
+                assert_eq!(result.x, vec![3.0]);
+                assert_eq!(result.objective, -3.0);
+                assert!(result.x[0] >= bounds.lb[0] && result.x[0] <= bounds.ub[0]);
+                assert!(result.x[0] <= 8.0 && result.x[0] <= 3.0);
+                assert_eq!(s.bounds.lb, bounds.lb);
+                assert_eq!(s.bounds.ub, bounds.ub);
+                assert_eq!(s.row_terms, rows);
+                assert_eq!(s.row_rhs, rhs);
+                assert_eq!(s.layout.slack.iter().map(|col| col.origin).collect::<Vec<_>>(), origins);
+                assert_eq!(s.num_rows(), 2);
+                assert!(s.check_phase_basic_values(2).is_ok());
+                assert!(!s.phase1_pending);
+                assert_eq!(s.iterations(), 1);
+            }
+        }
+    }
 
     mod safe_primal_ratio_tests {
         use super::*;
@@ -4134,7 +4511,7 @@ mod tests {
             assert_eq!(expected.objective, cost);
             let mut s = Simplex::new(&p, tol()).unwrap();
             let failed = {
-                let fault = direction_fault::Guard::new(value);
+                let fault = direction_fault::Guard::repeated(value, 2);
                 let result = s.solve(&bounds);
                 assert!(fault.consumed());
                 result

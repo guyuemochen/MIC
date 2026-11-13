@@ -1,0 +1,33 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-numerical-recovery/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.74s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-d925e2642e1ae5b9)
+
+running 7 tests
+test simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut ... ok
+test simplex::tests::dense_cold_recovery_tests::deadline_on_each_recovery_boundary_preserves_new_artificial_debt ... ok
+test simplex::tests::dense_cold_recovery_tests::hot_resolve_and_snapshot_share_current_rows_but_not_retry_state ... ok
+test simplex::tests::dense_cold_recovery_tests::actual_iteration_budget_is_never_reissued ... ok
+test simplex::tests::dense_cold_recovery_tests::phase_one_failure_and_unfinished_debt_never_recover ... ok
+test simplex::tests::dense_cold_recovery_tests::finite_post_step_failure_retries_once_and_counts_both_attempts ... ok
+test simplex::tests::dense_cold_recovery_tests::borrowed_work_counts_failed_and_recovery_steps_without_refund ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 503 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-9c8588108a1bb63d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-49bd1835d5320800)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-3f94931618ff72af)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
