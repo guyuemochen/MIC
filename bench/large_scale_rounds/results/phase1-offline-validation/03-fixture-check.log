@@ -1,0 +1,6 @@
+dense entry 0 0 artificial_not_near_zero
+dense first_candidate 1 1 primal_and_augmented_pass
+dense before_cleanup 1 1 primal_and_augmented_pass
+revised entry 0 0 artificial_not_near_zero
+revised first_candidate 1 1 primal_and_augmented_pass
+revised before_cleanup 1 1 primal_and_augmented_pass
