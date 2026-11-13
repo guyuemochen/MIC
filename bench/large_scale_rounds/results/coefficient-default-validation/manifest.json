@@ -1,0 +1,101 @@
+{
+  "parent_commit": "91db108868db2b2c231d305225a2d2549acbf712",
+  "source_files": {
+    "milp/src/binary_propagation.rs": "ab66890ce10b5832ec5898b8def676fe8bf5705a6eb40ee247f4bc7111b9957d",
+    "milp/src/branch_bound.rs": "1f129fa2338aefee281bae0ac072713cf8e1fd11f12caa09aa87739cad60df03",
+    "milp/src/cuts.rs": "731ca846eeb465a59e8eb517ce8f97fbdfa37237b06185ee20517371d17bb685",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/heuristics.rs": "d3aced478a77af573d5fe1f749b92992ceaf9745b7b6e4552a8ce1356ccc99fc",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "a2413becb37d19bac42af72eb81bb940cf6d4603995a7b34effab01daeccaa5b",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/parallel_bb.rs": "ca195e29a69d7073669d0888997430ae69ba4fed474f3ed94a326f368ada052e",
+    "milp/src/presolve.rs": "d4c6ca82fc1312a6e85eae74299098708f8797c92aa12ec88cb1a8155a281002",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/simplex.rs": "71cc3aba36435a81212aac9af07798e5e6fd43bee09e37bdec0006cd1980dcc3",
+    "milp/src/simplex_sparse.rs": "170a369b19962b003a92b8adc8f566dae4fb0d198d96489d6dce9a3cc34b9758",
+    "milp/src/solver.rs": "3b6eaf1bf97228ecf3a488ad79ed02952aab1f0471cef99f5de54768f64144c3"
+  },
+  "cargo_sha256": "808368cbbc862bd9edbfafc58ae048ed4f57424492a41b15957fabaf3d34c2e1",
+  "commands": [
+    {
+      "name": "01-milp-default",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 64.11176512500242
+    },
+    {
+      "name": "02-release-acceptance",
+      "command": [
+        "cargo",
+        "test",
+        "--release",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 4.816547041002195
+    },
+    {
+      "name": "03-planner",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "planner/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 12.703458791998855
+    },
+    {
+      "name": "04-ffi",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp-ffi/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 2.5583569160007755
+    },
+    {
+      "name": "05-ffi-release",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "milp-ffi/Cargo.toml"
+      ],
+      "returncode": 0,
+      "elapsed_secs": 2.275030999997398
+    },
+    {
+      "name": "06-python",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "micpython/tests",
+        "-t",
+        "."
+      ],
+      "returncode": 0,
+      "elapsed_secs": 0.5779186250001658
+    }
+  ]
+}
