@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "rustc",
+    "--edition=2021",
+    "bench/large_scale_rounds/certified_fallback_probe.rs",
+    "--extern",
+    "milp=milp/target/release/libmilp.rlib",
+    "-L",
+    "dependency=milp/target/release/deps",
+    "--cfg",
+    "feature=\"binary_coefficient_strengthening\"",
+    "--cfg",
+    "feature=\"certified_row_fallback\"",
+    "-O",
+    "-o",
+    "milp/target/certified-fallback-probe"
+  ],
+  "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+  "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+  "exit_code": 0,
+  "seconds": 0.4220137596130371
+}

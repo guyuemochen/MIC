@@ -1,0 +1,1220 @@
+diff --git a/bench/large_scale_rounds/audit_certified_fallback.py b/bench/large_scale_rounds/audit_certified_fallback.py
+new file mode 100644
+index 0000000..0be474b
+--- /dev/null
++++ b/bench/large_scale_rounds/audit_certified_fallback.py
+@@ -0,0 +1,56 @@
++#!/usr/bin/env python3
++"""对冻结20例只做预处理/认证审计，与既有R8丢失认证记录逐例对账，不求解LP。"""
++
++import argparse
++import json
++from pathlib import Path
++
++from audit_coefficient_strengthening import FROZEN_LEGACY, HERE, inputs, run
++from compare import require
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--probe', type=Path, required=True)
++    parser.add_argument('--legacy', type=Path, default=FROZEN_LEGACY)
++    parser.add_argument('--legacy-public-dir', type=Path, required=True)
++    parser.add_argument('--miplib-manifest', type=Path, required=True)
++    parser.add_argument('--expected-r8-audit', type=Path,
++                        default=HERE / 'results' / 'coefficient-strengthening-audit.jsonl')
++    args = parser.parse_args()
++    paths = inputs(args.legacy, args.legacy_public_dir, args.miplib_manifest)
++    expected = {row['instance']: row for row in map(json.loads, args.expected_r8_audit.read_text().splitlines())}
++    require(set(expected) == set(paths), 'R8审计须覆盖同一冻结20例')
++    raw = run(args.probe, *(path for path, _ in paths.values())).decode().splitlines()
++    records = {}
++    for line in raw:
++        fields = line.split('\t')
++        require(len(fields) == 9, '探针须输出9列')
++        path, variables, rows, before, skipped_before, after, skipped_after, lp_same, map_same = fields
++        require(Path(path) not in records, '探针模型重复')
++        require(lp_same == map_same == 'true', 'LP与Postsolve映射须逐位相同')
++        records[Path(path)] = tuple(map(int, (variables, rows, before, skipped_before, after, skipped_after)))
++    require(set(records) == {path for path, _ in paths.values()}, '探针须完整覆盖冻结输入')
++    total_rescued = 0
++    for name, (path, digest) in paths.items():
++        variables, rows, before, skipped_before, after, skipped_after = records[path]
++        reference = expected[name]
++        require(digest == reference['sha256'], f'{name} 的冻结哈希变化')
++        require(rows == reference['rows'], f'{name} 的预处理行数变化')
++        require((before, skipped_before) == (reference['propagation_accepted_candidate'],
++                reference['propagation_skipped_candidate']), f'{name} 的无回退认证计数变化')
++        require((after, skipped_after) == (reference['propagation_accepted_base'],
++                reference['propagation_skipped_base']), f'{name} 未恢复既有R8丢失认证行')
++        rescued = after - before
++        total_rescued += rescued
++        print(json.dumps({'instance': name, 'sha256': digest, 'variables': variables,
++                          'rows': rows, 'lp_bitwise_identical': True,
++                          'postsolve_bitwise_identical': True, 'accepted_without_fallback': before,
++                          'skipped_without_fallback': skipped_before, 'accepted_with_fallback': after,
++                          'skipped_with_fallback': skipped_after, 'rescued_rows': rescued},
++                         allow_nan=False), flush=True)
++    require(total_rescued == 597, '冻结20例须实际救回既有597个认证行')
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/bench/large_scale_rounds/certified_fallback_probe.rs b/bench/large_scale_rounds/certified_fallback_probe.rs
+new file mode 100644
+index 0000000..7eace48
+--- /dev/null
++++ b/bench/large_scale_rounds/certified_fallback_probe.rs
+@@ -0,0 +1,66 @@
++//! 复用生产预处理和认证函数，核对旧行回退的载荷与输出；不创建 LP 或搜索树。
++#[allow(dead_code)]
++#[path = "../../milp/src/binary_propagation.rs"]
++mod binary_propagation;
++#[allow(dead_code)]
++#[path = "../../milp/src/presolve.rs"]
++mod presolve;
++
++use milp::{error, model, simplex};
++use std::{error::Error, path::Path};
++
++fn identical_problem(a: &model::Problem, b: &model::Problem) {
++    // 结构比较覆盖名称、类型、列号和关系；位比较另覆盖全部浮点字段。
++    assert_eq!(format!("{a:?}"), format!("{b:?}"));
++    let bits = |p: &model::Problem| -> Vec<u64> {
++        p.vars.iter().flat_map(|v| [v.lb.to_bits(), v.ub.to_bits()])
++            .chain(std::iter::once(p.obj_offset.to_bits()))
++            .chain(p.obj.terms.iter().map(|&(_, value)| value.to_bits()))
++            .chain(p.constraints.iter().flat_map(|row| std::iter::once(row.rhs.to_bits())
++                .chain(row.expr.terms.iter().map(|&(_, value)| value.to_bits()))))
++            .collect()
++    };
++    assert_eq!(bits(a), bits(b));
++}
++
++fn identical_map(a: &presolve::PostsolveMap, b: &presolve::PostsolveMap) {
++    assert_eq!(format!("{a:?}"), format!("{b:?}"));
++    let bits = |map: &presolve::PostsolveMap| -> Vec<u64> {
++        map.fixed.iter().map(|&(_, value)| value.to_bits())
++            .chain(map.aggregations.iter().filter_map(|(_, _, value)| value.map(f64::to_bits)))
++            .collect()
++    };
++    assert_eq!(bits(a), bits(b));
++}
++
++fn main() -> Result<(), Box<dyn Error>> {
++    assert!(cfg!(feature = "certified_row_fallback"), "须显式开启候选特性编译探针");
++    let tol = model::Tolerances::default();
++    for path in std::env::args_os().skip(1) {
++        let path = Path::new(&path);
++        let original = milp::instance::load_instance(path)?;
++        original.validate()?;
++        let (scaled, _) = milp::scaling::scale_problem(&original);
++        let (plain, plain_map) = presolve::presolve(&scaled, &tol)?;
++        let (candidate, candidate_map, preserved) = presolve::presolve_for_solve(&scaled, &tol, true)?;
++        identical_problem(&plain, &candidate);
++        identical_map(&plain_map, &candidate_map);
++        for value in [0.0, 1.0] {
++            let reduced_values = vec![value; plain.vars.len()];
++            let a = presolve::postsolve(&plain_map, &reduced_values, original.vars.len(), &tol);
++            let b = presolve::postsolve(&candidate_map, &reduced_values, original.vars.len(), &tol);
++            assert_eq!(a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
++                b.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
++        }
++        let plain_stats = binary_propagation::BinaryPropagation::new(&plain, tol).stats;
++        let candidate_stats = binary_propagation::BinaryPropagation::with_preserved(&candidate, tol, preserved)
++            .expect("生产载荷须通过逐位见证核验").stats;
++        assert!(candidate_stats.accepted_rows >= plain_stats.accepted_rows);
++        assert_eq!(candidate_stats.accepted_rows - plain_stats.accepted_rows,
++            plain_stats.skipped_rows - candidate_stats.skipped_rows);
++        println!("{}\t{}\t{}\t{}\t{}\t{}\t{}\ttrue\ttrue", path.display(),
++            candidate.vars.len(), candidate.constraints.len(), plain_stats.accepted_rows,
++            plain_stats.skipped_rows, candidate_stats.accepted_rows, candidate_stats.skipped_rows);
++    }
++    Ok(())
++}
+diff --git a/milp/Cargo.toml b/milp/Cargo.toml
+index bb056f4..d4685ab 100644
+--- a/milp/Cargo.toml
++++ b/milp/Cargo.toml
+@@ -27,6 +27,9 @@ root_heuristic_work_limit = ["root_heuristic_work_budget"]
+ # 完整预处理后仅加强负二元系数，通过独立证明性能门槛，默认开启。
+ binary_coefficient_strengthening = []
+ 
++# 强化行无法精确认证时回退到同一缩减列空间中的旧认证行，默认关闭。
++certified_row_fallback = ["binary_coefficient_strengthening"]
++
+ # 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
+ risk_pivot_refresh = []
+ 
+diff --git a/milp/src/binary_propagation.rs b/milp/src/binary_propagation.rs
+index f9f3d83..f3d5035 100644
+--- a/milp/src/binary_propagation.rs
++++ b/milp/src/binary_propagation.rs
+@@ -1,4 +1,6 @@
+-//! 单线程自动启用的二元静态行传播。只使用传入分支定界的工作模型，不读取割。
++//! 单线程自动启用的二元静态行传播。只使用工作模型静态行，不读取割。
++//! 默认关闭的 certified_row_fallback 可携带同一缩减模型强化前的认证行；
++//! 新行认证失败才回退，不改变精确格点、整数算术或容差门槛。
+ //!
+ //! 每个认证行转成正权字面量之和不超过整数右端；已为真的字面量之和
+ //! 超过右端即矛盾，加上一个未定字面量的权重超过右端即强迫它为假。
+@@ -9,7 +11,7 @@ use std::cmp::Reverse;
+ use std::collections::BinaryHeap;
+ use std::time::Instant;
+ 
+-use crate::model::{Problem, RelOp, Tolerances, VarType};
++use crate::model::{Constraint, Problem, RelOp, Tolerances, VarType, Variable};
+ use crate::simplex::Bounds;
+ 
+ // 测试在同一生产传播入口精确触发限时；线程隔离、离开作用域恢复旧状态。
+@@ -21,6 +23,32 @@ std::thread_local! {
+ #[cfg(test)]
+ pub(crate) struct TestDeadlineGuard(Option<(usize, usize)>);
+ 
++#[cfg(all(test, feature = "certified_row_fallback"))]
++std::thread_local! {
++    static CAPTURE_ATTEMPTS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
++}
++
++/// 只供门控测试观察实际认证尝试；不会使根闭合时的传播统计提前变成非零。
++#[cfg(all(test, feature = "certified_row_fallback"))]
++pub(crate) struct CaptureAudit(Option<usize>);
++
++#[cfg(all(test, feature = "certified_row_fallback"))]
++impl CaptureAudit {
++    pub(crate) fn new() -> Self {
++        Self(CAPTURE_ATTEMPTS.with(|state| state.replace(Some(0))))
++    }
++    pub(crate) fn count(&self) -> usize {
++        CAPTURE_ATTEMPTS.with(|state| state.get().unwrap_or(0))
++    }
++}
++
++#[cfg(all(test, feature = "certified_row_fallback"))]
++impl Drop for CaptureAudit {
++    fn drop(&mut self) {
++        CAPTURE_ATTEMPTS.with(|state| state.set(self.0));
++    }
++}
++
+ #[cfg(test)]
+ impl TestDeadlineGuard {
+     pub(crate) fn on_check(target: usize) -> Self {
+@@ -61,6 +89,137 @@ struct Row {
+     rhs: i128,
+ }
+ 
++/// 只在本次 presolve→求解链中移动的旧认证行；不实现 Clone，不公开构造字段。
++/// 原行号属于最终缩减模型，不能拿原始输入的列号或节点局部行填充。
++#[derive(Default)]
++pub(crate) struct PreservedBinaryRows {
++    context: Option<PreservedContext>,
++    rows: Vec<PreservedRow>,
++}
++
++struct PreservedRow {
++    index: usize,
++    certified: Vec<Row>,
++    strengthened: Option<RowWitness>,
++}
++
++/// 只为保存的旧行记录强化后稀疏见证；逐位核对，不以地址或哈希代替证明来源。
++struct RowWitness {
++    op: RelOp,
++    rhs_bits: u64,
++    terms: Vec<(usize, u64)>,
++}
++
++impl RowWitness {
++    #[cfg(feature = "certified_row_fallback")]
++    fn of(row: &Constraint) -> Self {
++        Self { op: row.op, rhs_bits: row.rhs.to_bits(),
++            terms: row.expr.terms.iter().map(|&(j, a)| (j, a.to_bits())).collect() }
++    }
++
++    fn matches(&self, row: &Constraint) -> bool {
++        self.op == row.op && self.rhs_bits == row.rhs.to_bits()
++            && self.terms.len() == row.expr.terms.len()
++            && self.terms.iter().zip(&row.expr.terms)
++                .all(|(&(j, bits), &(k, a))| j == k && bits == a.to_bits())
++    }
++}
++
++#[derive(PartialEq, Eq)]
++struct PreservedContext {
++    num_vars: usize,
++    num_rows: usize,
++    tolerance_bits: [u64; 5],
++}
++
++impl PreservedContext {
++    fn of(problem: &Problem, tol: Tolerances) -> Self {
++        Self { num_vars: problem.vars.len(), num_rows: problem.constraints.len(),
++            tolerance_bits: tolerance_bits(tol) }
++    }
++}
++
++fn tolerance_bits(tol: Tolerances) -> [u64; 5] {
++    [tol.feasibility.to_bits(), tol.optimality.to_bits(), tol.pivot.to_bits(),
++        tol.integrality.to_bits(), tol.zero.to_bits()]
++}
++
++impl PreservedBinaryRows {
++    #[cfg(feature = "certified_row_fallback")]
++    pub(crate) fn for_problem(problem: &Problem, tol: Tolerances) -> Self {
++        Self { context: Some(PreservedContext::of(problem, tol)), rows: Vec::new() }
++    }
++
++    /// 调用方已确认本行即将强化；保存之前仍须通过唯一的生产认证函数。
++    #[cfg(feature = "certified_row_fallback")]
++    pub(crate) fn capture(&mut self, index: usize, vars: &[Variable], row: &Constraint, tol: Tolerances) -> bool {
++        #[cfg(test)]
++        CAPTURE_ATTEMPTS.with(|state| {
++            if let Some(count) = state.get() { state.set(Some(count + 1)); }
++        });
++        if row.op == RelOp::Eq
++            || !self.context.as_ref().is_some_and(|context| context.num_vars == vars.len()
++            && index < context.num_rows && context.tolerance_bits == tolerance_bits(tol))
++            || self.rows.last().is_some_and(|last| last.index >= index)
++        {
++            return false;
++        }
++        let Some(certified) = certify(vars, row, tol) else { return false; };
++        self.rows.push(PreservedRow { index, certified, strengthened: None });
++        true
++    }
++
++    /// 同一行完成系数强化后封存见证；已有见证不能被重写以掩盖模型变化。
++    #[cfg(feature = "certified_row_fallback")]
++    pub(crate) fn seal_last(&mut self, index: usize, row: &Constraint) {
++        if let Some(last) = self.rows.last_mut().filter(|last| last.index == index
++            && last.strengthened.is_none()) {
++            last.strengthened = Some(RowWitness::of(row));
++        }
++    }
++
++    pub(crate) fn is_empty(&self) -> bool {
++        self.rows.is_empty()
++    }
++
++    /// 入口只读校验，不构造邻接表；容差与最终行列空间必须与捕获时一致。
++    /// 载荷由私有 presolve 入口产生并按值移交，禁止跨模型缓存或复用。
++    pub(crate) fn validate(&self, problem: &Problem, tol: Tolerances) -> bool {
++        if self.rows.is_empty() {
++            return true;
++        }
++        if self.context != Some(PreservedContext::of(problem, tol)) {
++            return false;
++        }
++        let mut previous = None;
++        for saved in &self.rows {
++            let Some(source) = problem.constraints.get(saved.index) else {
++                return false;
++            };
++            let certified = &saved.certified;
++            if previous.is_some_and(|old| old >= saved.index) || certified.len() != 1
++                || !saved.strengthened.as_ref().is_some_and(|witness| witness.matches(source))
++                || source.op == RelOp::Eq
++                || certified[0].literals.len() != source.expr.terms.len()
++                || certified[0].literals.iter().zip(&source.expr.terms).any(|(literal, &(j, _))| {
++                    literal.var != j || !problem.vars.get(j).is_some_and(|v| {
++                        v.var_type == VarType::Binary && standard_bounds(v.lb, v.ub)
++                    })
++                })
++            {
++                return false;
++            }
++            previous = Some(saved.index);
++        }
++        true
++    }
++
++    #[cfg(all(test, feature = "certified_row_fallback"))]
++    pub(crate) fn len(&self) -> usize {
++        self.rows.len()
++    }
++}
++
+ #[derive(Debug, Default, Clone, Copy)]
+ pub struct PropagationStats {
+     /// 接受的规范不等式数；等式可贡献两条。
+@@ -140,8 +299,7 @@ fn standard_bounds(lb: f64, ub: f64) -> bool {
+     (lb == 0.0 || lb == 1.0) && (ub == 0.0 || ub == 1.0) && lb <= ub
+ }
+ 
+-fn certify(problem: &Problem, index: usize, tol: Tolerances) -> Option<Vec<Row>> {
+-    let row = &problem.constraints[index];
++fn certify(vars: &[Variable], row: &Constraint, tol: Tolerances) -> Option<Vec<Row>> {
+     if !tol.zero.is_finite()
+         || tol.zero < 0.0
+         || !tol.feasibility.is_finite()
+@@ -159,7 +317,7 @@ fn certify(problem: &Problem, index: usize, tol: Tolerances) -> Option<Vec<Row>>
+     let mut max_coefficient = 0.0_f64;
+     let mut previous = None;
+     for &(j, coefficient) in &row.expr.terms {
+-        let var = problem.vars.get(j)?;
++        let var = vars.get(j)?;
+         if previous.is_some_and(|old| old >= j)
+             || var.var_type != VarType::Binary
+             || !standard_bounds(var.lb, var.ub)
+@@ -223,10 +381,28 @@ fn certify(problem: &Problem, index: usize, tol: Tolerances) -> Option<Vec<Row>>
+ 
+ impl BinaryPropagation {
+     pub(crate) fn new(problem: &Problem, tol: Tolerances) -> Self {
++        Self::build(problem, tol, PreservedBinaryRows::default())
++    }
++
++    /// 首次孩子展开时消费载荷；新行先认证，只有失败才在同一位置采用旧行。
++    pub(crate) fn with_preserved(problem: &Problem, tol: Tolerances, preserved: PreservedBinaryRows) -> Option<Self> {
++        if preserved.is_empty() {
++            return Some(Self::new(problem, tol));
++        }
++        if !preserved.validate(problem, tol) { return None; }
++        Some(Self::build(problem, tol, preserved))
++    }
++
++    fn build(problem: &Problem, tol: Tolerances, preserved: PreservedBinaryRows) -> Self {
+         let mut rows = Vec::new();
+         let mut stats = PropagationStats::default();
++        let mut old_rows = preserved.rows.into_iter().peekable();
+         for i in 0..problem.constraints.len() {
+-            if let Some(mut certified) = certify(problem, i, tol) {
++            let old = if old_rows.peek().is_some_and(|saved| saved.index == i) {
++                old_rows.next().map(|saved| saved.certified)
++            } else { None };
++            // 两个来源最多采用一个；被救回的行不再计 skipped，不产生重复行。
++            if let Some(mut certified) = certify(&problem.vars, &problem.constraints[i], tol).or(old) {
+                 rows.append(&mut certified);
+             } else {
+                 stats.skipped_rows += 1;
+@@ -409,6 +585,175 @@ mod tests {
+         p
+     }
+ 
++    #[cfg(feature = "certified_row_fallback")]
++    fn preserve_first(p: &Problem, tol: Tolerances) -> PreservedBinaryRows {
++        let mut saved = PreservedBinaryRows::for_problem(p, tol);
++        saved.capture(0, &p.vars, &p.constraints[0], tol);
++        saved
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    fn signature(state: &BinaryPropagation) -> Vec<(i128, Vec<(usize, bool, i128)>)> {
++        state.rows.iter().map(|row| (row.rhs, row.literals.iter()
++            .map(|literal| (literal.var, literal.positive, literal.weight)).collect())).collect()
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_prefers_new_then_old_and_counts_rejection_once() {
++        for op in [RelOp::Le, RelOp::Ge] {
++            let sign = if op == RelOp::Le { 1.0 } else { -1.0 };
++            for tol in [Tolerances::default(), Tolerances { feasibility: 1e-8,
++                integrality: 1e-7, ..Tolerances::default() }] {
++                // 两个精确行的二元可行集相同；权重不同可检验实际采用了新行。
++                let mut p = model(&[-10.0 * sign, 2.0 * sign, sign], op, 0.0);
++                let mut saved = preserve_first(&p, tol);
++                assert_eq!(saved.len(), 1);
++                let old_signature = signature(&BinaryPropagation::new(&p, tol));
++                p.constraints[0].expr.terms[0].1 = -3.0 * sign;
++                saved.seal_last(0, &p.constraints[0]);
++                let new_signature = signature(&BinaryPropagation::new(&p, tol));
++                assert_ne!(old_signature, new_signature);
++                let state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++                assert_eq!(signature(&state), new_signature);
++                assert_eq!((state.stats.accepted_rows, state.stats.skipped_rows), (1, 0));
++
++                let mut p = model(&[-10.0 * sign, 2.0 * sign, sign], op, 0.0);
++                let mut saved = preserve_first(&p, tol);
++                p.constraints[0].expr.terms[0].1 = -f64::from_bits(3.0_f64.to_bits() + 1) * sign;
++                saved.seal_last(0, &p.constraints[0]);
++                assert_eq!(BinaryPropagation::new(&p, tol).stats.accepted_rows, 0);
++                let state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++                assert_eq!(signature(&state), old_signature);
++                assert_eq!((state.stats.accepted_rows, state.stats.skipped_rows), (1, 0));
++
++                let mut p = model(&[-10.1 * sign, 2.0 * sign, sign], op, 0.0);
++                let mut saved = preserve_first(&p, tol);
++                assert_eq!(saved.len(), 0, "不能把未认证旧行作为回退来源");
++                p.constraints[0].expr.terms[0].1 = -f64::from_bits(3.0_f64.to_bits() + 1) * sign;
++                saved.seal_last(0, &p.constraints[0]);
++                let state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++                assert_eq!((state.stats.accepted_rows, state.stats.skipped_rows), (0, 1));
++            }
++        }
++        // 前面等式贡献两条，回退仍按源行号插入，不能误把数据库序号当源行号。
++        let tol = Tolerances::default();
++        let mut p = model(&[1.0, -1.0, 0.0], RelOp::Eq, 0.0);
++        p.add_constraint(None, vec![(0, -10.0), (1, 2.0), (2, 1.0)], RelOp::Le, 0.0).unwrap();
++        let original = signature(&BinaryPropagation::new(&p, tol));
++        let mut saved = PreservedBinaryRows::for_problem(&p, tol);
++        assert!(saved.capture(1, &p.vars, &p.constraints[1], tol));
++        p.constraints[1].expr.terms[0].1 = -f64::from_bits(3.0_f64.to_bits() + 1);
++        saved.seal_last(1, &p.constraints[1]);
++        let state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++        assert_eq!(signature(&state), original);
++        assert_eq!((state.stats.accepted_rows, state.stats.skipped_rows), (3, 0));
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_rejects_foreign_model_tolerance_and_column_mapping() {
++        let tol = Tolerances::default();
++        let mut p = model(&[-10.0, 2.0, 1.0], RelOp::Le, 0.0);
++        let mut saved = preserve_first(&p, tol);
++        assert!(!saved.validate(&p, tol), "未封存强化后见证不能放行");
++        saved.seal_last(0, &p.constraints[0]);
++        assert!(saved.validate(&p, tol));
++        let mut other = p.clone();
++        other.constraints[0].rhs = 1.0;
++        assert!(!saved.validate(&other, tol), "同维模型也必须逐位匹配已封存的行");
++        p.constraints[0].expr.terms[0].1 = -9.0;
++        saved.seal_last(0, &p.constraints[0]);
++        assert!(!saved.validate(&p, tol), "原位改系数不能靠重封存洗掉差异");
++        p.constraints[0].expr.terms[0].1 = -10.0;
++        assert!(!saved.validate(&p, Tolerances { integrality: 1e-5, ..tol }));
++        p.constraints[0].expr.terms.swap(0, 1);
++        assert!(!saved.validate(&p, tol));
++        p.constraints[0].expr.terms.swap(0, 1);
++        p.vars[0].var_type = VarType::Integer;
++        assert!(!saved.validate(&p, tol));
++        p.vars[0].var_type = VarType::Binary;
++        p.vars[0].ub = 0.5;
++        assert!(!saved.validate(&p, tol));
++        p.vars[0].ub = 1.0;
++        p.constraints[0].op = RelOp::Ge;
++        assert!(!saved.validate(&p, tol));
++        p.constraints[0].op = RelOp::Le;
++        let moved = p;
++        assert!(saved.validate(&moved, tol), "按值移动不应破坏已封存见证");
++        let mut invalid_index = preserve_first(&moved, tol);
++        invalid_index.seal_last(0, &moved.constraints[0]);
++        invalid_index.rows[0].index = 1;
++        assert!(!invalid_index.validate(&moved, tol));
++        let mut invalid_dimension = moved;
++        invalid_dimension.vars.pop();
++        assert!(!saved.validate(&invalid_dimension, tol));
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_preserves_all_small_domains_and_sibling_rollback() {
++        let tol = Tolerances::default();
++        let mut p = model(&[-10.0, 2.0, 1.0], RelOp::Le, 0.0);
++        let original = p.clone();
++        let mut saved = preserve_first(&p, tol);
++        p.constraints[0].expr.terms[0].1 = -f64::from_bits(3.0_f64.to_bits() + 1);
++        saved.seal_last(0, &p.constraints[0]);
++        let mut state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++        let mut fixes = 0;
++        let mut conflicts = 0;
++        for domain in 0..27 {
++            let mut digits = domain;
++            let mut bounds = Bounds::from_problem(&p);
++            for j in 0..3 {
++                match digits % 3 { 1 => bounds.ub[j] = 0.0, 2 => bounds.lb[j] = 1.0, _ => {} }
++                digits /= 3;
++            }
++            let before = bounds.clone();
++            let completions: Vec<_> = (0..8).filter(|&mask| feasible(&original, &bounds, mask)).collect();
++            let mut trail = Vec::new();
++            let outcome = state.propagate(&mut bounds, true, [], None, |j, lb, old| trail.push((j, lb, old)));
++            if outcome == Outcome::Conflict { conflicts += 1; assert!(completions.is_empty()); }
++            for mask in completions { assert!(feasible(&original, &bounds, mask)); }
++            fixes += trail.len();
++            for (j, is_lb, old) in trail.into_iter().rev() {
++                if is_lb { bounds.lb[j] = old; } else { bounds.ub[j] = old; }
++            }
++            assert_eq!(bounds.lb, before.lb);
++            assert_eq!(bounds.ub, before.ub);
++            assert!(state.queue.is_empty() && state.queued.iter().all(|&queued| !queued));
++        }
++        assert!(fixes > 0 && conflicts > 0);
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_deadline_after_partial_fixes_cleans_its_queue() {
++        let tol = Tolerances::default();
++        let mut coefficients = vec![1.0; 301];
++        coefficients[0] = -1000.0;
++        let mut p = model(&coefficients, RelOp::Le, 0.0);
++        let mut saved = preserve_first(&p, tol);
++        p.constraints[0].expr.terms[0].1 = -f64::from_bits(300.0_f64.to_bits() + 1);
++        saved.seal_last(0, &p.constraints[0]);
++        assert_eq!(BinaryPropagation::new(&p, tol).stats.accepted_rows, 0);
++        let mut state = BinaryPropagation::with_preserved(&p, tol, saved).unwrap();
++        let mut bounds = Bounds::from_problem(&p);
++        bounds.ub[0] = 0.0;
++        let mut checks = 0;
++        let mut trail = Vec::new();
++        let outcome = state.propagate_until(&mut bounds, true, [], || {
++            checks += 1; checks == 3
++        }, |j, is_lb, old| trail.push((j, is_lb, old)));
++        assert_eq!(outcome, Outcome::Deadline);
++        assert!(state.stats.fixes > 0 && state.stats.fixes < 300);
++        assert_eq!(state.stats.fixes as usize, trail.len());
++        assert_eq!(state.stats.conflicts, 0);
++        assert!(state.queue.is_empty() && state.queued.iter().all(|&queued| !queued));
++        assert_eq!(state.propagate(&mut bounds, true, [], None, |_, _, _| {}), Outcome::Complete);
++        assert!(bounds.ub.iter().all(|&ub| ub == 0.0));
++    }
++
+     fn feasible(p: &Problem, bounds: &Bounds, mask: usize) -> bool {
+         let x: Vec<_> = (0..p.vars.len())
+             .map(|j| ((mask >> j) & 1) as f64)
+diff --git a/milp/src/branch_bound.rs b/milp/src/branch_bound.rs
+index 5b34db5..4bbdbf4 100644
+--- a/milp/src/branch_bound.rs
++++ b/milp/src/branch_bound.rs
+@@ -157,7 +157,7 @@ impl BinaryPropagationMode {
+ }
+ 
+ pub use crate::binary_propagation::PropagationStats;
+-use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome};
++use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome, PreservedBinaryRows};
+ 
+ /// 分支定界参数。
+ #[derive(Debug, Clone, Copy)]
+@@ -491,6 +491,18 @@ pub fn branch_and_bound_controlled(
+     ctrl: &SearchControl,
+     tol: Tolerances,
+     hooks: Option<&SearchHooks>,
++) -> Result<BbResult> {
++    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default())
++}
++
++/// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
++pub(crate) fn branch_and_bound_with_preserved(
++    problem: &Problem,
++    opts: &BbOptions,
++    ctrl: &SearchControl,
++    tol: Tolerances,
++    hooks: Option<&SearchHooks>,
++    preserved: PreservedBinaryRows,
+ ) -> Result<BbResult> {
+     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
+     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
+@@ -508,6 +520,10 @@ pub fn branch_and_bound_controlled(
+     // 必须早于并行分派：小树探测会临时把ctrl.threads改为1，不能重新开启Auto。
+     resolved_opts.binary_row_propagation = opts.binary_row_propagation.resolve(ctrl.threads);
+     let opts = &resolved_opts;
++    if !preserved.is_empty() && (ctrl.threads != 1 || opts.binary_row_propagation != BinaryPropagationMode::On) {
++        return Err(MilpError::Internal("旧认证行只能移交本次单线程传播求解".into()));
++    }
++    // 工作模型从这里起只读；逐位见证留到首次建库核验，根部闭合无需再扫描。
+     if ctrl.threads >= 2 {
+         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
+         // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
+@@ -528,7 +544,7 @@ pub fn branch_and_bound_controlled(
+         }
+         return parallel_entry(problem, opts, ctrl, tol, hooks);
+     }
+-    sequential_bb(problem, opts, ctrl, tol, hooks)
++    sequential_bb(problem, opts, ctrl, tol, hooks, preserved)
+ }
+ 
+ /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
+@@ -539,6 +555,7 @@ fn sequential_bb(
+     ctrl: &SearchControl,
+     tol: Tolerances,
+     hooks: Option<&SearchHooks>,
++    mut preserved: PreservedBinaryRows,
+ ) -> Result<BbResult> {
+     debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
+     let start = Instant::now();
+@@ -1078,7 +1095,8 @@ fn sequential_bb(
+         ))
+     });
+ 
+-    // 关闭或根部已闭合时不构造、不扫描模型；首次展开孩子才认证静态行。
++    // 完整传播库仍延迟到首次孩子。旧行回退试验已在 presolve 认证少量改动行，
++    // 根部闭合会直接释放该载荷；不开启试验时维持旧有的完全延迟认证路径。
+     let mut propagation: Option<BinaryPropagation> = None;
+ 
+     // —— DFS 主循环状态 ——
+@@ -1335,7 +1353,13 @@ fn sequential_bb(
+             }
+         }
+         if opts.binary_row_propagation == BinaryPropagationMode::On {
+-            let state = propagation.get_or_insert_with(|| BinaryPropagation::new(problem, tol));
++            if propagation.is_none() {
++                propagation = Some(BinaryPropagation::with_preserved(problem, tol,
++                    std::mem::take(&mut preserved)).ok_or_else(||
++                        MilpError::Internal("旧认证行建库前核验失败".into()))?);
++            }
++            let state = propagation.as_mut().ok_or_else(||
++                MilpError::Internal("二元传播数据库未完成初始化".into()))?;
+             // RC 覆盖层不记 trail；即使本次取交未改界，也必须重播种全部日志。
+             // 深层父域已闭包，只有分支界与 RC 前提可能新增静态行推论。
+             let seeds = std::iter::once(p.var).chain(
+@@ -3263,7 +3287,7 @@ fn parallel_entry(
+         probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
+         let mut probe_ctrl = *ctrl;
+         probe_ctrl.threads = 1;
+-        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks)?;
++        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default())?;
+         let budget_exhausted = probe.status == SolveStatus::LimitReached
+             && !probe.gap_terminated
+             && !probe.auto_degraded
+@@ -6467,6 +6491,105 @@ mod binary_propagation_tests {
+             local_cuts: false, root_rc_fixing: false, lp_engine: engine, ..BbOptions::default() }
+     }
+ 
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_replays_rc_after_dfs_and_hybrid_domain_restore() {
++        let tol = Tolerances::default();
++        let mut original = crate::presolve::certified_fallback_tests::branch_model();
++        original.add_var("unrelated", VarType::Binary).unwrap();
++        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
++        assert_eq!(saved.len(), 1);
++        let root = Bounds::from_problem(&problem);
++        let snapshot = DomainSnapshot::capture(&root, None);
++        let cache = RootRcCache { sense: Sense::Maximize, obj_offset: 0.25, obj_integral: false,
++            int_vars: vec![0, 1, 2, 3], z_lp: 3.0, rc: vec![0.0; 4], side: vec![0; 4],
++            n_struct: 4, base: root.clone() };
++        let mut rc = RcRefixState::new(cache);
++        rc.log.push(RcFixEntry { var: 0, tighten_lb: false, value: 0.0 });
++        let mut state = BinaryPropagation::with_preserved(&problem, tol, saved).unwrap();
++        assert_eq!(state.stats.accepted_rows, 2);
++        let mut bounds = root;
++        let mut trail = Vec::new();
++        assert!(rc.intersect(&mut bounds));
++        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
++            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
++        unwind(&mut trail, &mut bounds, 0);
++        assert_eq!(bounds.ub[0], 0.0, "RC固定不在DFS trail中");
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0));
++        assert!(rc.intersect(&mut bounds));
++        assert_eq!(state.propagate(&mut bounds, false, [3], None, |_, _, _| {}), PropagationOutcome::Complete);
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0), "无关分支不能代替RC日志播种");
++        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
++            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
++        snapshot.restore(&mut bounds);
++        trail.clear();
++        assert!(rc.intersect(&mut bounds));
++        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
++            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0), "Hybrid完整域恢复后须重得旧行推论");
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_public_bb_has_no_hidden_payload_and_off_rejects_internal_payload() {
++        let tol = Tolerances::default();
++        let original = crate::presolve::certified_fallback_tests::branch_model();
++        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
++        let opts = options(LpEngineKind::Tableau);
++        let public = branch_and_bound(&problem, &opts, tol).unwrap();
++        assert_eq!(public.status, SolveStatus::Optimal);
++        assert_eq!(public.best_objective, Some(2.125));
++        assert_eq!(public.stats.propagation.accepted_rows, 1, "公开入口只认证传入的强化LP行");
++        let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts };
++        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved).unwrap_err();
++        assert!(error.to_string().contains("旧认证行只能移交"));
++    }
++
++    #[cfg(feature = "certified_row_fallback")]
++    #[test]
++    fn certified_fallback_keeps_static_rows_outside_real_local_cut_scopes() {
++        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
++        let original = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
++        let tol = Tolerances::default();
++        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
++            let mut problem = original.clone();
++            // 生产强化只改负系数，必然不命中局部割的全正系数类门控。
++            // 此处专测载荷和真实割作用域的隔离：人工封存一个二元等价的
++            // 正系数行，不能把该测试载体当成 presolve 实际会捕获的模型。
++            let mut saved = PreservedBinaryRows::for_problem(&problem, tol);
++            assert!(saved.capture(0, &problem.vars, &problem.constraints[0], tol));
++            let coefficient = &mut problem.constraints[0].expr.terms[0].1;
++            let old = *coefficient;
++            *coefficient = f64::from_bits(old.to_bits() - 1);
++            let perturbation = old - *coefficient;
++            // 原行格距至少1；只有一项变动，二元赋值的总扰动至多为该差值。
++            // 连同认证保留的验收容差仍不足1，不能跨过原整数不可行间隔。
++            let norm: f64 = original.constraints[0].expr.terms.iter().map(|&(_, a)| a.abs()).sum();
++            let allowance = 10.0 * tol.feasibility + tol.integrality * norm;
++            assert!(old > 0.0 && old.fract() == 0.0 && norm < (1_u64 << 50) as f64);
++            assert!(perturbation > 0.0 && allowance.is_finite() && perturbation + allowance < 1.0);
++            assert_eq!(problem.constraints[0].rhs.fract(), 0.0);
++            assert!(original.constraints[0].expr.terms.iter().all(|&(_, a)| a.fract() == 0.0));
++            saved.seal_last(0, &problem.constraints[0]);
++            assert_eq!(saved.len(), 1);
++            assert!(detect_pseudocost_favorable(&problem), "测试必须保留真实局部割入口");
++            assert_eq!(BinaryPropagation::new(&problem, tol).stats.skipped_rows, 1,
++                "扰动行必须认证失败，才能实际检查旧行回退");
++            let audit = LocalScopeAudit::new();
++            let opts = BbOptions { root_cuts: false, local_cuts: true, lp_engine: engine,
++                binary_row_propagation: BinaryPropagationMode::On, ..BbOptions::default() };
++            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved).unwrap();
++            assert_eq!(result.status, SolveStatus::Optimal);
++            assert_eq!(result.best_objective, Some(2331.0));
++            assert!(result.stats.cuts > 0 && audit.count() > 0, "须实际退出局部割作用域");
++            assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
++            assert_eq!(result.stats.propagation.accepted_rows, problem.constraints.len() as u64,
++                "旧行回退只替代同号静态行，局部割不得进入全局传播库");
++        }
++    }
++
+     #[test]
+     fn binary_propagation_matches_enumeration_across_engines_domains_and_rc() {
+         let tol = Tolerances::default();
+diff --git a/milp/src/presolve.rs b/milp/src/presolve.rs
+index 3610e0e..6d294d1 100644
+--- a/milp/src/presolve.rs
++++ b/milp/src/presolve.rs
+@@ -26,14 +26,17 @@
+ //!   （最优解可同时取多个同权物品，knapsack 族目标全面错误）——详见
+ //!   docs/parallel-profiling.md §14。
+ //!
+-//! 默认关闭的 binary_coefficient_strengthening 试验在完整 R1..R5 结束后，
++//! binary_coefficient_strengthening 在完整 R1..R5 结束后，
+ //! 仅加强 Le/Ge 行归一化后的自由二元负系数；不改右端，不重启界传播，
+ //! 不处理等式或聚合 Integer 变量。活动度区间不能认证时保持原行。
++//! certified_row_fallback 另行默认关闭：只为实际强化且原可精确认证的行，
++//! 保存整数传播载荷与强化后稀疏见证；不向 LP 加行，不重启 R1..R5。
+ //!
+ //! 最多迭代 5 轮，无 reductions 即停。数值防御：代入/换算产生非有限右端、
+ //! 目标常数溢出或无穷收紧界时返回 `Err(MilpError::Numerical)`。
+ 
+ use crate::error::{MilpError, Result};
++use crate::binary_propagation::PreservedBinaryRows;
+ use crate::model::{Constraint, LinearExpr, Problem, RelOp, Tolerances, VarType, Variable};
+ 
+ /// 预处理轮数上限（轮内无 reductions 即提前停止）。
+@@ -77,18 +80,29 @@ struct WorkRow {
+ /// 将自由二元列的负系数改成 −D：所有修改列都为 0 时原行不变；至少一个
+ /// 为 1 时，新行左端至多 M−D≤b。新系数增大且 x_j≥0，故也不会新增可行点。
+ #[cfg(feature = "binary_coefficient_strengthening")]
+-fn strengthen_negative_binary_coefficients(p: &mut Problem, tol: &Tolerances) {
++fn strengthen_negative_binary_coefficients(
++    p: &mut Problem,
++    tol: &Tolerances,
++    #[allow(unused_variables)] capture: bool,
++) -> PreservedBinaryRows {
++    #[allow(unused_mut)]
++    let mut preserved = {
++        #[cfg(feature = "certified_row_fallback")]
++        { if capture { PreservedBinaryRows::for_problem(p, *tol) } else { PreservedBinaryRows::default() } }
++        #[cfg(not(feature = "certified_row_fallback"))]
++        { PreservedBinaryRows::default() }
++    };
+     // 当前预处理尺度上的保守跳过门槛，宁可放弃微小系数或微小加强。
+     // 后续 LP 仍会按行归一化，因此这里不保证归一化后的系数大于主元阈值。
+     // 此门槛只影响是否尝试，有效性完全由下方的向外舍入区间证明。
+     let floor = 16.0 * tol.zero.max(tol.pivot).max(tol.feasibility);
+     if !floor.is_finite() || floor <= 0.0 {
+-        return;
++        return preserved;
+     }
+     if !p.vars.iter().any(|v| v.var_type == VarType::Binary && v.lb == 0.0 && v.ub == 1.0) {
+-        return;
++        return preserved;
+     }
+-    for row in &mut p.constraints {
++    for (_index, row) in p.constraints.iter_mut().enumerate() {
+         let sign = match row.op {
+             RelOp::Le => 1.0,
+             RelOp::Ge => -1.0,
+@@ -140,6 +154,17 @@ fn strengthen_negative_binary_coefficients(p: &mut Problem, tol: &Tolerances) {
+         if !delta.is_finite() || delta <= floor {
+             continue;
+         }
++        #[cfg(feature = "certified_row_fallback")]
++        let captured = if capture && row.expr.terms.iter().any(|&(j, original)| {
++            let var = &p.vars[j];
++            let a = sign * original;
++            var.var_type == VarType::Binary && var.lb == 0.0 && var.ub == 1.0
++                && a < -delta && -a - delta > floor
++        }) {
++            // 已确定实际会改系数，且尚未写入；只保存严格认证成功的旧行。
++            // 此时最终列号已确定。少量认证前移到此处，根部闭合也支付此成本。
++            preserved.capture(_index, &p.vars, row, *tol)
++        } else { false };
+         for (j, original) in &mut row.expr.terms {
+             let var = &p.vars[*j];
+             let a = sign * *original;
+@@ -149,7 +174,10 @@ fn strengthen_negative_binary_coefficients(p: &mut Problem, tol: &Tolerances) {
+                 *original = sign * -delta;
+             }
+         }
++        #[cfg(feature = "certified_row_fallback")]
++        if captured { preserved.seal_last(_index, row); }
+     }
++    preserved
+ }
+ 
+ /// 有限双精度数的相邻外侧浮点数；兼容尚未提供 next_up/down 的工具链。
+@@ -208,6 +236,17 @@ fn sig_cmp(a: &[(usize, f64)], b: &[(usize, f64)]) -> std::cmp::Ordering {
+ /// 空界（lb>ub）会原样保留在缩减问题里，由 Simplex 判 Infeasible——预处理
+ /// 自身不直接下不可行结论（与 R1/R3 的“交给 Simplex”语义一致）。
+ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)> {
++    let (reduced, map, _) = presolve_for_solve(p, tol, false)?;
++    Ok((reduced, map))
++}
++
++/// 内部求解入口；公开 presolve 始终不捕获载荷，LP 输出与本入口逐位相同。
++/// capture 由最外层线程数与传播模式控制，不能因并行顺序前缀而重开。
++pub(crate) fn presolve_for_solve(
++    p: &Problem,
++    tol: &Tolerances,
++    #[allow(unused_variables)] capture: bool,
++) -> Result<(Problem, PostsolveMap, PreservedBinaryRows)> {
+     let n = p.vars.len();
+     let mut lb: Vec<f64> = p.vars.iter().map(|v| v.lb).collect();
+     let mut ub: Vec<f64> = p.vars.iter().map(|v| v.ub).collect();
+@@ -570,7 +609,9 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
+         constraints,
+     };
+     #[cfg(feature = "binary_coefficient_strengthening")]
+-    strengthen_negative_binary_coefficients(&mut reduced, tol);
++    let preserved = strengthen_negative_binary_coefficients(&mut reduced, tol, capture);
++    #[cfg(not(feature = "binary_coefficient_strengthening"))]
++    let preserved = PreservedBinaryRows::default();
+     Ok((
+         reduced,
+         PostsolveMap {
+@@ -579,6 +620,7 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
+             var_map,
+             aggregations,
+         },
++        preserved,
+     ))
+ }
+ 
+@@ -1105,7 +1147,7 @@ mod binary_strengthening_tests {
+         for op in [RelOp::Le, RelOp::Ge] {
+             let original = toy(op);
+             let mut changed = original.clone();
+-            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
++            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+             let a = changed.constraints[0].expr.terms[0].1.abs();
+             assert!(a >= 4.0 && a < 4.0 + 1e-12);
+             assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+@@ -1126,7 +1168,7 @@ mod binary_strengthening_tests {
+         original.vars.push(Variable { name: "z".into(), var_type: VarType::Binary, lb: 0.0, ub: 1.0 });
+         original.constraints[0].expr.terms.push((2, -9.0));
+         let mut changed = original.clone();
+-        strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
++        strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+         assert!(changed.constraints[0].expr.terms[0].1 > -5.0);
+         assert!(changed.constraints[0].expr.terms[2].1 > -5.0);
+         for x in [0.0, 1.0] { for z in [0.0, 1.0] { for k in 0..=32 {
+@@ -1166,7 +1208,7 @@ mod binary_strengthening_tests {
+         cases.push(cancellation);
+         for mut p in cases {
+             let before = bits(&p);
+-            strengthen_negative_binary_coefficients(&mut p, &Tolerances::default());
++            strengthen_negative_binary_coefficients(&mut p, &Tolerances::default(), false);
+             assert_eq!(before, bits(&p));
+         }
+     }
+@@ -1194,7 +1236,7 @@ mod binary_strengthening_tests {
+             original.constraints[0].expr.terms[1].1 *= -1.0;
+             original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+             let mut changed = original.clone();
+-            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
++            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+             let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+             assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+             for x in [0.0, 1.0] { for k in -16..=24 {
+@@ -1206,7 +1248,7 @@ mod binary_strengthening_tests {
+         p.vars.push(Variable { name: "下溢项".into(), var_type: VarType::Continuous,
+             lb: 0.0, ub: f64::MIN_POSITIVE });
+         p.constraints[0].expr.terms.push((2, f64::MIN_POSITIVE));
+-        strengthen_negative_binary_coefficients(&mut p, &Tolerances::default());
++        strengthen_negative_binary_coefficients(&mut p, &Tolerances::default(), false);
+         // 正的真实乘积虽然下溢为零，但外舍入仍覆盖它，不能低估 4。
+         assert!(p.constraints[0].expr.terms[0].1 < -4.0);
+     }
+@@ -1220,7 +1262,7 @@ mod binary_strengthening_tests {
+             original.constraints[0].expr.terms[1].1 *= -1.0;
+             original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+             let mut changed = original.clone();
+-            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default());
++            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+             let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+             assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+             assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+@@ -1245,3 +1287,103 @@ mod binary_strengthening_tests {
+         assert_eq!(next_down(-f64::MAX), f64::NEG_INFINITY);
+     }
+ }
++
++#[cfg(all(test, feature = "certified_row_fallback"))]
++pub(crate) mod certified_fallback_tests {
++    use super::*;
++    use crate::binary_propagation::{BinaryPropagation, CaptureAudit};
++    use crate::model::Sense;
++
++    pub(crate) fn branch_model() -> Problem {
++        let mut p = Problem::new("认证回退分支模型", Sense::Maximize);
++        for name in ["x", "y", "z"] { p.add_var(name, VarType::Binary).unwrap(); }
++        p.set_objective(vec![(0, -0.125), (1, 2.0), (2, 1.0)], 0.25).unwrap();
++        p.add_constraint(None, vec![(0, -10.0), (1, 2.0), (2, 1.0)], RelOp::Le, 0.0).unwrap();
++        p.add_constraint(None, vec![(1, 1.0), (2, 1.0)], RelOp::Le, 1.5).unwrap();
++        p
++    }
++
++    fn all_float_bits(p: &Problem) -> Vec<u64> {
++        p.vars.iter().flat_map(|v| [v.lb.to_bits(), v.ub.to_bits()])
++            .chain(std::iter::once(p.obj_offset.to_bits()))
++            .chain(p.obj.terms.iter().map(|&(_, a)| a.to_bits()))
++            .chain(p.constraints.iter().flat_map(|row| std::iter::once(row.rhs.to_bits())
++                .chain(row.expr.terms.iter().map(|&(_, a)| a.to_bits())))).collect()
++    }
++
++    #[test]
++    fn certified_fallback_leaves_lp_and_postsolve_bitwise_unchanged() {
++        for op in [RelOp::Le, RelOp::Ge] {
++            for tol in [Tolerances::default(), Tolerances { feasibility: 1e-8,
++                integrality: 1e-7, ..Tolerances::default() }] {
++                let mut p = branch_model();
++                if op == RelOp::Ge {
++                    p.constraints[0].op = op;
++                    for (_, a) in &mut p.constraints[0].expr.terms { *a = -*a; }
++                }
++                let (plain, plain_map) = presolve(&p, &tol).unwrap();
++                let (saved_model, saved_map, saved) = presolve_for_solve(&p, &tol, true).unwrap();
++                assert_eq!(saved.len(), 1);
++                assert_eq!(all_float_bits(&plain), all_float_bits(&saved_model));
++                assert_eq!(format!("{plain:?}"), format!("{saved_model:?}"));
++                assert_eq!(format!("{plain_map:?}"), format!("{saved_map:?}"));
++                let x = vec![1.0, 1.0, 0.0];
++                let a = postsolve(&plain_map, &x, p.vars.len(), &tol);
++                let b = postsolve(&saved_map, &x, p.vars.len(), &tol);
++                assert_eq!(a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
++                    b.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
++                assert_eq!(BinaryPropagation::new(&saved_model, tol).stats.accepted_rows, 1);
++                let restored = BinaryPropagation::with_preserved(&saved_model, tol, saved).unwrap();
++                assert_eq!((restored.stats.accepted_rows, restored.stats.skipped_rows), (2, 0));
++            }
++        }
++    }
++
++    #[test]
++    fn certified_fallback_uses_final_columns_after_fixing_and_r5_aggregation() {
++        let tol = Tolerances::default();
++        let mut p = Problem::new("固定删列及聚合后的认证回退", Sense::Maximize);
++        for name in ["fixed", "a", "b", "x", "y", "z"] { p.add_var(name, VarType::Binary).unwrap(); }
++        p.vars[0].lb = 1.0;
++        p.set_objective(vec![(0, 3.0), (1, 7.0), (2, 7.0), (3, -0.125), (4, 2.0), (5, 1.0)], 0.25).unwrap();
++        p.add_constraint(None, vec![(0, 1.0), (3, -10.0), (4, 2.0), (5, 1.0)], RelOp::Le, 1.0).unwrap();
++        p.add_constraint(None, vec![(1, 1.0), (2, 1.0), (3, -10.0)], RelOp::Le, 0.0).unwrap();
++        let (plain, plain_map) = presolve(&p, &tol).unwrap();
++        let (reduced, map, saved) = presolve_for_solve(&p, &tol, true).unwrap();
++        assert_eq!(map.var_map, vec![3, 4, 5, usize::MAX]);
++        assert_eq!(map.fixed, vec![(0, 1.0)]);
++        assert_eq!(map.aggregations, vec![(vec![1, 2], 3, None)]);
++        assert_eq!(all_float_bits(&plain), all_float_bits(&reduced));
++        assert_eq!(format!("{plain_map:?}"), format!("{map:?}"));
++        assert_eq!(saved.len(), 1, "含聚合Integer的改动行不得作为二元认证回退来源");
++        let mut state = BinaryPropagation::with_preserved(&reduced, tol, saved).unwrap();
++        let mut bounds = crate::simplex::Bounds::from_problem(&reduced);
++        bounds.ub[0] = 0.0;
++        assert_eq!(state.propagate(&mut bounds, true, [], None, |_, _, _| {}),
++            crate::binary_propagation::Outcome::Complete);
++        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
++        assert_eq!(bounds.ub[3], 2.0, "不把聚合列误当成原二元列传播");
++        let restored = postsolve(&map, &[1.0, 1.0, 0.0, 2.0], p.vars.len(), &tol);
++        assert_eq!(restored, vec![1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
++    }
++
++    #[test]
++    fn certified_fallback_only_attempts_actual_changes_and_public_entry_keeps_empty() {
++        let tol = Tolerances::default();
++        let p = branch_model();
++        let audit = CaptureAudit::new();
++        let (public, _) = presolve(&p, &tol).unwrap();
++        assert_eq!(audit.count(), 0);
++        let (_, _, empty) = presolve_for_solve(&p, &tol, false).unwrap();
++        assert!(empty.is_empty());
++        assert_eq!(audit.count(), 0);
++        let (internal, _, saved) = presolve_for_solve(&p, &tol, true).unwrap();
++        assert_eq!(audit.count(), 1, "正系数行未强化，不得尝试捕获");
++        assert_eq!(all_float_bits(&public), all_float_bits(&internal));
++        assert_eq!(saved.len(), 1);
++        let mut mixed = p;
++        mixed.vars[2].var_type = VarType::Continuous;
++        let (_, _, rejected) = presolve_for_solve(&mixed, &tol, true).unwrap();
++        assert!(rejected.is_empty(), "混合行被改动也必须拒绝旧行认证");
++    }
++}
+diff --git a/milp/src/solver.rs b/milp/src/solver.rs
+index 7a84a54..71aa042 100644
+--- a/milp/src/solver.rs
++++ b/milp/src/solver.rs
+@@ -122,8 +122,12 @@ pub fn solve_controlled(
+     } else {
+         (problem.clone(), None)
+     };
+-    let (work, map, reductions) = if opts.use_presolve {
+-        let (reduced, map) = presolve::presolve(&pre_work, &opts.tol)?;
++    let (work, map, reductions, preserved) = if opts.use_presolve {
++        // 按最外层请求门控；并行小树前缀不能因临时 threads=1 捕获旧行。
++        let capture = cfg!(feature = "certified_row_fallback") && ctrl.threads == 1
++            && opts.bb.binary_row_propagation.resolve(ctrl.threads)
++                == branch_bound::BinaryPropagationMode::On;
++        let (reduced, map, preserved) = presolve::presolve_for_solve(&pre_work, &opts.tol, capture)?;
+         // W5：聚合掉的重复列（组成员数 − 1）一并计入消减量。
+         let reductions = map.fixed.len()
+             + map.dropped_rows.len()
+@@ -132,12 +136,12 @@ pub fn solve_controlled(
+                 .iter()
+                 .map(|(members, _, _)| members.len().saturating_sub(1))
+                 .sum::<usize>();
+-        (reduced, Some(map), reductions)
++        (reduced, Some(map), reductions, preserved)
+     } else {
+-        (pre_work, None, 0)
++        (pre_work, None, 0, crate::binary_propagation::PreservedBinaryRows::default())
+     };
+ 
+-    let bb = branch_bound::branch_and_bound_controlled(&work, &opts.bb, ctrl, opts.tol, hooks)?;
++    let bb = branch_bound::branch_and_bound_with_preserved(&work, &opts.bb, ctrl, opts.tol, hooks, preserved)?;
+ 
+     // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
+     // 带回取值则不带解返回。
+@@ -996,3 +1000,138 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(all(test, feature = "certified_row_fallback"))]
++mod certified_fallback_tests {
++    use super::*;
++    use crate::binary_propagation::{CaptureAudit, TestDeadlineGuard};
++    use crate::branch_bound::{BinaryPropagationMode, BranchRule, NodeRule};
++    use crate::presolve::certified_fallback_tests::branch_model;
++    use crate::search_ctrl::Determinism;
++    use crate::simplex_sparse::LpEngineKind;
++
++    fn options(engine: LpEngineKind) -> SolveOptions {
++        SolveOptions { use_scaling: false, bb: BbOptions { lp_engine: engine,
++            binary_row_propagation: BinaryPropagationMode::Auto, branch_rule_auto: false,
++            branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
++            local_cuts: false, root_rc_fixing: false, ..BbOptions::default() }, ..SolveOptions::default() }
++    }
++
++    #[test]
++    fn certified_fallback_solver_matches_known_optimum_across_engines_and_domains() {
++        let p = branch_model();
++        let mut total_fixes = 0;
++        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
++            for scaling in [false, true] {
++                for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
++                    for rc in [false, true] {
++                        let mut opts = options(engine);
++                        opts.use_scaling = scaling;
++                        opts.bb.node_rule = rule;
++                        opts.bb.root_rc_fixing = rc;
++                        let auto = solve(&p, &opts).unwrap();
++                        opts.bb.binary_row_propagation = BinaryPropagationMode::On;
++                        let on = solve(&p, &opts).unwrap();
++                        opts.bb.binary_row_propagation = BinaryPropagationMode::Off;
++                        let off = solve(&p, &opts).unwrap();
++                        for report in [&auto, &on, &off] {
++                            assert_eq!(report.status, SolveStatus::Optimal);
++                            assert_eq!(report.objective, Some(2.125));
++                            let mut values = report.values.clone().unwrap();
++                            final_check(&p, &mut values).unwrap();
++                        }
++                        assert_eq!(auto.stats.nodes, on.stats.nodes);
++                        assert_eq!(auto.stats.lp_iterations, on.stats.lp_iterations);
++                        assert_eq!(auto.values, on.values);
++                        assert_eq!(auto.stats.propagation.fixes, on.stats.propagation.fixes);
++                        assert_eq!(off.stats.propagation.accepted_rows, 0);
++                        assert!(auto.stats.propagation.calls > 0);
++                        assert_eq!(auto.stats.propagation.accepted_rows, 2);
++                        assert_eq!(auto.stats.propagation.skipped_rows, 0);
++                        total_fixes += auto.stats.propagation.fixes;
++                    }
++                }
++            }
++        }
++        assert!(total_fixes > 0, "必须实际使用被救回的传播能力");
++    }
++
++    #[test]
++    fn certified_fallback_capture_gate_and_root_lazy_statistics() {
++        let p = branch_model();
++        for presolve in [false, true] {
++            for mode in [BinaryPropagationMode::Auto, BinaryPropagationMode::On, BinaryPropagationMode::Off] {
++                let mut opts = options(LpEngineKind::Tableau);
++                opts.use_presolve = presolve;
++                opts.bb.binary_row_propagation = mode;
++                opts.bb.node_limit = 1;
++                let audit = CaptureAudit::new();
++                let result = solve(&p, &opts).unwrap();
++                assert_eq!(result.status, SolveStatus::LimitReached);
++                let expected = if presolve && mode != BinaryPropagationMode::Off { 1 } else { 0 };
++                assert_eq!(audit.count(), expected);
++                assert_eq!(result.stats.propagation.calls, 0);
++                assert_eq!(result.stats.propagation.accepted_rows, 0,
++                    "未展开孩子时不能提前发布传播数据库统计");
++            }
++        }
++        let mut root_closed = p;
++        root_closed.set_objective(vec![(0, -1.0), (1, -2.0), (2, -3.0)], 0.25).unwrap();
++        let audit = CaptureAudit::new();
++        let closed = solve(&root_closed, &options(LpEngineKind::Tableau)).unwrap();
++        assert_eq!(closed.status, SolveStatus::Optimal);
++        assert_eq!(closed.objective, Some(0.25));
++        assert_eq!(audit.count(), 1, "根部闭合也已支付旧行认证成本");
++        assert_eq!(closed.stats.propagation.accepted_rows, 0);
++    }
++
++    #[test]
++    fn certified_fallback_parallel_prefix_stays_off_and_explicit_on_errors() {
++        let p = branch_model();
++        let opts = options(LpEngineKind::Tableau);
++        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
++        let audit = CaptureAudit::new();
++        let parallel = {
++            // 若最外层Auto被顺序前缀重开，传播会立即中断并使本断言失败。
++            let _deadline = TestDeadlineGuard::on_check(1);
++            solve_controlled(&p, &opts, &ctrl, None).unwrap()
++        };
++        assert_eq!(parallel.report.status, SolveStatus::Optimal);
++        assert_eq!(parallel.report.objective, Some(2.125));
++        assert_eq!(parallel.report.stats.propagation.calls, 0);
++        assert_eq!(audit.count(), 0);
++        let mut explicit = opts;
++        explicit.bb.binary_row_propagation = BinaryPropagationMode::On;
++        let error = solve_controlled(&p, &explicit, &ctrl, None).unwrap_err();
++        assert!(error.to_string().contains("二元静态行传播"));
++        assert_eq!(audit.count(), 0);
++    }
++
++    #[test]
++    fn certified_fallback_deadline_keeps_frontier_and_budget_run_is_deterministic() {
++        let p = branch_model();
++        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
++            let opts = options(engine);
++            let interrupted = {
++                let _deadline = TestDeadlineGuard::on_check(1);
++                solve_controlled(&p, &opts, &SearchControl::default(), None).unwrap()
++            };
++            assert_eq!(interrupted.report.status, SolveStatus::LimitReached);
++            assert_eq!(interrupted.report.stats.nodes, 1);
++            assert_eq!(interrupted.report.stats.propagation.accepted_rows, 2);
++            assert_eq!(interrupted.report.stats.propagation.calls, 1);
++            assert_eq!(interrupted.report.objective, None);
++            assert!(interrupted.bound.unwrap() >= 2.125 - 1e-8);
++            let ctrl = SearchControl { determinism: Determinism::Budget, ..SearchControl::default() };
++            let a = solve_controlled(&p, &opts, &ctrl, None).unwrap();
++            let b = solve_controlled(&p, &opts, &ctrl, None).unwrap();
++            assert_eq!(a.report.status, SolveStatus::Optimal);
++            assert_eq!(a.report.objective, Some(2.125));
++            assert_eq!(a.bound, b.bound);
++            assert_eq!(a.report.values, b.report.values);
++            assert_eq!(a.report.stats.nodes, b.report.stats.nodes);
++            assert_eq!(a.report.stats.lp_iterations, b.report.stats.lp_iterations);
++            assert_eq!(format!("{:?}", a.report.stats.propagation), format!("{:?}", b.report.stats.propagation));
++        }
++    }
++}

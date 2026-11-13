@@ -1,0 +1,22 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-certified-row-fallback/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.20s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-7fa75cd48adf41a8)
+
+running 14 tests
+test binary_propagation::tests::certified_fallback_deadline_after_partial_fixes_cleans_its_queue ... ok
+test binary_propagation::tests::certified_fallback_prefers_new_then_old_and_counts_rejection_once ... ok
+test binary_propagation::tests::certified_fallback_preserves_all_small_domains_and_sibling_rollback ... ok
+test binary_propagation::tests::certified_fallback_rejects_foreign_model_tolerance_and_column_mapping ... ok
+test branch_bound::binary_propagation_tests::certified_fallback_keeps_static_rows_outside_real_local_cut_scopes ... ok
+test branch_bound::binary_propagation_tests::certified_fallback_public_bb_has_no_hidden_payload_and_off_rejects_internal_payload ... ok
+test branch_bound::binary_propagation_tests::certified_fallback_replays_rc_after_dfs_and_hybrid_domain_restore ... ok
+test presolve::certified_fallback_tests::certified_fallback_leaves_lp_and_postsolve_bitwise_unchanged ... ok
+test presolve::certified_fallback_tests::certified_fallback_only_attempts_actual_changes_and_public_entry_keeps_empty ... ok
+test presolve::certified_fallback_tests::certified_fallback_uses_final_columns_after_fixing_and_r5_aggregation ... ok
+test solver::certified_fallback_tests::certified_fallback_capture_gate_and_root_lazy_statistics ... ok
+test solver::certified_fallback_tests::certified_fallback_deadline_keeps_frontier_and_budget_run_is_deterministic ... ok
+test solver::certified_fallback_tests::certified_fallback_parallel_prefix_stays_off_and_explicit_on_errors ... ok
+test solver::certified_fallback_tests::certified_fallback_solver_matches_known_optimum_across_engines_and_domains ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 433 filtered out; finished in 0.51s
+

@@ -1,0 +1,593 @@
+{
+  "schema": 1,
+  "source_commit": "e5829c9fd5e2efd762b49bb2753ff54605c28db9",
+  "validation_base_commit": "099e545",
+  "feature": "certified_row_fallback",
+  "enabled_by_default": false,
+  "working_directory": "/private/tmp/mic-certified-row-fallback",
+  "compiler": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "source_files": {
+    "milp/Cargo.toml": "c2cd08ed533d6e5aa922a105e1b7adf84b59f13fefff19a18906418eb40d5389",
+    "milp/src/binary_propagation.rs": "7bf67f60e9f8dcb741415ceddffed49b12d0819c8373a9dddf091a58d38bbdc0",
+    "milp/src/branch_bound.rs": "647a412a9da7967517a30a61a08c772b8b4eadfade58d248c1d512e7dbb46f09",
+    "milp/src/presolve.rs": "39d71c3f44a9d1b793ede77ee90b5787d50064ec35b51347ae45b26636fcda3b",
+    "milp/src/solver.rs": "2a2c60c51d9ecc1331036682c8410ebadd32e1b9ed303d1e47ea64e10881209a",
+    "bench/large_scale_rounds/audit_certified_fallback.py": "cd25d321a68a25d134ea25e985ec751b71043399e463185817e0c9b528e58e18",
+    "bench/large_scale_rounds/certified_fallback_probe.rs": "a8295e48fa9f44033c2d023938fcb61f5da1a3dbd4ac392d6c61beede89ef515"
+  },
+  "source_diff": {
+    "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/source.diff",
+    "sha256": "4854352106f96d56c45f7e390abf6a7ec2a7e040f611820fc77f052137545bd5"
+  },
+  "history": "01与02来自f5f133b基线。02的全部测试已结束且成功，因优先修复独立发现的Phase-1负人工漏洞，暂停的外层调度器随后被终止；未获取其cargo退出码，未启动后续命令。03起均在099e545的新守卫基线上重跑，旧日志不覆盖。",
+  "validation_runs": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "certified_row_fallback",
+        "--lib",
+        "certified_fallback_",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "seconds": 4.018049001693726,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/01-focused-first.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/01-focused-first.log",
+        "sha256": "49ed85fa3598187530f9fcbd2fe1c25c191aee5904e51990399b3f694e054040"
+      },
+      "base_commit": "f5f133b",
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 433
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--",
+        "--test-threads=1"
+      ],
+      "base_commit": "f5f133b",
+      "exit_code": null,
+      "observed_result": "all test suites passed; log ends at doc-tests completion",
+      "scheduler_terminated_after_completed_cargo": true,
+      "reason": "优先修复经独立反例确认的Phase-1负人工证明漏洞；后续重测试在新核心基线上继续。",
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/02-default-debug-interrupted-schedule.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/02-default-debug.log",
+        "sha256": "9941afd178c61b77693f4f089ca4a1957b460b6a517761602bcb532ce4069752"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 429,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 114.28822493553162,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/03-default-debug.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/03-default-debug.log",
+        "sha256": "9c0bb7e39a9976ea5036e99f40918ea4db1f5940226b78f03aa05d5696312c5a"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 442,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 5.902048110961914,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/04-default-release.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/04-default-release.log",
+        "sha256": "490dc126a01c1f2cce4f3c2096933a3f61d799ff0c75d619d4028cec15088654"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "certified_row_fallback",
+        "--",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 114.29393100738525,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/05-candidate-debug.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/05-candidate-debug.log",
+        "sha256": "37ec47fe672763752b7a4d95f85f122b7f8861d85a91ef24054bf6901f542a28"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 456,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--features",
+        "certified_row_fallback",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 5.882481813430786,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/06-candidate-release.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/06-candidate-release.log",
+        "sha256": "ac746b9e667912dd7017fff6faea2b6f7cb83fb70de503f13094d1a8490ab5a0"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--features",
+        "certified_row_fallback,root_heuristic_work_limit,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore",
+        "--",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 116.31771802902222,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/07-combined-debug.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/07-combined-debug.log",
+        "sha256": "2239087afcc38c6d112513de3c0c96e7d4c25a96fc988c6c3c927c94baecd49f"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 493,
+          "failed": 0,
+          "ignored": 4,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--features",
+        "certified_row_fallback,root_heuristic_work_limit,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore",
+        "--test",
+        "acceptance",
+        "--",
+        "--include-ignored",
+        "--test-threads=1"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 5.961077928543091,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/08-combined-release.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/08-combined-release.log",
+        "sha256": "b27afd47106ea6ff8640e6af997241f354af62f7e8c2fa1aa7824152a37514a4"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "planner/Cargo.toml"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 15.139103174209595,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/09-planner.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/09-planner.log",
+        "sha256": "9f4bc4fb66aec990e2979995c404e1b554fa9b851d3e2f7c31fb5f82a141ab83"
+      },
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 103,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 13,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--no-default-features"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 0.5414121150970459,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/10-no-default-check.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/10-no-default-check.log",
+        "sha256": "129418a7ef9065b278d492741799de8b4e28c4e0c1a9093f5a2ce1772119e7b8"
+      },
+      "suites": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "milp/Cargo.toml",
+        "--release",
+        "--lib",
+        "--features",
+        "certified_row_fallback"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 0.017340898513793945,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/11-audit-library-build.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/11-audit-library-build.log",
+        "sha256": "376a48f02bf305a0c383aa68e8f2d8c5df3ec64cbee6a09491a649aa453baba9"
+      },
+      "suites": []
+    },
+    {
+      "argv": [
+        "rustc",
+        "--edition=2021",
+        "bench/large_scale_rounds/certified_fallback_probe.rs",
+        "--extern",
+        "milp=milp/target/release/libmilp.rlib",
+        "-L",
+        "dependency=milp/target/release/deps",
+        "--cfg",
+        "feature=\"binary_coefficient_strengthening\"",
+        "--cfg",
+        "feature=\"certified_row_fallback\"",
+        "-O",
+        "-o",
+        "milp/target/certified-fallback-probe"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 0.4220137596130371,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/12-audit-probe-build.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/12-audit-probe-build.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "suites": []
+    },
+    {
+      "argv": [
+        "python3",
+        "bench/large_scale_rounds/audit_certified_fallback.py",
+        "--probe",
+        "milp/target/certified-fallback-probe",
+        "--legacy-public-dir",
+        "/tmp/mic-rounds-public",
+        "--miplib-manifest",
+        "/tmp/mic-rounds-miplib2017/sources.json"
+      ],
+      "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+      "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+      "exit_code": 0,
+      "seconds": 4.754796981811523,
+      "metadata_file": "bench/large_scale_rounds/results/certified-row-fallback-validation/13-real-model-audit.json",
+      "log": {
+        "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/13-real-model-audit.log",
+        "sha256": "60d268a24620a9ef28243df5d8aee09f933a27793f709460d89355f5e267388e"
+      },
+      "suites": []
+    }
+  ],
+  "audit": {
+    "model_count": 20,
+    "rescued_rows": 597,
+    "accepted_without_fallback": 9095,
+    "accepted_with_fallback": 9692,
+    "all_lp_bitwise_identical": true,
+    "all_postsolve_bitwise_identical": true,
+    "solver_runs": 0,
+    "result": {
+      "path": "bench/large_scale_rounds/results/certified-row-fallback-validation/real-model-audit.jsonl",
+      "sha256": "60d268a24620a9ef28243df5d8aee09f933a27793f709460d89355f5e267388e"
+    },
+    "reference": {
+      "path": "bench/large_scale_rounds/results/coefficient-strengthening-audit.jsonl",
+      "sha256": "d051bc7a99ecb26cae18397e29c804c3d10163b6578c1af5e2b86605d5ed0bf1"
+    },
+    "legacy_baseline": {
+      "path": "bench/large_scale_rounds/results/external-baseline.jsonl",
+      "sha256": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292"
+    },
+    "modern_manifest": {
+      "path": "/tmp/mic-rounds-miplib2017/sources.json",
+      "sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6"
+    },
+    "probe_binary": {
+      "path": "milp/target/certified-fallback-probe",
+      "sha256": "66d22345b5163922224b1f35884489f7ed2c71521d16a50bc918f64b97d9d871"
+    },
+    "linked_library": {
+      "path": "milp/target/release/libmilp.rlib",
+      "sha256": "5f4e5de27386277a7030831211aaa23be73778a1a77347f06c4c6ee62df3be66"
+    }
+  },
+  "scope": "只验证认证可用性及正确性，不主张数学上更强的布尔传播，不进行fallback求解性能测量，不改变默认特性。"
+}

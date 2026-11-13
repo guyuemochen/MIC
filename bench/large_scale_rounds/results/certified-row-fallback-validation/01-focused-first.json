@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--features",
+    "certified_row_fallback",
+    "--lib",
+    "certified_fallback_",
+    "--",
+    "--test-threads=1"
+  ],
+  "exit_code": 0,
+  "seconds": 4.018049001693726
+}
