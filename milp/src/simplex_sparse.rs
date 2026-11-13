@@ -44,7 +44,8 @@
 //!   重算、对偶 = c_B·B⁻¹ × row_scale。
 //!
 //! 稠密引擎在本轮 Phase-2 数值失败且无人工欠账时，可在同一剩余预算内
-//! 额外冷重建一次并完整重跑两阶段；本引擎仍使用下述整基重因子化重试。
+//! 额外求解一次：优先从原列重新分解当前静态基，失败才冷重建重跑两阶段；
+//! 本引擎仍使用下述整基重因子化重试，稠密路径只复用窄LU封装。
 //! 恢复策略不同，不改变 LP、容差或证明出口；再次失败均诚实停止。
 //!
 //! # 修正单纯形机制（与表格引擎的实现差异；目标值恒同是红线）
@@ -591,6 +592,103 @@ struct LuFactors {
     u_cols: Vec<Vec<(usize, f64)>>,
     /// U 对角。
     u_diag: Vec<f64>,
+}
+
+/// 稠密恢复复用的窄接口：只持有一次全新基的因子，不改变稀疏引擎状态。
+pub(crate) struct FreshBasisLu {
+    factors: LuFactors,
+}
+
+impl FreshBasisLu {
+    pub(crate) fn factorize(cols: &[Vec<(usize, f64)>], pivot: f64) -> std::result::Result<Self, String> {
+        let m = cols.len();
+        if !pivot.is_finite() || pivot <= 0.0
+            || cols.iter().flatten().any(|&(row, value)| row >= m || !value.is_finite())
+            || cols.iter().any(|col| col.windows(2).any(|pair| pair[0].0 >= pair[1].0)) {
+            return Err("新基分解的维度、索引或数值无效".to_string());
+        }
+        // 与稀疏重构相同：单位列先按行号，再按非零数与原基位置排序。
+        let mut units = Vec::new();
+        let mut multis = Vec::new();
+        for (bp, col) in cols.iter().enumerate() {
+            if col.len() == 1 { units.push((col[0].0, bp)); }
+            else { multis.push((col.len(), bp)); }
+        }
+        units.sort_unstable();
+        multis.sort_unstable();
+        let order = units.iter().chain(multis.iter()).map(|&(_, bp)| bp).collect::<Vec<_>>();
+        let ordered = order.iter().map(|&bp| cols[bp].clone()).collect::<Vec<_>>();
+        let mut factors = LuFactors::default();
+        let mut scratch = LuScratch::default();
+        factors.resize(m);
+        scratch.resize(m);
+        factorize_into(&ordered, pivot, m, &mut factors, &mut scratch).map_err(|error| error.message)?;
+        if factors.m != m || factors.u_diag.len() != m
+            || factors.l_rows.len() != m || factors.u_rows.len() != m
+            || factors.l_cols.len() != m || factors.u_cols.len() != m
+            || factors.u_diag.iter().any(|v| !v.is_finite() || v.abs() < pivot)
+            || factors.l_rows.iter().chain(factors.u_rows.iter())
+                .chain(factors.l_cols.iter()).chain(factors.u_cols.iter()).flatten()
+                .any(|&(j, v)| j >= m || !v.is_finite()) {
+            return Err("新基分解产生无效维度、索引、非有限因子或主元".to_string());
+        }
+        let permutation_valid = |permutation: &[usize]| {
+            let mut seen = vec![false; m];
+            permutation.len() == m && !permutation.iter().any(|&row|
+                row >= m || std::mem::replace(&mut seen[row], true))
+        };
+        if !permutation_valid(&factors.perm) || !permutation_valid(&order) {
+            return Err("新基分解产生无效置换".to_string());
+        }
+        factors.col_perm = order;
+        Ok(Self { factors })
+    }
+
+    pub(crate) fn solve(&self, rhs: &[f64], out: &mut [f64]) -> std::result::Result<(), String> {
+        if rhs.len() != self.factors.m || out.len() != self.factors.m
+            || rhs.iter().any(|v| !v.is_finite()) {
+            return Err("新基三角求解的维度或右端无效".to_string());
+        }
+        self.factors.ftran_dense(rhs, out);
+        if out.iter().any(|v| !v.is_finite()) {
+            return Err("新基三角求解产生非有限值".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fresh_basis_lu_tests {
+    use super::FreshBasisLu;
+
+    #[test]
+    fn permutation_returns_original_basis_positions() {
+        let lu = FreshBasisLu::factorize(&[vec![(0, 2.0), (1, 4.0)], vec![(1, 3.0)]], 1e-9).unwrap();
+        let mut result = vec![0.0; 2];
+        lu.solve(&[4.0, 14.0], &mut result).unwrap();
+        assert_eq!(result, vec![2.0, 2.0]);
+        lu.solve(&[1.0, 0.0], &mut result).unwrap();
+        assert!((result[0] - 0.5).abs() < 1e-12);
+        assert!((result[1] + 2.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn invalid_dimensions_values_singular_and_overflow_are_rejected() {
+        for pivot in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(FreshBasisLu::factorize(&[vec![(0, 1.0)]], pivot).is_err());
+        }
+        for cols in [vec![vec![(1, 1.0)]], vec![vec![(0, f64::NAN)]], vec![vec![(0, 1.0), (0, 1.0)]], vec![vec![(1, 1.0), (0, 1.0)], vec![(1, 1.0)]],
+            vec![vec![(0, 5e-10)]], vec![vec![]],
+            vec![vec![(0, 1e308), (1, 1e308)], vec![(0, 1e308), (1, -1e308)]]] {
+            assert!(FreshBasisLu::factorize(&cols, 1e-9).is_err());
+        }
+        let lu = FreshBasisLu::factorize(&[vec![(0, 1e-9)]], 1e-9).unwrap();
+        let mut result = [0.0];
+        assert!(lu.solve(&[], &mut result).is_err());
+        assert!(lu.solve(&[1.0], &mut []).is_err());
+        assert!(lu.solve(&[f64::INFINITY], &mut result).is_err());
+        assert!(lu.solve(&[1e308], &mut result).is_err());
+    }
 }
 
 /// 首次LU失败的只读证据。须在构造求解器前显式reset；只采当前线程，take关闭采集。

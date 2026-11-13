@@ -1,0 +1,45 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-basis-refactor/milp)
+warning: struct `FreshBasisLu` is never constructed
+   --> src/simplex_sparse.rs:597:19
+    |
+597 | pub(crate) struct FreshBasisLu {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated items `factorize` and `solve` are never used
+   --> src/simplex_sparse.rs:602:19
+    |
+601 | impl FreshBasisLu {
+    | ----------------- associated items in this implementation
+602 |     pub(crate) fn factorize(cols: &[Vec<(usize, f64)>], pivot: f64) -> std::result::Result<Self, String> {
+    |                   ^^^^^^^^^
+...
+632 |     pub(crate) fn solve(&self, rhs: &[f64], out: &mut [f64]) -> std::result::Result<(), String> {
+    |                   ^^^^^
+
+warning: `milp` (lib) generated 2 warnings
+warning: `milp` (lib test) generated 2 warnings (2 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.65s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 1 test
+test simplex::tests::dense_basis_refactor_tests::saved_inverse_drift_recovers_current_basis_without_replaying_pivots ... FAILED
+
+failures:
+
+---- simplex::tests::dense_basis_refactor_tests::saved_inverse_drift_recovers_current_basis_without_replaying_pivots stdout ----
+
+thread 'simplex::tests::dense_basis_refactor_tests::saved_inverse_drift_recovers_current_basis_without_replaying_pivots' (1312045) panicked at src/simplex.rs:3303:13:
+assertion `left == right` failed: 修复当前基不应重放冷启动主元
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    simplex::tests::dense_basis_refactor_tests::saved_inverse_drift_recovers_current_basis_without_replaying_pivots
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 483 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

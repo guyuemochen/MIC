@@ -1,0 +1,46 @@
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index 9b92f96..0ab3a19 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -3279,6 +3279,41 @@ mod tests {
+     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+ 
+ 
++    mod dense_basis_refactor_tests {
++        use super::*;
++
++        #[test]
++        fn saved_inverse_drift_recovers_current_basis_without_replaying_pivots() {
++            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
++                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
++            let bounds = Bounds::from_problem(&p);
++            let mut s = Simplex::new(&p, tol()).unwrap();
++            assert_eq!(s.solve(&bounds).status, LpStatus::Optimal);
++            assert_eq!(s.basis, vec![0]);
++            // 最小化实际故障：保存的逆及非基表格列漂移，原基矩阵仍精确为1。
++            s.binv[0][0] += 1e-6;
++            s.matrix[0][1] += 1e-6;
++            s.refresh_values().unwrap();
++            assert!(s.check_phase_basic_values(2).is_err());
++            let total = s.iterations();
++            let basis = s.basis.clone();
++            s.start_call();
++            let status = s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited());
++            assert_eq!(status, LpStatus::Optimal);
++            assert_eq!(s.iterations(), total, "修复当前基不应重放冷启动主元");
++            assert_eq!(s.iter_call, 0);
++            assert_eq!(s.basis, basis);
++            assert_eq!(s.binv, vec![vec![1.0]]);
++            assert_eq!(s.matrix, vec![vec![1.0, 1.0]]);
++            assert_eq!(s.rhs, vec![1.0]);
++            let result = s.build_solution(status);
++            assert_eq!(result.x, vec![1.0]);
++            assert_eq!(result.objective, -1.0);
++            assert!(result.x[0] >= bounds.lb[0] && result.x[0] <= bounds.ub[0]);
++            assert!(result.x[0] <= 1.0);
++        }
++    }
++
+     mod dense_cold_recovery_tests {
+         use super::*;
+ 

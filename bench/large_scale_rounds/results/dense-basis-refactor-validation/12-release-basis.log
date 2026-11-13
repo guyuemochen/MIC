@@ -1,0 +1,35 @@
+$ cargo test --manifest-path milp/Cargo.toml --release dense_basis_refactor_tests
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-basis-refactor/milp)
+    Finished `release` profile [optimized] target(s) in 5.56s
+     Running unittests src/lib.rs (milp/target/release/deps/milp-5aa8c3d1bee0ff95)
+
+running 8 tests
+test simplex::tests::dense_basis_refactor_tests::fresh_refuses_unmapped_basic_or_nonzero_artificials ... ok
+test simplex::tests::dense_basis_refactor_tests::expired_candidate_never_commits_or_enters_cold_fallback ... ok
+test simplex::tests::dense_basis_refactor_tests::saved_inverse_drift_recovers_current_basis_without_replaying_pivots ... ok
+test simplex::tests::dense_basis_refactor_tests::signed_slack_upper_endpoint_nonzero_lower_and_cut_are_preserved ... ok
+test simplex::tests::dense_basis_refactor_tests::invalid_fresh_candidates_leave_old_state_untouched ... ok
+test simplex::tests::dense_basis_refactor_tests::deadline_after_fresh_commit_keeps_coherent_phase_two_state ... ok
+test simplex::tests::dense_basis_refactor_tests::artificial_retirement_rebuilds_indices_across_size_threshold ... ok
+test simplex::tests::dense_basis_refactor_tests::actual_refresh_snapshots_rebuild_all_state_and_retire_zero_artificials ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (milp/target/release/deps/milp-bad97cbc89c93cdd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/release/deps/acceptance-534d240996514074)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/release/deps/warm_cold_parity-0f31b6d867254ff5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

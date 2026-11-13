@@ -36,8 +36,9 @@
 //!   `infeasible_flag`（后续 solve/resolve 直接 Infeasible），满足则永久剔除
 //!   （duals 恒 0，`row_of_constraint` 返回 None）。
 //!
-//! - 第二阶段本轮数值失败且无人工欠账时，同一公开调用至多额外冷重建一次：
-//!   保留当前界、原行和割，完整重跑两阶段；迭代、工作步、期限与 Bland
+//! - 第二阶段本轮数值失败且无人工欠账时，同一公开调用至多额外求解一次：
+//!   优先从原列重新分解当前静态基，同步重建表格、逆与基本值；准备失败
+//!   才冷重建并完整重跑两阶段。保留当前界、原行和割；迭代、工作步、期限与 Bland
 //!   预算不重置。真实上限、第一阶段失败及最终解检查降级不进入恢复；
 //!   再次失败仍诚实停止。稀疏引擎使用自身的一次整基重因子化策略。
 //!
@@ -577,10 +578,15 @@ mod recovery_fault {
         pub rebuilds: usize,
         pub expire_before: bool,
         pub expire_after: bool,
+        pub expire_after_prepare: bool,
+        pub fresh_prepares: usize,
+        pub fresh_commits: usize,
+        pub cold_rebuilds: usize,
     }
     std::thread_local! {
         static STATE: std::cell::Cell<State> = const { std::cell::Cell::new(State {
             faults: 0, rebuilds: 0, expire_before: false, expire_after: false,
+            expire_after_prepare: false, fresh_prepares: 0, fresh_commits: 0, cold_rebuilds: 0,
         }) };
     }
     pub(super) struct Guard(State);
@@ -600,6 +606,23 @@ mod recovery_fault {
                 s.rhs[0] = if lb.is_finite() { lb - 1.0 } else { ub + 1.0 };
                 state.set(config);
             }
+        });
+    }
+    pub(super) fn prepared(s: &mut Simplex) {
+        STATE.with(|state| {
+            let mut config = state.get();
+            config.fresh_prepares += 1;
+            if config.expire_after_prepare {
+                s.time_deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            }
+            state.set(config);
+        });
+    }
+    pub(super) fn committed(fresh: bool) {
+        STATE.with(|state| {
+            let mut config = state.get();
+            if fresh { config.fresh_commits += 1; } else { config.cold_rebuilds += 1; }
+            state.set(config);
         });
     }
     pub(super) fn recovery_boundary(s: &mut Simplex, after: bool) {
@@ -1568,6 +1591,10 @@ impl Simplex {
         // 启用时从填表结果一次性重建全部行非零索引（含人工列段）；阈内禁用
         // （行索引清空 = 稠密标记语义，旧路径零簿记——大表缩回阈内时同步
         // 释放索引内存）。整基重建是行数/列数变化点之一，启用位在此重判。
+        self.rebuild_tableau_indices();
+    }
+
+    fn rebuild_tableau_indices(&mut self) {
         self.nz_update_enabled();
         if self.nz_enabled {
             self.nz_rebuild_all();
@@ -2615,7 +2642,141 @@ impl Simplex {
         None
     }
 
-    /// 每次公开调用至多一次额外冷恢复；资格只来自本轮第二阶段失败。
+    /// 仅用原始静态列重建当前基，不把演进表格或保存逆当成列来源。
+    /// 旧人工必须全部非基且贴零，成功后退休；缺少人工来源的基保守回退冷重建。
+    fn prepare_fresh_tableau(&self) -> std::result::Result<FreshTableau, String> {
+        let m = self.basis.len();
+        let n = self.num_structural;
+        let ncs = self.ncols_static();
+        if self.phase1_pending || self.basis.iter().any(|&j| j >= ncs)
+            || (ncs..self.in_basis.len()).any(|j| self.in_basis[j] || self.at_upper[j]) {
+            return Err("当前基含人工或人工欠账，不能由静态列重建".to_string());
+        }
+        let mut basis_position = vec![None; ncs];
+        for (i, &j) in self.basis.iter().enumerate() {
+            if basis_position[j].replace(i).is_some() || !self.in_basis[j] {
+                return Err("当前基列簿记不一致".to_string());
+            }
+        }
+        if (0..ncs).any(|j| self.in_basis[j] != basis_position[j].is_some()) {
+            return Err("当前基标记不一致".to_string());
+        }
+        let mut columns = vec![Vec::new(); ncs];
+        for (i, row) in self.row_terms.iter().enumerate() {
+            for &(j, a) in row {
+                if i >= m || j >= n || !a.is_finite() {
+                    return Err("原始结构列含无效索引或非有限值".to_string());
+                }
+                if a != 0.0 { columns[j].push((i, a)); }
+            }
+            if let Some(j) = self.row_slack[i] {
+                if j < n || j >= ncs || !self.layout.slack[j - n].sign.is_finite() {
+                    return Err("原始松弛列无效".to_string());
+                }
+                columns[j].push((i, self.layout.slack[j - n].sign));
+            }
+        }
+        let basis_columns = self.basis.iter().map(|&j| columns[j].clone()).collect::<Vec<_>>();
+        let lu = crate::simplex_sparse::FreshBasisLu::factorize(&basis_columns, self.tol.pivot)?;
+        if self.time_deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Err("新基分解后已到绝对期限".to_string());
+        }
+        if (n..ncs).any(|j| !self.in_basis[j] && self.at_upper[j]) {
+            return Err("非基松弛列没有有限的上界端点".to_string());
+        }
+        let mut nonbasic = vec![0.0; n];
+        for j in 0..n {
+            if !self.in_basis[j] {
+                nonbasic[j] = self.nonbasic_value(j);
+                if !nonbasic[j].is_finite() { return Err("非基端点非有限".to_string()); }
+            }
+        }
+        let mut d = self.row_rhs.clone();
+        for i in 0..m {
+            let mut acc = 0.0;
+            for &(j, a) in &self.row_terms[i] {
+                if nonbasic[j] != 0.0 { acc += a * nonbasic[j]; }
+            }
+            d[i] -= acc;
+        }
+        // 每次三角求解都按原始B复核绝对残差；不改变原feas或主元阈值。
+        let solve = |input: &[f64], output: &mut [f64]| -> std::result::Result<(), String> {
+            if self.time_deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return Err("新基逐列重建已到绝对期限".to_string());
+            }
+            lu.solve(input, output)?;
+            let mut residual = vec![0.0; m];
+            for (j, col) in basis_columns.iter().enumerate() {
+                for &(i, a) in col { residual[i] += a * output[j]; }
+            }
+            if residual.iter().zip(input).any(|(&actual, &expected)|
+                !actual.is_finite() || !(actual - expected).abs().is_finite()
+                    || (actual - expected).abs() > self.tol.feasibility) {
+                return Err("新基求解残差超出绝对可行性容差".to_string());
+            }
+            Ok(())
+        };
+        let mut rhs = vec![0.0; m];
+        solve(&d, &mut rhs)?;
+        if rhs.iter().enumerate().any(|(i, &v)| !self.primal_value_within_bounds(self.basis[i], v, 2)) {
+            return Err("新基基本值仍超出绝对界容差".to_string());
+        }
+        let mut raw_x = nonbasic;
+        for (i, &j) in self.basis.iter().enumerate() {
+            if j < n { raw_x[j] = rhs[i]; }
+        }
+        for i in 0..m {
+            let value = self.row_terms[i].iter().map(|&(j, a)| a * raw_x[j]).sum::<f64>();
+            let residual = value - self.row_rhs[i];
+            let violation = match self.row_op[i] { RelOp::Le => residual, RelOp::Ge => -residual, RelOp::Eq => residual.abs() };
+            if !residual.is_finite() || violation > self.tol.feasibility {
+                return Err("新基解违反当前原行或割".to_string());
+            }
+            let slack = self.row_slack[i].map_or(0.0, |j|
+                self.layout.slack[j - n].sign * basis_position[j].map_or(0.0, |bp| rhs[bp]));
+            let equation_residual = value + slack - self.row_rhs[i];
+            if !equation_residual.is_finite() || equation_residual.abs() > self.tol.feasibility {
+                return Err("新基解与当前原行松弛等式不一致".to_string());
+            }
+        }
+        let mut binv = vec![vec![0.0; m]; m];
+        let mut input = vec![0.0; m];
+        let mut output = vec![0.0; m];
+        for k in 0..m {
+            input.fill(0.0);
+            input[k] = 1.0;
+            solve(&input, &mut output)?;
+            for i in 0..m { binv[i][k] = output[i]; }
+        }
+        let mut matrix = vec![vec![0.0; ncs]; m];
+        for j in 0..ncs {
+            if let Some(i) = basis_position[j] {
+                matrix[i][j] = 1.0;
+            } else {
+                input.fill(0.0);
+                for &(i, a) in &columns[j] { input[i] += a; }
+                solve(&input, &mut output)?;
+                for i in 0..m { matrix[i][j] = output[i]; }
+            }
+        }
+        Ok(FreshTableau { matrix, binv, rhs })
+    }
+
+    fn commit_fresh_tableau(&mut self, fresh: FreshTableau) {
+        #[cfg(feature = "phase1_progress_diagnostics")]
+        phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
+        self.matrix = fresh.matrix;
+        self.binv = fresh.binv;
+        self.rhs = fresh.rhs;
+        // 所有旧人工已验证非基贴零；退休后未来修复仍由原始行重新生成。
+        self.num_art = 0;
+        self.in_basis.truncate(self.ncols_static());
+        self.at_upper.truncate(self.ncols_static());
+        self.rebuild_tableau_indices();
+    }
+
+    /// 每次公开调用至多一次额外求解尝试；资格只来自本轮第二阶段失败。
+    /// 优先由原列重新分解当前基；不适用或准备失败才选择原冷重建。
     /// 保留当前界、原行与割及全部调用预算，不把真实上限、第一阶段欠账
     /// 或最终解检查降级当成恢复机会。稀疏引擎已有自己的整基重因子化。
     fn run_two_phase_with_recovery(&mut self, phase1_needed: bool, work: &mut LpWorkLimit<'_>) -> LpStatus {
@@ -2629,7 +2790,25 @@ impl Simplex {
         if let Some(status) = self.recovery_stop_status(work) {
             return status;
         }
+        let fresh = self.prepare_fresh_tableau();
+        #[cfg(test)]
+        recovery_fault::prepared(self);
+        if let Some(status) = self.recovery_stop_status(work) {
+            return status;
+        }
+        if let Ok(fresh) = fresh {
+            self.commit_fresh_tableau(fresh);
+            #[cfg(test)]
+            recovery_fault::committed(true);
+            #[cfg(test)]
+            recovery_fault::recovery_boundary(self, true);
+            if let Some(status) = self.recovery_stop_status(work) { return status; }
+            self.numerical_error = None;
+            return self.run_two_phase_attempt(false, work, &mut false);
+        }
         self.rebuild_initial_basis();
+        #[cfg(test)]
+        recovery_fault::committed(false);
         // 重建会清旧欠账；新人工列必须在任何可能提前停止的检查前立账。
         self.phase1_pending = self.num_art > 0;
         #[cfg(test)]
@@ -3258,6 +3437,13 @@ impl Simplex {
     }
 }
 
+/// 全新当前基的临时结果；全部检查通过后才一次性提交，失败不污染旧状态。
+struct FreshTableau {
+    matrix: Vec<Vec<f64>>,
+    binv: Vec<Vec<f64>>,
+    rhs: Vec<f64>,
+}
+
 /// 单阶段主循环结果。
 enum PhaseOutcome {
     Optimal,
@@ -3278,6 +3464,255 @@ mod tests {
     use crate::error::MilpError;
     use crate::model::{Constraint, LinearExpr, VarType, Variable};
 
+
+    mod dense_basis_refactor_tests {
+        use super::*;
+
+        struct Tokens<'a>(std::str::SplitWhitespace<'a>);
+        impl Tokens<'_> {
+            fn int(&mut self) -> usize { self.0.next().unwrap().parse().unwrap() }
+            fn float(&mut self) -> f64 { f64::from_bits(self.0.next().unwrap().parse().unwrap()) }
+        }
+
+        fn saved_state(data: &str) -> Simplex {
+            let mut tokens = Tokens(data.split_whitespace());
+            let n = tokens.int();
+            let m = tokens.int();
+            let original_rows = tokens.int();
+            let num_art = tokens.int();
+            let lb = (0..n).map(|_| tokens.float()).collect::<Vec<_>>();
+            let ub = (0..n).map(|_| tokens.float()).collect::<Vec<_>>();
+            let costs = (0..n).map(|_| tokens.float()).collect::<Vec<_>>();
+            let mut rows = Vec::new();
+            let mut row_rhs = Vec::new();
+            for _ in 0..m {
+                row_rhs.push(tokens.float());
+                let nnz = tokens.int();
+                rows.push((0..nnz).map(|_| (tokens.int(), tokens.float())).collect::<Vec<_>>());
+            }
+            let p = prob(Sense::Minimize,
+                (0..n).map(|j| var(&format!("x{j}"), lb[j], ub[j])).collect(),
+                costs.iter().enumerate().filter_map(|(j, &c)| (c != 0.0).then_some((j, c))).collect(),
+                (0..original_rows).map(|i| (rows[i].clone(), RelOp::Le, row_rhs[i])).collect());
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            for i in original_rows..m { s.add_row(&rows[i], RelOp::Le, row_rhs[i]).unwrap(); }
+            s.row_terms = rows;
+            s.row_rhs = row_rhs;
+            s.num_art = num_art;
+            let ncols = s.ncols_static() + num_art;
+            s.basis = (0..m).map(|_| tokens.int()).collect();
+            s.rhs = (0..m).map(|_| tokens.float()).collect();
+            s.at_upper = (0..ncols).map(|_| tokens.int() != 0).collect();
+            s.binv = (0..m).map(|_| (0..m).map(|_| tokens.float()).collect()).collect();
+            s.matrix = (0..m).map(|_| (0..ncols).map(|_| tokens.float()).collect()).collect();
+            assert!(tokens.0.next().is_none());
+            s.in_basis = vec![false; ncols];
+            for &j in &s.basis { s.in_basis[j] = true; }
+            s.phase1_pending = false;
+            s.has_run = true;
+            s.iter_call = 200;
+            s.rebuild_tableau_indices();
+            s
+        }
+
+        #[test]
+        fn actual_refresh_snapshots_rebuild_all_state_and_retire_zero_artificials() {
+            for data in [include_str!("../tests/data/dense_refresh_state_1.txt"),
+                         include_str!("../tests/data/dense_refresh_state_2.txt")] {
+                let mut s = saved_state(data);
+                assert!(s.check_phase_basic_values(2).is_err());
+                assert!(s.num_art > 0 && !s.artificials_in_basis());
+                let old_basis = s.basis.clone();
+                let old_rows = s.row_terms.clone();
+                let old_cuts = s.cut_row.clone();
+                let old_bounds = s.bounds.clone();
+                let fresh = s.prepare_fresh_tableau().expect("实际静态基应能重新分解并通过全部残差检查");
+                assert!(fresh.rhs[74] <= 1.0 + s.tol.feasibility);
+                s.commit_fresh_tableau(fresh);
+                assert_eq!(s.basis, old_basis);
+                assert_eq!(s.row_terms, old_rows);
+                assert_eq!(s.cut_row, old_cuts);
+                assert_eq!(s.bounds.lb, old_bounds.lb);
+                assert_eq!(s.bounds.ub, old_bounds.ub);
+                assert_eq!(s.num_art, 0);
+                assert_eq!(s.matrix[0].len(), s.ncols_static());
+                assert_eq!(s.in_basis.len(), s.ncols_static());
+                assert_eq!(s.at_upper.len(), s.ncols_static());
+                assert_eq!(s.iter_call, 200);
+                assert!(s.check_phase_basic_values(2).is_ok());
+                let mut x = (0..s.num_structural).map(|j| if s.in_basis[j] { 0.0 } else { s.nonbasic_value(j) }).collect::<Vec<_>>();
+                for (i, &j) in s.basis.iter().enumerate() { if j < x.len() { x[j] = s.rhs[i]; } }
+                for (i, terms) in s.row_terms.iter().enumerate() {
+                    let value = terms.iter().map(|&(j, a)| a * x[j]).sum::<f64>();
+                    assert!(value <= s.row_rhs[i] + s.tol.feasibility, "原行或割{i}违反");
+                }
+                for (j, &value) in x.iter().enumerate() {
+                    assert!(value >= s.bounds.lb[j] - s.tol.feasibility && value <= s.bounds.ub[j] + s.tol.feasibility);
+                }
+                #[cfg(debug_assertions)]
+                s.nz_debug_verify();
+            }
+        }
+
+        #[test]
+        fn artificial_retirement_rebuilds_indices_across_size_threshold() {
+            let mut s = saved_state(include_str!("../tests/data/dense_refresh_state_1.txt"));
+            let ncols = 800;
+            s.num_art = ncols - s.ncols_static();
+            for row in &mut s.matrix { row.resize(ncols, 0.0); }
+            s.in_basis.resize(ncols, false);
+            s.at_upper.resize(ncols, false);
+            s.rebuild_tableau_indices();
+            assert!(s.nz_enabled);
+            let fresh = s.prepare_fresh_tableau().unwrap();
+            s.commit_fresh_tableau(fresh);
+            assert!(!s.nz_enabled);
+            assert!(s.row_nz.iter().all(Vec::is_empty));
+            assert!(s.nz_dead.iter().all(|&n| n == 0));
+            #[cfg(debug_assertions)]
+            s.nz_debug_verify();
+        }
+
+        #[test]
+        fn invalid_fresh_candidates_leave_old_state_untouched() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let mut base = Simplex::new(&p, tol()).unwrap();
+            assert_eq!(base.solve(&Bounds::from_problem(&p)).status, LpStatus::Optimal);
+            for kind in 0..4 {
+                let mut s = base.clone();
+                match kind { 0 => s.row_rhs[0] = 2.0, 1 => s.row_terms[0].clear(),
+                    2 => s.row_rhs[0] = f64::INFINITY, _ => s.at_upper[1] = true }
+                let old = s.clone();
+                assert!(s.prepare_fresh_tableau().is_err());
+                assert_eq!(s.matrix, old.matrix);
+                assert_eq!(s.binv, old.binv);
+                assert_eq!(s.rhs, old.rhs);
+                assert_eq!(s.basis, old.basis);
+                assert_eq!(s.at_upper, old.at_upper);
+                assert_eq!(s.iterations(), old.iterations());
+            }
+        }
+
+        #[test]
+        fn signed_slack_upper_endpoint_nonzero_lower_and_cut_are_preserved() {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 1.0, 3.0), var("y", 1.0, 2.0)], vec![],
+                vec![(vec![(0, 1.0), (1, -1.0)], RelOp::Ge, 1.0),
+                     (vec![(0, 1.0), (1, 1.0)], RelOp::Le, 6.0)]);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            s.add_row(&[(0, 1.0)], RelOp::Le, 4.0).unwrap();
+            s.basis = vec![2, 3, 4];
+            s.in_basis.fill(false);
+            for &j in &s.basis { s.in_basis[j] = true; }
+            s.at_upper.fill(false);
+            s.at_upper[0] = true;
+            s.phase1_pending = false;
+            let cut_rows = s.cut_row.clone();
+            let fresh = s.prepare_fresh_tableau().unwrap();
+            assert_eq!(fresh.rhs, vec![1.0, 2.0, 1.0]);
+            assert_eq!(fresh.binv, vec![vec![-1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![0.0, 0.0, 1.0]]);
+            s.commit_fresh_tableau(fresh);
+            assert_eq!(s.basis, vec![2, 3, 4]);
+            assert_eq!(s.cut_row, cut_rows);
+            assert!(s.at_upper[0] && !s.at_upper[1]);
+            assert_eq!(s.nonbasic_value(0), 3.0);
+            assert_eq!(s.nonbasic_value(1), 1.0);
+            assert_eq!(s.layout.slack[0].sign, -1.0);
+            assert!(s.check_phase_basic_values(2).is_ok());
+        }
+
+        #[test]
+        fn expired_candidate_never_commits_or_enters_cold_fallback() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            assert_eq!(s.solve(&Bounds::from_problem(&p)).status, LpStatus::Optimal);
+            s.rhs[0] = 1.001;
+            let old = s.clone();
+            let guard = recovery_fault::Guard::new(recovery_fault::State { expire_after_prepare: true, ..Default::default() });
+            assert_eq!(s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited()), LpStatus::TimeLimit);
+            assert_eq!(guard.state().fresh_prepares, 1);
+            assert_eq!(guard.state().fresh_commits, 0);
+            assert_eq!(guard.state().cold_rebuilds, 0);
+            assert_eq!(s.matrix, old.matrix);
+            assert_eq!(s.binv, old.binv);
+            assert_eq!(s.rhs, old.rhs);
+            assert_eq!(s.iterations(), old.iterations());
+            assert!(!s.phase1_pending);
+        }
+
+        #[test]
+        fn deadline_after_fresh_commit_keeps_coherent_phase_two_state() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            assert_eq!(s.solve(&bounds).status, LpStatus::Optimal);
+            let paid = s.iterations();
+            s.rhs[0] = 1.001;
+            let guard = recovery_fault::Guard::new(recovery_fault::State { expire_after: true, ..Default::default() });
+            assert_eq!(s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited()), LpStatus::TimeLimit);
+            assert_eq!(guard.state().fresh_commits, 1);
+            assert_eq!(guard.state().cold_rebuilds, 0);
+            assert_eq!(s.rhs, vec![1.0]);
+            assert_eq!(s.iterations(), paid);
+            assert!(!s.phase1_pending);
+            assert!(s.check_phase_basic_values(2).is_ok());
+            drop(guard);
+            s.set_time_deadline(None);
+            assert_eq!(s.resolve(&bounds).status, LpStatus::Optimal);
+            assert_eq!(s.iterations(), paid);
+        }
+
+        #[test]
+        fn fresh_refuses_unmapped_basic_or_nonzero_artificials() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![],
+                vec![(vec![(0, 1.0)], RelOp::Eq, 0.0)]);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            assert!(s.artificials_in_basis());
+            assert!(s.prepare_fresh_tableau().is_err());
+            assert_eq!(s.solve(&Bounds::from_problem(&p)).status, LpStatus::Optimal);
+            assert!(!s.artificials_in_basis() && s.num_art > 0);
+            let artificial = s.ncols_static();
+            s.at_upper[artificial] = true;
+            assert!(s.prepare_fresh_tableau().is_err());
+            s.at_upper[artificial] = false;
+            s.phase1_pending = true;
+            assert!(s.prepare_fresh_tableau().is_err());
+        }
+
+        #[test]
+        fn saved_inverse_drift_recovers_current_basis_without_replaying_pivots() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, 1.0)], vec![(0, -1.0)],
+                vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let mut s = Simplex::new(&p, tol()).unwrap();
+            assert_eq!(s.solve(&bounds).status, LpStatus::Optimal);
+            assert_eq!(s.basis, vec![0]);
+            // 最小化实际故障：保存的逆及非基表格列漂移，原基矩阵仍精确为1。
+            s.binv[0][0] += 1e-6;
+            s.matrix[0][1] += 1e-6;
+            s.refresh_values().unwrap();
+            assert!(s.check_phase_basic_values(2).is_err());
+            let total = s.iterations();
+            let basis = s.basis.clone();
+            s.start_call();
+            let status = s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited());
+            assert_eq!(status, LpStatus::Optimal);
+            assert_eq!(s.iterations(), total, "修复当前基不应重放冷启动主元");
+            assert_eq!(s.iter_call, 0);
+            assert_eq!(s.basis, basis);
+            assert_eq!(s.binv, vec![vec![1.0]]);
+            assert_eq!(s.matrix, vec![vec![1.0, 1.0]]);
+            assert_eq!(s.rhs, vec![1.0]);
+            let result = s.build_solution(status);
+            assert_eq!(result.x, vec![1.0]);
+            assert_eq!(result.objective, -1.0);
+            assert!(result.x[0] >= bounds.lb[0] && result.x[0] <= bounds.ub[0]);
+            assert!(result.x[0] <= 1.0);
+        }
+    }
 
     mod dense_cold_recovery_tests {
         use super::*;
@@ -3323,12 +3758,14 @@ mod tests {
                 let result = s.solve(&bounds);
                 assert_eq!(guard.state().rebuilds, 1);
                 assert_eq!(guard.state().faults, 0);
+                assert_eq!(guard.state().fresh_commits, 1);
+                assert_eq!(guard.state().cold_rebuilds, 0);
                 if faults == 1 {
                     assert_eq!(result.status, LpStatus::Optimal);
                     assert_eq!(result.x, vec![2.0, 3.0]);
                     assert_eq!(result.objective, -5.0);
-                    assert_eq!(s.iterations(), 3);
-                    assert_eq!(s.iter_call, 3);
+                    assert_eq!(s.iterations(), 2);
+                    assert_eq!(s.iter_call, 2);
                     assert!(s.numerical_error.is_none());
                     assert!(s.check_phase_basic_values(2).is_ok());
                 } else {
@@ -3384,13 +3821,13 @@ mod tests {
             let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
             assert_eq!(s.run_two_phase_with_recovery(false, &mut LpWorkLimit::unlimited()), LpStatus::Optimal);
             assert_eq!(guard.state().rebuilds, 1);
-            assert_eq!(s.iter_call, 44);
-            assert_eq!(s.iterations(), 102);
+            assert_eq!(s.iter_call, 43);
+            assert_eq!(s.iterations(), 101);
             assert!(s.bland && s.bland_permanent);
             assert_eq!(s.bland_rearms, BLAND_REARM_MAX);
             assert!(s.bland_dwell >= 7);
-            assert_eq!(s.pivots_since_refresh, 103);
-            assert_eq!(s.pivots_since_time_check, 21);
+            assert_eq!(s.pivots_since_refresh, 102);
+            assert_eq!(s.pivots_since_time_check, 20);
             assert_eq!(s.iter_limit_hint, Some(1234));
             assert_eq!(s.time_deadline(), Some(deadline));
         }
@@ -3429,6 +3866,8 @@ mod tests {
                 assert_eq!(guard.state().rebuilds, usize::from(after));
                 assert_eq!(s.iterations(), 1, "期限到期后不得执行第二次尝试");
                 assert_eq!(s.phase1_pending, after);
+                assert_eq!(guard.state().fresh_commits, 0);
+                assert_eq!(guard.state().cold_rebuilds, usize::from(after));
                 if after { assert!(s.num_art > 0); }
                 drop(guard);
                 s.set_time_deadline(None);
@@ -3455,7 +3894,9 @@ mod tests {
             assert_eq!(result.status, LpStatus::Optimal);
             assert_eq!(result.x, vec![2.0, 0.0]);
             assert_eq!(guard.state().rebuilds, 1);
-            assert_eq!(s.iterations(), 4, "两次完整人工清理和两个第二阶段主元均须记账");
+            assert_eq!(s.iterations(), 2, "已执行的一次人工清理和第二阶段主元仍计账，fresh不重放主元");
+            assert_eq!(guard.state().fresh_commits, 1);
+            assert_eq!(guard.state().cold_rebuilds, 0);
             assert!(!s.phase1_pending);
             let mut reference = s.clone();
             reference.start_call();
@@ -3498,11 +3939,11 @@ mod tests {
                 let guard = recovery_fault::Guard::new(recovery_fault::State { faults: 1, ..Default::default() });
                 let mut balance = cap;
                 let result = s.resolve_with_work_limit(&bounds, &mut balance);
-                assert_eq!(s.iterations(), cap.min(3));
-                assert_eq!(balance, cap.saturating_sub(3));
+                assert_eq!(s.iterations(), cap.min(2));
+                assert_eq!(balance, cap.saturating_sub(2));
                 assert_eq!(guard.state().rebuilds, usize::from(cap > 1));
-                assert_eq!(result.status, if cap > 3 { LpStatus::Optimal } else { LpStatus::IterationLimit });
-                if cap > 3 { assert_eq!(result.x, vec![2.0, 3.0]); }
+                assert_eq!(result.status, if cap > 2 { LpStatus::Optimal } else { LpStatus::IterationLimit });
+                if cap > 2 { assert_eq!(result.x, vec![2.0, 3.0]); }
                 else { assert!(result.objective.is_nan()); }
             }
         }

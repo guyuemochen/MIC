@@ -1,0 +1,57 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-basis-refactor/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.82s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-d925e2642e1ae5b9)
+
+running 10 tests
+test simplex::tests::dense_cold_recovery_tests::healthy_infeasible_and_unbounded_paths_do_not_rebuild ... ok
+test simplex::tests::dense_cold_recovery_tests::phase_one_failure_and_unfinished_debt_never_recover ... ok
+test simplex::tests::dense_cold_recovery_tests::deadline_on_each_recovery_boundary_preserves_new_artificial_debt ... ok
+test simplex::tests::dense_cold_recovery_tests::hot_resolve_and_snapshot_share_current_rows_but_not_retry_state ... ok
+test simplex::tests::dense_cold_recovery_tests::actual_iteration_budget_is_never_reissued ... ok
+test simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut ... ok
+test simplex::tests::dense_cold_recovery_tests::completed_old_phase_one_debt_allows_new_phase_two_recovery ... FAILED
+test simplex::tests::dense_cold_recovery_tests::recovery_keeps_bland_refresh_clock_and_total_counters ... FAILED
+test simplex::tests::dense_cold_recovery_tests::finite_post_step_failure_retries_once_and_counts_both_attempts ... FAILED
+test simplex::tests::dense_cold_recovery_tests::borrowed_work_counts_failed_and_recovery_steps_without_refund ... FAILED
+
+failures:
+
+---- simplex::tests::dense_cold_recovery_tests::completed_old_phase_one_debt_allows_new_phase_two_recovery stdout ----
+
+thread 'simplex::tests::dense_cold_recovery_tests::completed_old_phase_one_debt_allows_new_phase_two_recovery' (1320839) panicked at src/simplex.rs:3739:13:
+assertion `left == right` failed: 两次完整人工清理和两个第二阶段主元均须记账
+  left: 2
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- simplex::tests::dense_cold_recovery_tests::recovery_keeps_bland_refresh_clock_and_total_counters stdout ----
+
+thread 'simplex::tests::dense_cold_recovery_tests::recovery_keeps_bland_refresh_clock_and_total_counters' (1320846) panicked at src/simplex.rs:3668:13:
+assertion `left == right` failed
+  left: 43
+ right: 44
+
+---- simplex::tests::dense_cold_recovery_tests::finite_post_step_failure_retries_once_and_counts_both_attempts stdout ----
+
+thread 'simplex::tests::dense_cold_recovery_tests::finite_post_step_failure_retries_once_and_counts_both_attempts' (1320841) panicked at src/simplex.rs:3611:21:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- simplex::tests::dense_cold_recovery_tests::borrowed_work_counts_failed_and_recovery_steps_without_refund stdout ----
+
+thread 'simplex::tests::dense_cold_recovery_tests::borrowed_work_counts_failed_and_recovery_steps_without_refund' (1320838) panicked at src/simplex.rs:3782:17:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+
+failures:
+    simplex::tests::dense_cold_recovery_tests::borrowed_work_counts_failed_and_recovery_steps_without_refund
+    simplex::tests::dense_cold_recovery_tests::completed_old_phase_one_debt_allows_new_phase_two_recovery
+    simplex::tests::dense_cold_recovery_tests::finite_post_step_failure_retries_once_and_counts_both_attempts
+    simplex::tests::dense_cold_recovery_tests::recovery_keeps_bland_refresh_clock_and_total_counters
+
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 506 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
