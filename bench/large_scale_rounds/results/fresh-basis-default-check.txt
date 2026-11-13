@@ -1,0 +1,10 @@
+{
+  "status_counts": {
+    "optimal": 9,
+    "limit_reached": 11
+  },
+  "proofs_completed": 9,
+  "correctness_passed": true,
+  "correctness_errors": [],
+  "proof_regression_passed": false
+}

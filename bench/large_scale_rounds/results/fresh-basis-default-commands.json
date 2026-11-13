@@ -1,0 +1,35 @@
+[
+  {
+    "command": [
+      "/tmp/mic-rounds-env/bin/python",
+      "bench/large_scale_rounds/run_default_validation.py",
+      "--binary",
+      "/tmp/mic-recovery-binaries/round_probe_fresh_baseline",
+      "--source",
+      "/Users/guyuemochen/Desktop/projects/MIC",
+      "--legacy-baseline",
+      "bench/large_scale_rounds/results/external-baseline.jsonl",
+      "--modern-baseline",
+      "bench/large_scale_rounds/results/miplib2017-baseline.jsonl",
+      "--output",
+      "bench/large_scale_rounds/results/fresh-basis-default.jsonl"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/mic-rounds-env/bin/python",
+      "bench/large_scale_rounds/summarize_default_validation.py",
+      "bench/large_scale_rounds/results/fresh-basis-default.jsonl",
+      "--legacy-baseline",
+      "bench/large_scale_rounds/results/external-baseline.jsonl",
+      "--modern-baseline",
+      "bench/large_scale_rounds/results/miplib2017-baseline.jsonl",
+      "--public-truth",
+      "/tmp/mic-rounds-miplib2017/sources.json",
+      "--output",
+      "bench/large_scale_rounds/results/fresh-basis-default-summary.json"
+    ],
+    "exit_code": 1
+  }
+]
