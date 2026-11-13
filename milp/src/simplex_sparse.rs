@@ -21,9 +21,14 @@
 //! - **同一比值测试语义**（F7 全部点名项）：基变量上下界阻挡 + 入基变量
 //!   自身界翻转；主元 |p| ≥ tol.pivot 才允许出基，方向阻挡但主元过小 ⇒
 //!   FilteredBlock（数值失败）；方向非有限同样先报数值失败，不得跳过；
-//!   无任何阻挡（含翻转不可用）⇒ NoBlock ⇒
-//!   Phase-2 报 Unbounded；并列带宽 `band = min(feas·(1+|t_min|), feas·
-//!   RATIO_BAND_CAP)`（simplex.rs:116-125 实测踩坑的封顶，本引擎同款）；
+//!   所有有限活动界（包括小主元及自身翻转）以真实剩余距离+feas约束
+//!   安全步长；只收窄原并列窗 `band = min(feas·(1+|t_min|), feas·
+//!   RATIO_BAND_CAP)`，再按既有主元/列号规则破键。换基或翻转前按
+//!   实际浮点顺序复核全部基本值、入基值和离基贴界误差；失败则尝试
+//!   原窗内次选，全部失败才报FilteredBlock，旧基及工作余额不动；
+//!   有限界算术溢出不能生成无限步长；仅真无活动界且方向合法时
+//!   NoBlock ⇒ Phase-2 报 Unbounded。阶段入口及重构后均须满足全界feas；
+//!   Phase-2残基人工视为固定零，不能用正人工吸收原等式残差并误报无界；
 //! - **同一反循环/上限纪律**（定价规则除外——本引擎阈上 Devex 与稠密
 //!   引擎 Dantzig 的**有意分叉**（阈下回 Dantzig，见下方机制节）；反循环
 //!   触发条件与 Bland 路径两引擎完全同款）：连续退化 > 50 或总迭代 >
@@ -3828,85 +3833,142 @@ impl SparseSimplex {
     }
 
     /// 有界比值测试（与 simplex.rs::ratio_test 同构；α 为 self.alpha）。
-    fn ratio_test(&mut self, q: usize, delta: f64) -> Step {
-        let m = self.basis.len();
+    fn ratio_test(&mut self, q: usize, delta: f64, phase: u8) -> Step {
         self.cand.clear();
-        let mut filtered_block = false;
-        for i in 0..m {
+        if delta != 1.0 && delta != -1.0 {
+            return Step::FilteredBlock("入基方向不是有限单位方向".to_string());
+        }
+        let mut has_blocker = false;
+        let mut safe_cap = f64::INFINITY;
+        for i in 0..self.basis.len() {
             let a = self.alpha[i];
-            // 必须先排除 NaN/Inf：无穷界可能跳过该行，Inf 也会伪造零步主元。
-            // 变量的合法无穷上界不受此检查影响。
+            // 无活动界也必须先核验方向及原基本值，不能将坏状态解释为无界。
             if !a.is_finite() {
                 return Step::FilteredBlock(format!("列 {q} 行 {i} 的入基方向非有限"));
+            }
+            if !self.primal_value_within_bounds(self.basis[i], self.x_b[i], phase) {
+                return Step::FilteredBlock(format!("列 {q} 行 {i} 的基本值超出绝对界容差"));
             }
             if a == 0.0 {
                 continue;
             }
-            let alpha = delta * a; // 基变量值随 t 的变化为 x_b − t·alpha
-            let (lb, ub) = self.col_bounds(self.basis[i]);
-            let (t_i, hit_upper) = if alpha > 0.0 {
-                if !lb.is_finite() {
-                    continue;
-                }
-                ((self.x_b[i] - lb) / alpha, false)
+            let alpha = delta * a;
+            let (lb, ub) = self.primal_col_bounds(self.basis[i], phase);
+            let (distance, hit_upper) = if alpha > 0.0 {
+                if !lb.is_finite() { continue; }
+                (self.x_b[i] - lb, false)
             } else {
-                if !ub.is_finite() {
-                    continue;
-                }
-                ((ub - self.x_b[i]) / (-alpha), true)
+                if !ub.is_finite() { continue; }
+                (ub - self.x_b[i], true)
             };
-            let t_i = t_i.max(0.0);
-            if a.abs() < self.tol.pivot {
-                filtered_block = true;
-                continue;
+            has_blocker = true;
+            // 小主元不能换出，但仍然阻挡。用真实距离扣除已经耗去的容差；
+            // 不能先把负距离夹成零，否则每轮都会重复赠送一次feas。
+            let relaxed_distance = distance + self.tol.feasibility;
+            let nominal = distance / alpha.abs();
+            let cap = relaxed_distance / alpha.abs();
+            if !distance.is_finite() || !relaxed_distance.is_finite()
+                || !nominal.is_finite() || !cap.is_finite() || cap < 0.0 {
+                return Step::FilteredBlock(format!("列 {q} 行 {i} 的有限阻挡比值无法安全计算"));
             }
-            self.cand.push((t_i, i, hit_upper, a.abs(), self.basis[i]));
+            safe_cap = safe_cap.min(cap);
+            if a.abs() >= self.tol.pivot {
+                // 第二阶段人工上下界同为零；全局列界仍供第一阶段使用。
+                // 离基必须记为下界侧，不能让at_upper随后将人工值解释为∞。
+                let hit_upper = hit_upper && !(phase == 2 && self.basis[i] >= self.ncols_static());
+                self.cand.push((nominal.max(0.0), i, hit_upper, a.abs(), self.basis[i]));
+            }
         }
-        let (lb, ub) = self.col_bounds(q);
+        let (lb, ub) = self.primal_col_bounds(q, phase);
+        let entering_old = if delta > 0.0 { lb } else { ub };
+        if !self.primal_value_within_bounds(q, entering_old, phase) {
+            return Step::FilteredBlock(format!("入基列 {q} 的起点非有限或越界"));
+        }
         if ub.is_finite() {
-            self.cand.push(((ub - lb).max(0.0), usize::MAX, false, 0.0, q));
+            has_blocker = true;
+            let width = ub - lb;
+            let cap = width + self.tol.feasibility;
+            if !width.is_finite() || !cap.is_finite() || width < 0.0 {
+                return Step::FilteredBlock(format!("入基列 {q} 的有限翻转距离无法安全计算"));
+            }
+            safe_cap = safe_cap.min(cap);
+            self.cand.push((width.max(0.0), usize::MAX, false, 0.0, q));
         }
-        if self.cand.is_empty() {
-            return if filtered_block {
-                Step::FilteredBlock(format!(
-                    "列 {q} 的阻挡候选全部被主元容差过滤（|p| < {}）",
-                    self.tol.pivot
-                ))
-            } else {
-                Step::NoBlock
-            };
+        if !has_blocker {
+            return Step::NoBlock;
         }
         let mut t_min = f64::INFINITY;
-        for c in self.cand.iter() {
-            if c.0 < t_min {
-                t_min = c.0;
-            }
+        for c in &self.cand {
+            t_min = t_min.min(c.0);
         }
+        // 只收窄原并列窗，不用安全上限扩宽它；安全的旧胜者逐位保留。
         let band =
             (self.tol.feasibility * (1.0 + t_min)).min(self.tol.feasibility * RATIO_BAND_CAP);
-        let mut pick: Option<&(f64, usize, bool, f64, usize)> = None;
-        for c in self.cand.iter().filter(|c| c.0 <= t_min + band) {
-            pick = match pick {
-                None => Some(c),
-                Some(best) => {
-                    let better = if self.bland {
-                        c.4 < best.4 // Bland：一律最小列下标
-                    } else {
-                        c.3 > best.3 || (c.3 == best.3 && c.4 < best.4)
-                    };
-                    if better {
-                        Some(c)
-                    } else {
-                        Some(best)
+        loop {
+            let mut pick: Option<usize> = None;
+            for (idx, c) in self.cand.iter().enumerate() {
+                if c.0 > t_min + band || c.0 > safe_cap { continue; }
+                let better = match pick {
+                    None => true,
+                    Some(best_idx) => {
+                        let best = &self.cand[best_idx];
+                        if self.bland { c.4 < best.4 }
+                        else { c.3 > best.3 || (c.3 == best.3 && c.4 < best.4) }
                     }
-                }
+                };
+                if better { pick = Some(idx); }
+            }
+            let Some(idx) = pick else {
+                return Step::FilteredBlock(format!("列 {q} 存在有限阻挡，但原并列窗内无安全可用主元或翻转"));
             };
+            let (t, row, hit_upper, _, _) = self.cand[idx];
+            // 浮点上限本身不是证明。按实际更新顺序复核，失败时旧基不动，
+            // 再找原并列窗内的次选；正常路径仅增加一次逐行扫描。
+            if self.primal_step_is_safe(q, delta, t, row, hit_upper, phase) {
+                return if row == usize::MAX { Step::Flip { t } }
+                    else { Step::Leave { row, t, hit_upper } };
+            }
+            self.cand.swap_remove(idx);
         }
-        match pick {
-            Some(&(t, usize::MAX, _, _, _)) => Step::Flip { t },
-            Some(&(t, row, hit_upper, _, _)) => Step::Leave { row, t, hit_upper },
-            None => Step::FilteredBlock("比值测试无有效候选（内部错误）".to_string()),
+    }
+
+    /// 人工变量只在第一阶段吸收不可行残差；第二阶段残基人工必须
+    /// 固定为零。显式传递阶段，避免resolve或恢复留下过期相位状态。
+    fn primal_col_bounds(&self, j: usize, phase: u8) -> (f64, f64) {
+        if phase == 2 && j >= self.ncols_static() { (0.0, 0.0) }
+        else { self.col_bounds(j) }
+    }
+
+    /// 用差值检查绝对容差，避免在大界值上加减feas被舍入吞掉。
+    fn primal_value_within_bounds(&self, j: usize, value: f64, phase: u8) -> bool {
+        let (lb, ub) = self.primal_col_bounds(j, phase);
+        value.is_finite() && lb - value <= self.tol.feasibility
+            && value - ub <= self.tol.feasibility
+    }
+
+    /// 换基前复核全部基变量、入基值及出基贴界误差；此处不修改状态或收费。
+    fn primal_step_is_safe(&self, q: usize, delta: f64, t: f64, row: usize, hit_upper: bool, phase: u8) -> bool {
+        if !t.is_finite() || t < 0.0 { return false; }
+        let (lb, ub) = self.primal_col_bounds(q, phase);
+        let old_value = if delta > 0.0 { lb } else { ub };
+        let flip = row == usize::MAX;
+        let new_value = if flip { if delta > 0.0 { ub } else { lb } }
+            else { old_value + delta * t };
+        if !self.primal_value_within_bounds(q, new_value, phase) { return false; }
+        // Flip实际用端点差；Leave实际用delta*t，保留各自浮点求值顺序。
+        let movement = if flip { new_value - old_value } else { delta * t };
+        if !movement.is_finite() { return false; }
+        for i in 0..self.basis.len() {
+            let a = self.alpha[i];
+            let value = if a == 0.0 { self.x_b[i] } else { self.x_b[i] - movement * a };
+            if !self.primal_value_within_bounds(self.basis[i], value, phase) { return false; }
+            if i == row {
+                let (lower, upper) = self.primal_col_bounds(self.basis[i], phase);
+                let bound = if hit_upper { upper } else { lower };
+                if !bound.is_finite() || (value - bound).abs() > self.tol.feasibility { return false; }
+            }
         }
+        true
     }
 
     /// 主元执行（修正单纯形口径）：x_B 更新与表格引擎同款；基更新走 ETA
@@ -4145,7 +4207,7 @@ impl SparseSimplex {
                 Pricing::Candidate(q, delta) => (q, delta),
             };
             self.ftran_col(q);
-            match self.ratio_test(q, delta) {
+            match self.ratio_test(q, delta, phase) {
                 Step::FilteredBlock(msg) => {
                     if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
                         return out;
@@ -4333,8 +4395,8 @@ impl SparseSimplex {
         }
     }
 
-    /// 第一阶段人工变量以下界零为前提；比值并列带可能留下超容差负值。
-    /// 定价前和每步后拒绝它，避免下一零步主元将其换出并丢失证据。
+    /// 安全步的前提是全部基本值处于绝对界容差内；阶段入口及重构后
+    /// 不能带着已越界状态继续定价。保留第一阶段人工变量的专用守卫。
     fn check_phase_basic_values(&self, phase: u8) -> std::result::Result<(), String> {
         let ncs = self.ncols_static();
         for (i, &value) in self.x_b.iter().enumerate() {
@@ -4343,6 +4405,9 @@ impl SparseSimplex {
             }
             if phase == 1 && self.basis[i] >= ncs && value < -self.tol.feasibility {
                 return Err(format!("Phase-1 行 {i} 人工变量值 {value} 低于零下界容差"));
+            }
+            if !self.primal_value_within_bounds(self.basis[i], value, phase) {
+                return Err(format!("阶段 {phase} 行 {i} 基变量值 {value} 超出绝对界容差"));
             }
         }
         Ok(())
@@ -4636,6 +4701,292 @@ mod tests {
     use crate::simplex::Simplex as DenseSimplex;
     use std::path::PathBuf;
 
+
+    mod safe_primal_ratio_tests {
+        use super::*;
+
+        // 手钉合法基变量上下界，单独隔离比值规则与定价、归一化的影响。
+        fn fixture(direction: [f64; 2], values: [f64; 2]) -> SparseSimplex {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, 10.0), var("z", 0.0, 10.0)],
+                vec![(0, -1.0)],
+                vec![(vec![(1, 1.0)], RelOp::Eq, 1.0),
+                     (vec![(2, 1.0)], RelOp::Eq, 1.0)]);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            s.bounds = Bounds::from_problem(&p);
+            s.basis = vec![1, 2];
+            s.in_basis.fill(false);
+            s.in_basis[1] = true;
+            s.in_basis[2] = true;
+            s.x_b = values.to_vec();
+            s.alpha = direction.to_vec();
+            s
+        }
+
+        fn leave(s: &mut SparseSimplex, delta: f64, expected: usize, step: f64, upper: bool) {
+            match s.ratio_test(0, delta, 2) {
+                Step::Leave { row, t, hit_upper } => {
+                    assert_eq!(row, expected);
+                    assert_eq!(t.to_bits(), step.to_bits(), "安全旧候选步长须逐位保留");
+                    assert_eq!(hit_upper, upper);
+                }
+                _ => panic!("应选择安全出基行"),
+            }
+        }
+
+        #[test]
+        fn old_safe_tie_and_unsafe_large_pivot() {
+            let later = 2.0 + 5e-10;
+            let mut safe = fixture([0.5, 1.0], [1.0, later]);
+            leave(&mut safe, 1.0, 1, later, false);
+            let mut unsafe_tie = fixture([4.0, 8.0], [8.0, 8.0 * later]);
+            unsafe_tie.bounds.ub[2] = 20.0;
+            leave(&mut unsafe_tie, 1.0, 0, 2.0, false);
+        }
+
+        #[test]
+        fn upper_bound_and_negative_entering_direction() {
+            let later = 2.0 + 5e-10;
+            let mut s = fixture([-4.0, -8.0], [2.0, 20.0 - 8.0 * later]);
+            s.bounds.ub[2] = 20.0;
+            leave(&mut s, 1.0, 0, 2.0, true);
+            let mut s = fixture([-4.0, -8.0], [8.0, 8.0 * later]);
+            s.bounds.ub[0] = 30.0;
+            s.bounds.ub[2] = 20.0;
+            s.at_upper[0] = true;
+            leave(&mut s, -1.0, 0, 2.0, false);
+        }
+
+        #[test]
+        fn small_pivot_still_limits_other_candidates() {
+            let mut s = fixture([1e-12, 1.0], [0.0, 2000.0]);
+            s.bounds.ub[2] = f64::INFINITY;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)));
+            let mut s = fixture([1e-12, 1.0], [0.0, 2.0]);
+            leave(&mut s, 1.0, 1, 2.0, false);
+            let mut s = fixture([1e-12, 0.0], [0.0, 2.0]);
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)));
+        }
+
+        #[test]
+        fn spent_tolerance_is_not_granted_again() {
+            let mut s = fixture([0.5, 1.0], [-0.75e-9, 1e-9]);
+            leave(&mut s, 1.0, 0, 0.0, false);
+            let mut s = fixture([0.5, 1.0], [-2e-9, 0.0]);
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)));
+            let mut s = fixture([0.0, 1.0], [-2e-9, 0.0]);
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)), "零方向也不能遮蔽已越界的基变量");
+        }
+
+        #[test]
+        fn flip_and_bland_keep_their_original_ties() {
+            for (width, expect_flip) in [(1.0, true), (2.0, false), (3.0, false)] {
+                let mut s = fixture([1.0, 0.0], [2.0, 1.0]);
+                s.bounds.ub[0] = width;
+                let step = s.ratio_test(0, 1.0, 2);
+                assert_eq!(matches!(step, Step::Flip { .. }), expect_flip);
+            }
+            let mut s = fixture([1.0, 0.0], [2.0, 1.0]);
+            s.bounds.ub[0] = 2.0;
+            s.bland = true;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::Flip { t: 2.0 }));
+            let mut s = fixture([1.0, 0.5], [2.0 + 5e-10, 1.0]);
+            s.bland = true;
+            leave(&mut s, 1.0, 0, 2.0 + 5e-10, false);
+        }
+
+
+        #[test]
+        fn entering_bound_cap_and_bland_column_order() {
+            for delta in [1.0, -1.0] {
+                let mut s = fixture([delta * 4.0, 0.0], [4.0 * (2.0 + 1.5e-9), 1.0]);
+                s.bounds.ub[0] = 2.0;
+                s.at_upper[0] = delta < 0.0;
+                assert!(matches!(s.ratio_test(0, delta, 2), Step::Flip { t: 2.0 }),
+                    "原带宽内较大主元也不能越过入基变量自身容差");
+            }
+            let mut s = fixture([1.0, 0.5], [2.0 + 5e-10, 1.0]);
+            s.basis.swap(0, 1);
+            s.bland = true;
+            leave(&mut s, 1.0, 1, 2.0, false);
+            let mut s = fixture([1e-12, 0.0], [1e308, 1.0]);
+            s.bounds.ub[1] = f64::INFINITY;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)), "有限距离的比值溢出也不能当作无界");
+        }
+
+        #[test]
+        fn rounded_cap_rejects_winner_and_keeps_safe_runner_up() {
+            let rounded_cap = (1.0 + Tolerances::default().feasibility) / 4.0;
+            let mut s = fixture([4.0, 8.0], [1.0, 8.0 * rounded_cap]);
+            assert!(1.0 - 4.0 * rounded_cap < -s.tol.feasibility,
+                "此例钉住安全上限自身的浮点舍入误差");
+            leave(&mut s, 1.0, 0, 0.25, false);
+        }
+
+        #[test]
+        fn phase2_artificial_upper_leave_keeps_nonbasic_zero() {
+            let p = prob(Sense::Minimize, vec![var("x", 0.0, f64::INFINITY)],
+                vec![(0, -1.0)], vec![(vec![(0, -1.0)], RelOp::Eq, 0.0)]);
+            let bounds = Bounds::from_problem(&p);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let artificial = s.basis[0];
+            assert!(artificial >= s.ncols_static());
+            s.ftran_col(0);
+            let Step::Leave { row, t, hit_upper } = s.ratio_test(0, 1.0, 2) else {
+                panic!("固定零人工应阻挡负方向");
+            };
+            assert_eq!(row, 0);
+            assert_eq!(t, 0.0);
+            assert!(!hit_upper, "同一零界须统一记录为下界，不能遗留∞非基值");
+            s.do_pivot(0, row, 1.0, t, hit_upper).unwrap();
+            assert!(!s.at_upper[artificial]);
+            assert_eq!(s.nonbasic_value(artificial), 0.0);
+            s.has_run = true;
+            let mut cloned = s.clone();
+            for candidate in [&mut s, &mut cloned] {
+                let result = candidate.resolve(&bounds);
+                assert_eq!(result.status, LpStatus::Optimal, "{result:?}");
+                assert_eq!(result.x, vec![0.0]);
+                assert_eq!(candidate.nonbasic_value(artificial), 0.0);
+            }
+        }
+
+        #[test]
+        fn redundant_zero_artificial_preserves_true_unbounded_ray() {
+            for sense in [Sense::Minimize, Sense::Maximize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let p = prob(sense, vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                    vec![(1, sign)], vec![(vec![(0, 1.0)], RelOp::Eq, 1.0),
+                                         (vec![(0, 1.0)], RelOp::Eq, 1.0)]);
+                let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                let result = s.solve(&Bounds::from_problem(&p));
+                assert_eq!(result.status, LpStatus::Unbounded, "{result:?}");
+                assert!(s.basis.iter().any(|&j| j >= s.ncols_static()));
+                assert!(s.check_phase_basic_values(2).is_ok());
+            }
+        }
+
+        #[test]
+        fn phase2_remaining_artificial_is_not_an_unbounded_ray() {
+            for sense in [Sense::Minimize, Sense::Maximize] {
+                for reverse in [false, true] {
+                    for first_resolve in [false, true] {
+                        let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                        let mut rows = vec![(vec![(0, 1.0)], RelOp::Eq, 1.0),
+                            (vec![(0, 1.0), (1, -1e-10)], RelOp::Eq, 1.0)];
+                        if reverse { rows.reverse(); }
+                        let p = prob(sense, vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                            vec![(1, sign)], rows);
+                        let bounds = Bounds::from_problem(&p);
+                        let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                        let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
+                        // 原等式相减得到y=0，故不能报无界；小主元低于既有
+                        // 阈值又不能换出时，诚实数值失败，不冒称证到最优。
+                        assert_eq!(result.status, LpStatus::IterationLimit,
+                            "{sense:?}, reverse={reverse}, resolve={first_resolve}: {result:?}");
+                        assert!(result.objective.is_nan());
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn phase2_natural_slacks_keep_original_constraints_feasible() {
+            for sense in [Sense::Minimize, Sense::Maximize] {
+                for reverse in [false, true] {
+                    for first_resolve in [false, true] {
+                        let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                        let mut rows = vec![(vec![(0, 1.0)], RelOp::Le, 1000.0 + 2.0_f64.powi(-21)),
+                            (vec![(0, 1.0), (1, 0.5)], RelOp::Le, 1000.0)];
+                        if reverse { rows.reverse(); }
+                        let p = prob(sense, vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                            vec![(0, sign), (1, sign * 0.1)], rows);
+                        let bounds = Bounds::from_problem(&p);
+                        let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                        let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
+                        assert_eq!(result.status, LpStatus::Optimal, "{result:?}");
+                        assert_eq!(result.objective, sign * 1000.0);
+                        assert_eq!(result.x, vec![1000.0, 0.0]);
+                        assert!(result.x[0] + 0.5 * result.x[1] - 1000.0 <= s.tol.feasibility);
+                        assert!(s.check_phase_basic_values(2).is_ok());
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn equalities_within_tolerance_are_not_rejected() {
+            let feas = Tolerances::default().feasibility;
+            for gap in [0.0, 0.5 * feas, feas] {
+                for reverse in [false, true] {
+                    let mut rows = vec![(vec![(0, 1.0)], RelOp::Eq, gap),
+                        (vec![(0, 1.0)], RelOp::Eq, 0.0)];
+                    if reverse { rows.reverse(); }
+                    let p = prob(Sense::Minimize, vec![var("x", 0.0, f64::INFINITY)], vec![], rows);
+                    let result = SparseSimplex::new(&p, Tolerances::default()).unwrap().solve(&Bounds::from_problem(&p));
+                    assert_eq!(result.status, LpStatus::Optimal, "gap={gap}, reverse={reverse}: {result:?}");
+                    assert!(result.x[0].abs() <= feas && (result.x[0] - gap).abs() <= feas);
+                }
+            }
+        }
+
+        #[test]
+        fn public_finite_width_overflow_fails_without_panic_or_step() {
+            let p = prob(Sense::Minimize, vec![var("x", -1e308, 1e308)], vec![(0, -1.0)], vec![]);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let result = s.solve(&Bounds::from_problem(&p));
+            assert_eq!(result.status, LpStatus::IterationLimit);
+            assert!(result.objective.is_nan());
+            assert_eq!(s.iterations(), 0);
+        }
+
+        #[cfg(feature = "root_heuristic_work_limit")]
+        #[test]
+        fn rejected_primal_step_preserves_basis_work_and_limits() {
+            let p = prob(Sense::Minimize,
+                vec![var("x", 0.0, f64::INFINITY), var("y", 0.0, f64::INFINITY)],
+                vec![(0, -1.0)],
+                vec![(vec![(0, 1e-12), (1, 1.0)], RelOp::Le, 0.0),
+                     (vec![(0, 1.0)], RelOp::Le, 2000.0)]);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let basis = s.basis.clone();
+            let values = s.x_b.clone();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            s.set_time_deadline(Some(deadline));
+            s.set_iter_limit_hint(Some(1234));
+            s.start_call();
+            let mut balance = 3;
+            let status = s.run_two_phase_with_limit(false, &mut LpWorkLimit::limited(&mut balance));
+            assert_eq!(status, LpStatus::IterationLimit);
+            assert!(s.build_solution(status).objective.is_nan());
+            assert_eq!(s.basis, basis);
+            assert_eq!(s.x_b, values);
+            assert_eq!(s.iterations(), 0);
+            assert_eq!(balance, 3);
+            assert_eq!(s.time_deadline(), Some(deadline));
+            assert_eq!(s.iter_limit_hint, Some(1234));
+        }
+
+        #[test]
+        fn nonfinite_overflow_and_true_unbounded_are_distinct() {
+            for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut s = fixture([bad, 0.0], [1.0, 1.0]);
+                assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)));
+            }
+            let mut s = fixture([1.0, 0.0], [1e308, 1.0]);
+            s.bounds.lb[1] = -1e308;
+            s.bounds.ub[1] = f64::INFINITY;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)), "有限界差溢出不能返回无限步长");
+            let mut s = fixture([0.0, 0.0], [1.0, 1.0]);
+            s.bounds.lb[0] = -1e308;
+            s.bounds.ub[0] = 1e308;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::FilteredBlock(_)), "翻转宽度溢出不能返回无限步长");
+            let mut s = fixture([-1.0, 0.0], [1.0, 1.0]);
+            s.bounds.ub[1] = f64::INFINITY;
+            assert!(matches!(s.ratio_test(0, 1.0, 2), Step::NoBlock));
+        }
+    }
+
     mod phase1_negative_tests {
         use super::*;
 
@@ -4667,7 +5018,7 @@ mod tests {
                 let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
                 s.x_b[0] = value;
                 assert_eq!(s.check_phase_basic_values(1).is_ok(), value >= -feas);
-                assert!(s.check_phase_basic_values(2).is_ok(), "不改变第二阶段策略");
+                assert_eq!(s.check_phase_basic_values(2).is_ok(), value.abs() <= feas, "第二阶段残基人工必须固定为零");
                 assert_eq!(s.phase1_infeasibility().is_ok(), value >= -feas);
                 if value >= -feas { assert_eq!(s.phase1_infeasibility().unwrap(), value.max(0.0)); }
                 let before = s.basis.clone();
@@ -4752,16 +5103,15 @@ mod tests {
                 s.start_call();
                 let mut balance = cap;
                 let status = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut balance));
-                assert_eq!(status, LpStatus::IterationLimit);
+                assert_eq!(status, if cap == 1 { LpStatus::IterationLimit } else { LpStatus::Infeasible });
                 assert!(s.phase1_pending);
                 assert_eq!(s.iterations(), 1);
-                assert_eq!(balance, cap - 1, "重构和拒绝不收费，已经执行的主元不退费");
-                assert!(s.build_solution(status).objective.is_nan());
+                assert_eq!(balance, cap - 1, "只收费已经执行的主元");
             }
         }
 
         #[test]
-        fn old_eta_negative_entry_recovers_but_real_violation_fails_fresh() {
+        fn old_eta_negative_entry_recovers_but_fresh_negative_entry_fails() {
             let p = zero_problem();
             let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
             s.etas.push(Eta { r: 0, pivot: 1.0, nz: Vec::new() });
@@ -4770,13 +5120,18 @@ mod tests {
             s.start_call();
             assert_eq!(s.run_two_phase(true), LpStatus::Optimal);
             assert!(!s.phase1_pending);
-            let p = natural_problem(Sense::Minimize, true, false);
+            // 自然冲突例已由安全比值恢复为不可行证明；此处继续注入
+            // 新鲜基上的负值，独立钉住守卫不能被“零步换出”绕过。
             let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
-            let result = s.solve(&Bounds::from_problem(&p));
-            assert_eq!(result.status, LpStatus::IterationLimit);
-            assert!(s.just_refactored && s.etas.is_empty(), "已经用完一次新鲜重构，不能继续零步换基");
-            assert_eq!(s.iterations(), 1);
-            assert!(s.x_b.iter().any(|v| *v < -s.tol.feasibility));
+            s.just_refactored = true;
+            s.x_b[0] = -GAP;
+            s.start_call();
+            let status = s.run_two_phase(true);
+            assert_eq!(status, LpStatus::IterationLimit);
+            assert!(s.build_solution(status).objective.is_nan());
+            assert!(s.just_refactored && s.etas.is_empty());
+            assert_eq!(s.iterations(), 0);
+            assert_eq!(s.x_b[0], -GAP);
         }
 
         fn natural_case(two_steps: bool) {
@@ -4787,17 +5142,15 @@ mod tests {
                     let bounds = Bounds::from_problem(&p);
                     let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
                     let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
-                    assert_eq!(result.status, LpStatus::IterationLimit,
+                    assert_eq!(result.status, LpStatus::Infeasible,
                         "两步={two_steps}, {sense:?}, 首次resolve={first_resolve}: {result:?}");
-                    assert!(result.objective.is_nan());
                     assert!(s.phase1_pending);
-                    assert_eq!(s.iterations(), 1, "不能让下一零步主元把负人工换出");
-                    assert!(s.basis.iter().enumerate().any(|(i, &j)|
-                        j >= s.ncols_static() && s.x_b[i] < -s.tol.feasibility));
+                    assert_eq!(s.iterations(), 1, "首步保留正人工残差，直接证明不可行");
+                    assert!(s.check_phase_basic_values(1).is_ok());
                     let mut snapshot = s.clone();
                     for candidate in [&mut s, &mut snapshot] {
                         let recovered = candidate.resolve(&bounds);
-                        assert_ne!(recovered.status, LpStatus::Optimal);
+                        assert_eq!(recovered.status, LpStatus::Infeasible);
                     }
                 }
             }
@@ -4814,9 +5167,12 @@ mod tests {
             for sense in [Sense::Minimize, Sense::Maximize] {
                 for two_steps in [false, true] {
                     let p = natural_problem(sense, two_steps, true);
-                    let result = SparseSimplex::new(&p, Tolerances::default()).unwrap()
-                        .solve(&Bounds::from_problem(&p));
-                    assert_eq!(result.status, LpStatus::Infeasible, "{result:?}");
+                    for first_resolve in [false, true] {
+                        let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+                        let bounds = Bounds::from_problem(&p);
+                        let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
+                        assert_eq!(result.status, LpStatus::Infeasible, "{result:?}");
+                    }
                 }
             }
         }
@@ -5506,7 +5862,7 @@ mod tests {
         let (p, bounds, mut sp) = risk_fixture(false);
         sp.ftran_col(0);
         assert_eq!(sp.alpha, vec![RISK_TEST_DRIFT, 1.0]);
-        assert!(matches!(sp.ratio_test(0, 1.0), Step::Leave { row: 0, t: 0.0, .. }));
+        assert!(matches!(sp.ratio_test(0, 1.0, 2), Step::Leave { row: 0, t: 0.0, .. }));
         let old_basis = sp.basis.clone();
         // 同一被污染状态禁用新接线时，确会错误换出第一行；这不是仅测
         // 预警布尔函数。正常路径必须靠原矩阵重构后改选第二行。

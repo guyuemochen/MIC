@@ -1,0 +1,36 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-safe-primal-ratio/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.54s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 28 tests
+test simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... ok
+test simplex::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex::tests::safe_primal_ratio_tests::redundant_zero_artificial_preserves_true_unbounded_ray ... ok
+test simplex::tests::safe_primal_ratio_tests::phase2_artificial_upper_leave_keeps_nonbasic_zero ... ok
+test simplex::tests::safe_primal_ratio_tests::public_finite_width_overflow_fails_without_panic_or_step ... ok
+test simplex::tests::safe_primal_ratio_tests::entering_bound_cap_and_bland_column_order ... ok
+test simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... ok
+test simplex::tests::safe_primal_ratio_tests::equalities_within_tolerance_are_not_rejected ... ok
+test simplex::tests::safe_primal_ratio_tests::rounded_cap_rejects_winner_and_keeps_safe_runner_up ... ok
+test simplex::tests::safe_primal_ratio_tests::phase2_natural_slacks_keep_original_constraints_feasible ... ok
+test simplex::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray ... ok
+test simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... ok
+test simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... ok
+test simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::phase2_artificial_upper_leave_keeps_nonbasic_zero ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::entering_bound_cap_and_bland_column_order ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::public_finite_width_overflow_fails_without_panic_or_step ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::rounded_cap_rejects_winner_and_keeps_safe_runner_up ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::redundant_zero_artificial_preserves_true_unbounded_ray ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::equalities_within_tolerance_are_not_rejected ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::phase2_natural_slacks_keep_original_constraints_feasible ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 446 filtered out; finished in 0.00s
+
