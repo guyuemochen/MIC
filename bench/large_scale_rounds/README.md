@@ -187,3 +187,28 @@ seymour还重复冷解同一个根LP。独立修复根证据丢失与LU失败状
 新组开启 `root_heuristic_work_limit` 和 `proof_profile`。两组只在 `drayage-100-23`、
 `drayage-25-23` 各运行一次，单线程、节点上限 1、时间上限 10 秒，其余参数与主对照相同。
 保存根启发式预算消耗和根证据恢复快照，作为阶段行为核验；诊断数据不纳入正式耗时或推广判据。
+
+## 单特性试验门禁
+
+把 `summarize_feature_trial.py` 生成的 JSON 交给 `gate_feature_trial.py`。
+脚本核对逐次配对、证明和 RSS 计数以及共同证优耗时，按特性和阶段使用已冻结的门槛。
+筛查结果的 `eligible_for_paired` 表示可进入正式配对，配对结果的
+`eligible_for_default` 表示通过默认推广门槛。脚本只记录判定，默认配置由后续整合处理。
+
+```sh
+python3 bench/large_scale_rounds/gate_feature_trial.py \
+  bench/large_scale_rounds/results/binary_coefficient_strengthening-screen-summary.json
+python3 bench/large_scale_rounds/gate_feature_trial.py \
+  bench/large_scale_rounds/results/binary_coefficient_strengthening-paired-summary.json \
+  --output /tmp/mic-coefficient-paired-gates.json
+```
+
+报告写到标准输出，指定 `--output` 时另存 JSON，已有文件不会被覆盖。
+退出码 `0` 表示通过，`1` 表示证据有效但未达门槛，`2` 表示输入无效或无法写入。
+
+用 Python 3.10 或更新版本运行合成用例，核对门槛边界、逐次丢失证明、部分重复证优和无效输入。
+这组测试无需编译或启动求解器。
+
+```sh
+python3 -m unittest discover -s bench/large_scale_rounds -p test_gate_feature_trial.py
+```
