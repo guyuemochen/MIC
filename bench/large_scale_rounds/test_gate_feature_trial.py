@@ -99,6 +99,13 @@ class GateFeatureTrialTest(unittest.TestCase):
         self.assertFalse(result['gates']['correctness'])
         self.assertFalse(result['eligible_for_default'])
 
+    def test_rejects_conflicting_optimal_objectives_in_new_proof(self):
+        summary = make_summary(ratio=1.0, stable=2)
+        candidate = summary['cases'][CASES[3]]['pairs'][1]['candidate']
+        candidate.update(objective=2.0, bound=2.0)
+        with self.assertRaisesRegex(ValueError, '已证最优目标.*不一致'):
+            decide(summary)
+
     def test_rejects_missing_or_inconsistent_evidence(self):
         for edit in (
                 lambda s: s.pop('source'),

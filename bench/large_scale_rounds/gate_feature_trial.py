@@ -2,6 +2,7 @@
 """根据单特性试验汇总判定能否进入正式配对或推广默认。"""
 import argparse
 from collections import Counter
+from itertools import combinations
 import json
 import math
 from pathlib import Path
@@ -153,12 +154,16 @@ def decide(summary):
             proved_models[variant] += proofs[variant] == reps
         require(not correctness or len(terminal) <= 1, f'{name} 的证明终态与正确性标记矛盾')
         if correctness:
+            objectives = []
             for pair in pairs:
                 for variant in VARIANTS:
                     row = pair[variant]
                     if row['status'] == 'optimal':
                         require(row['has_incumbent'] and row['objective'] is not None and row['bound'] is not None
                                 and close(row['objective'], row['bound']), f'{name} 的最优记录与正确性标记矛盾')
+                        objectives.append(row['objective'])
+            require(all(close(first, second) for first, second in combinations(objectives, 2)),
+                    f'{name} 的已证最优目标在各次运行中不一致')
         if phase == 'paired' and proofs['base'] == 0 and proofs['candidate'] == reps:
             new_proofs.append(name)
 
