@@ -76,23 +76,33 @@ class GateFeatureTrialTest(unittest.TestCase):
         self.assertEqual(result['new_stable_proof_models'], list(CASES[4:5]))
         self.assertFalse(result['eligible_for_default'])
 
-    def test_r10_screen_adds_rss_and_case_time_gates(self):
-        def near_threshold(row, index):
+    def test_screen_rss_and_case_time_gates_depend_on_feature(self):
+        def break_one_gate(row, index, gate):
             if index == 0:
-                row['elapsed_secs'] = 0.03125 if row['variant'] == 'base' else 0.0625
+                row['elapsed_secs'] = 0.03125
                 if row['variant'] == 'candidate':
-                    row['peak_rss_bytes'] = MIN_RSS_LIMIT_BYTES + 1
+                    if gate == 'rss':
+                        row['peak_rss_bytes'] = MIN_RSS_LIMIT_BYTES + 1
+                    else:
+                        row['elapsed_secs'] = 0.0625
 
         for feature in FEATURES:
-            with self.subTest(feature=feature):
-                result = decide(make_summary(feature, 'screen', mutate=near_threshold))
-                self.assertEqual(result['timing']['models_over_case_ratio'], list(CASES[:1]))
-                self.assertEqual(result['timing']['eligible_models'], 2)
-                self.assertEqual(result['rss_failures'], 1)
-                self.assertIs(result['eligible_for_paired'], feature != 'root_heuristic_work_limit')
+            strict = feature in ('root_heuristic_work_limit', 'certified_row_fallback')
+            for gate in ('rss', 'case_median'):
+                with self.subTest(feature=feature, gate=gate):
+                    result = decide(make_summary(feature, 'screen',
+                                                 mutate=lambda row, index: break_one_gate(row, index, gate)))
+                    self.assertEqual(result['timing']['models_over_case_ratio'],
+                                     list(CASES[:1]) if gate == 'case_median' else [])
+                    self.assertEqual(result['timing']['eligible_models'], 2)
+                    self.assertEqual(result['rss_failures'], int(gate == 'rss'))
+                    self.assertIs(result['eligible_for_paired'], not strict)
+                    if strict:
+                        self.assertFalse(result['gates'][gate])
 
-        result = decide(make_summary(FEATURES[-1], 'screen', ratio=1.25))
-        self.assertTrue(result['eligible_for_paired'])
+            with self.subTest(feature=feature, ratio=1.25):
+                result = decide(make_summary(feature, 'screen', ratio=1.25))
+                self.assertTrue(result['eligible_for_paired'])
 
     def test_correctness_failure_blocks_promotion(self):
         result = decide(make_summary(ratio=0.8, errors=['合成正确性失败']))
