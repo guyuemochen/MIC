@@ -1,0 +1,41 @@
+diff --git a/milp/src/proof_profile.rs b/milp/src/proof_profile.rs
+index 92b295d..2bc9f36 100644
+--- a/milp/src/proof_profile.rs
++++ b/milp/src/proof_profile.rs
+@@ -487,23 +487,26 @@ pub fn lp_failure(
+     if sol.status == LpStatus::Optimal {
+         return;
+     }
+-    let sample = TRACE.with(|trace| {
++    let Some(detail) = TRACE.with(|trace| {
+         let mut t = trace.borrow_mut();
+         if !t.enabled {
+-            return false;
++            return None;
+         }
+         if t.failure_samples >= 64 {
+             t.failures_omitted += 1;
+-            false
+-        } else {
+-            t.failure_samples += 1;
+-            true
++            return None;
+         }
+-    });
+-    if !sample {
++        let detail = engine.proof_diagnostics();
++        // 普通不可行只计数，把有界样本留给中断或数值错误。
++        if sol.status == LpStatus::Infeasible && detail.numerical_error.is_none() {
++            t.failures_omitted += 1;
++            return None;
++        }
++        t.failure_samples += 1;
++        Some(detail)
++    }) else {
+         return;
+-    }
+-    let detail = engine.proof_diagnostics();
++    };
+     record(
+         "lp_failure",
+         vec![
