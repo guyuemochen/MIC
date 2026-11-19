@@ -11,6 +11,7 @@ import sys
 
 from check_results import exceeds, inspect_results
 from compare import RssPreflightError, invoke, preflight_rss, require, sha
+from run_default_validation import default_features
 from run_feature_trial import load_binaries
 from run_probe import METADATA
 from run_proof_diagnostics import baseline_rows
@@ -61,6 +62,9 @@ def run(args):
     require(not args.output.exists() and not args.gate.exists(), '结果或判定文件已存在')
     preflight_rss()
     source = source_info(args.source)
+    inherited = default_features(args.source)
+    require(FEATURE not in inherited and 'proof_profile' not in inherited,
+            '候选与诊断均须独立于生产默认')
     binaries = load_binaries(args.binaries, FEATURE)
     baseline = baseline_rows(args.reference, CASES)
     models = {}
@@ -96,6 +100,7 @@ def run(args):
                        node_limit=NODE_LIMIT, time_limit_secs=SECONDS, feature=FEATURE,
                        source_commit=source['commit'], source_tree=source['tree'],
                        binary_sha256=digest, binary_manifest_sha256=manifest_digest,
+                       default_features=inherited,
                        host=platform.platform(), version=digest, command=command, options=options,
                        features=[] if variant == 'base' else [FEATURE])
             out.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n')

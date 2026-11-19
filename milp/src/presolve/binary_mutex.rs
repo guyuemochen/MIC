@@ -5,7 +5,7 @@ use crate::binary_propagation::{certifies_binary_mutex, standard_bounds};
 use crate::model::{RelOp, Tolerances, VarType};
 
 /// 只检查包含两个自由二元变量的短行。推断都基于本轮同一变量盒，
-/// 行序不影响收集结果。证据来自存活的原约束及当前预处理界。
+/// 行序不影响收集结果。证据来自当前存活的工作约束和变量界。
 pub(super) fn zero_fixes(
     rows: &[WorkRow],
     types: &[VarType],
