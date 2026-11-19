@@ -1,0 +1,456 @@
+{
+  "passed": true,
+  "final_checks": {
+    "passed": true,
+    "runs": 12,
+    "instances": 2,
+    "solutions_checked": 12,
+    "mic_with_external_optimum": 6,
+    "mic_bounds_checked": 6,
+    "errors": [],
+    "public_truth": {
+      "manifest": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json",
+      "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+      "source": "https://miplib.zib.de/",
+      "solution_file": {
+        "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+        "file": "miplib2017-v37.solu",
+        "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+        "release_date": "2026-09-24"
+      },
+      "matched_runs": 12,
+      "hashes_checked": 12,
+      "checked_runs": 12,
+      "optimal_runs": 12,
+      "infeasible_runs": 0,
+      "optimal_claims_checked": 12,
+      "bounds_checked": 12,
+      "feasible_objectives_checked": 12,
+      "skipped": {}
+    }
+  },
+  "rows": [
+    {
+      "instance": "drayage-100-23",
+      "solver": "gurobi",
+      "rep": 0,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.04727479099528864,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.04727479099528864,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0013994999972055666,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0013994999972055666,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "mic",
+      "rep": 0,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.014943667,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.014943667,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.000922792,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.000922792,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "mic",
+      "rep": 0,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.087240458,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.087240458,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.000807708,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.000807708,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "gurobi",
+      "rep": 0,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.37580304199946113,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.37580304199946113,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0013007919988012873,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0013007919988012873,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "final_vector_event": 7,
+      "final_tasks_served": 65,
+      "accepted": 7,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "gurobi",
+      "rep": 1,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.37839216599968495,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.37839216599968495,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0013679999974556267,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0013679999974556267,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "final_vector_event": 7,
+      "final_tasks_served": 65,
+      "accepted": 7,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "mic",
+      "rep": 1,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.0886515,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.0886515,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.000864459,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.000864459,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "mic",
+      "rep": 1,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.01501125,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.01501125,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.000827584,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.000827584,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "gurobi",
+      "rep": 1,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.04700358300033258,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.04700358300033258,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0013554580000345595,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0013554580000345595,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "gurobi",
+      "rep": 2,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.047584416999598034,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.047584416999598034,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0015494170002057217,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0015494170002057217,
+        "objective": 574298.8220214843,
+        "tasks_served": 35
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "mic",
+      "rep": 2,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.014674084,
+      "time_limit_secs": 30,
+      "final_objective": 103333.87407302856,
+      "final_bound": 103333.87407302856,
+      "proof_return_upper_secs": 0.014674084,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.000867709,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.000867709,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "mic",
+      "rep": 2,
+      "status": "optimal",
+      "raw_status": "optimal",
+      "return_secs": 0.087944959,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.087944959,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.00084825,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.00084825,
+        "objective": 119252.21483230591,
+        "tasks_served": 65
+      },
+      "final_vector_event": 2,
+      "final_tasks_served": 65,
+      "accepted": 2,
+      "rejected": [],
+      "errors": []
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "gurobi",
+      "rep": 2,
+      "status": "optimal",
+      "raw_status": "OPTIMAL",
+      "return_secs": 0.3756660830040346,
+      "time_limit_secs": 30,
+      "final_objective": 101282.64701843263,
+      "final_bound": 101282.64701843263,
+      "proof_return_upper_secs": 0.3756660830040346,
+      "proof_right_censored_at_secs": null,
+      "first_right_censored_at_secs": null,
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.0013799160005874,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "first_route": {
+        "event": 1,
+        "elapsed_secs": 0.0013799160005874,
+        "objective": 543511.0272788999,
+        "tasks_served": 37
+      },
+      "final_vector_event": 7,
+      "final_tasks_served": 65,
+      "accepted": 7,
+      "rejected": [],
+      "errors": []
+    }
+  ],
+  "summary": [
+    {
+      "instance": "drayage-100-23",
+      "solver": "gurobi",
+      "time_limit_secs": 30,
+      "n": 3,
+      "first_within_limit": 3,
+      "route_within_limit": 3,
+      "proof_within_limit": 3,
+      "first_median_secs": 0.0013994999972055666,
+      "first_route_median_secs": 0.0013994999972055666,
+      "proof_return_median_secs": 0.04727479099528864
+    },
+    {
+      "instance": "drayage-100-23",
+      "solver": "mic",
+      "time_limit_secs": 30,
+      "n": 3,
+      "first_within_limit": 3,
+      "route_within_limit": 3,
+      "proof_within_limit": 3,
+      "first_median_secs": 0.000867709,
+      "first_route_median_secs": 0.000867709,
+      "proof_return_median_secs": 0.014943667
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "gurobi",
+      "time_limit_secs": 30,
+      "n": 3,
+      "first_within_limit": 3,
+      "route_within_limit": 3,
+      "proof_within_limit": 3,
+      "first_median_secs": 0.0013679999974556267,
+      "first_route_median_secs": 0.0013679999974556267,
+      "proof_return_median_secs": 0.37580304199946113
+    },
+    {
+      "instance": "drayage-25-23",
+      "solver": "mic",
+      "time_limit_secs": 30,
+      "n": 3,
+      "first_within_limit": 3,
+      "route_within_limit": 3,
+      "proof_within_limit": 3,
+      "first_median_secs": 0.00084825,
+      "first_route_median_secs": 0.00084825,
+      "proof_return_median_secs": 0.087944959
+    }
+  ]
+}
