@@ -295,11 +295,25 @@ fn on_grid(value: f64, exponent: i32) -> Option<i128> {
     mantissa.checked_mul(1_i128.checked_shl(shift)?)
 }
 
-fn standard_bounds(lb: f64, ub: f64) -> bool {
+pub(crate) fn standard_bounds(lb: f64, ub: f64) -> bool {
     (lb == 0.0 || lb == 1.0) && (ub == 0.0 || ub == 1.0) && lb <= ub
 }
 
 fn certify(vars: &[Variable], row: &Constraint, tol: Tolerances) -> Option<Vec<Row>> {
+    certify_binary_terms(&row.expr.terms, row.op, row.rhs, tol, |j| {
+        vars.get(j).is_some_and(|v| {
+            v.var_type == VarType::Binary && standard_bounds(v.lb, v.ub)
+        })
+    })
+}
+
+fn certify_binary_terms(
+    terms: &[(usize, f64)],
+    op: RelOp,
+    rhs: f64,
+    tol: Tolerances,
+    is_binary: impl Fn(usize) -> bool,
+) -> Option<Vec<Row>> {
     if !tol.zero.is_finite()
         || tol.zero < 0.0
         || !tol.feasibility.is_finite()
@@ -309,18 +323,16 @@ fn certify(vars: &[Variable], row: &Constraint, tol: Tolerances) -> Option<Vec<R
     {
         return None;
     }
-    let mut exponent = if row.rhs == 0.0 {
+    let mut exponent = if rhs == 0.0 {
         i32::MAX
     } else {
-        dyadic(row.rhs)?.1
+        dyadic(rhs)?.1
     };
     let mut max_coefficient = 0.0_f64;
     let mut previous = None;
-    for &(j, coefficient) in &row.expr.terms {
-        let var = vars.get(j)?;
+    for &(j, coefficient) in terms {
         if previous.is_some_and(|old| old >= j)
-            || var.var_type != VarType::Binary
-            || !standard_bounds(var.lb, var.ub)
+            || !is_binary(j)
             || coefficient == 0.0
         {
             return None;
@@ -332,11 +344,11 @@ fn certify(vars: &[Variable], row: &Constraint, tol: Tolerances) -> Option<Vec<R
     if max_coefficient <= tol.zero || !(-1022..=1023).contains(&exponent) {
         return None;
     }
-    let rhs = on_grid(row.rhs, exponent)?;
+    let rhs = on_grid(rhs, exponent)?;
     let mut magnitude = rhs.checked_abs()?;
     let mut norm = 0_i128;
-    let mut coefficients = Vec::with_capacity(row.expr.terms.len());
-    for &(j, coefficient) in &row.expr.terms {
+    let mut coefficients = Vec::with_capacity(terms.len());
+    for &(j, coefficient) in terms {
         let weight = on_grid(coefficient, exponent)?;
         let absolute = weight.checked_abs()?;
         magnitude = magnitude.checked_add(absolute)?;
@@ -372,11 +384,44 @@ fn certify(vars: &[Variable], row: &Constraint, tol: Tolerances) -> Option<Vec<R
             rhs: bound,
         })
     };
-    match row.op {
+    match op {
         RelOp::Le => Some(vec![make(1)?]),
         RelOp::Ge => Some(vec![make(-1)?]),
         RelOp::Eq => Some(vec![make(1)?, make(-1)?]),
     }
+}
+
+/// 用原有格点和容差认证一组正字面量。两项最小权重之和已经超过右端时，
+/// 这一组内任意两个二元变量都不能同时取 1。每组只记录一份成员索引。
+#[cfg(feature = "binary_mutex_row_fixing")]
+pub(crate) fn certifies_binary_mutex(
+    terms: &[(usize, f64)],
+    op: RelOp,
+    rhs: f64,
+    tol: Tolerances,
+    is_binary: impl Fn(usize) -> bool,
+) -> bool {
+    if terms.len() < 2 {
+        return false;
+    }
+    let Some(certified) = certify_binary_terms(terms, op, rhs, tol, is_binary) else {
+        return false;
+    };
+    certified.iter().any(|row| {
+        if row.rhs < 0 || row.literals.iter().any(|literal| !literal.positive) {
+            return false;
+        }
+        let (mut smallest, mut second) = (i128::MAX, i128::MAX);
+        for literal in &row.literals {
+            if literal.weight < smallest {
+                second = smallest;
+                smallest = literal.weight;
+            } else {
+                second = second.min(literal.weight);
+            }
+        }
+        smallest.checked_add(second).is_some_and(|sum| sum > row.rhs)
+    })
 }
 
 impl BinaryPropagation {

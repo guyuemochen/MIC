@@ -30,7 +30,7 @@ use crate::presolve;
 use crate::search_ctrl::gap_percent;
 
 /// 终检约束违反相对容差（契约固定：violation ≤ 1e-6×(1+|rhs|+‖row‖₁)）。
-const FINAL_VIOLATION_REL: f64 = 1e-6;
+pub(crate) const FINAL_VIOLATION_REL: f64 = 1e-6;
 /// 终检整数性容差（契约固定：|x−round(x)| ≤ 1e-5，超差即 Err）。
 const FINAL_INTEGER_TOL: f64 = 1e-5;
 

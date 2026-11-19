@@ -18,3 +18,57 @@
 
 这两例来自同一模型家族。定点通过后候选继续保持默认关闭；若要推广，另按固定 20
 例各一次 10 秒筛查及各三次 30 秒正式配对验证，门槛在开始计时前冻结。
+
+## 活动度证据
+
+在当前工作模型的变量界上检查短行。先复用静态二元行的精确格点认证，确认一组变量
+中任意两列不能同时为 1。对于同组的两个自由二元列，依次假设一列为 1、另一列为 0，
+使用外向舍入计算剩余各项可能达到的活动度区间。只有区间完全越过带容差的约束边界
+才固定假设取 1 的列为 0。余量在当前工作行尺度上覆盖单纯形、取整复核和终检形式的
+误差，并给贴界留出余量。完整求解后仍在原模型空间独立复核。
+
+在干净源码树根目录构建两组库与正式探针。以下命令将产物写到临时目录。正式定点的
+输入使用现有的 `miplib2017-baseline.jsonl` 与官方来源清单，其中归档模型及原
+`.milp` 路径须可读且哈希吻合。
+
+```sh
+audit=$(mktemp -d)
+source=$(pwd)
+rounds="$source/bench/large_scale_rounds"
+for variant in base candidate; do
+  set --
+  if [ "$variant" = candidate ]; then
+    set -- --features binary_mutex_row_fixing
+  fi
+  target="$audit/$variant-target"
+  cargo build --manifest-path "$source/milp/Cargo.toml" --release --lib \
+    --example round_probe --target-dir "$target" "$@"
+  cp "$target/release/examples/round_probe" "$audit/round_probe_$variant"
+  rustc --edition 2021 -O --extern "milp=$target/release/libmilp.rlib" \
+    "$rounds/binary_mutex_presolve_probe.rs" -o "$audit/presolve_$variant"
+done
+cat > "$audit/binaries.json" <<'JSON'
+{"base":{"binary":"round_probe_base","features":[]},"candidate":{"binary":"round_probe_candidate","features":["binary_mutex_row_fixing"]}}
+JSON
+```
+
+将下面的 `model_dir` 设为两个原始 `.milp` 的目录。探针只运行生产缩放与预处理，
+输出原列固定集。独立 Python 核查读旧版缩减模型；使用精确有理活动度复核短行的
+固定集，另外模拟历史逐行盒传播到不动点。逐行模拟是机制对照，当前生产没有启用该
+历史规则。
+
+```sh
+for case in drayage-100-23 drayage-25-23; do
+  for variant in base candidate; do
+    "$audit/presolve_$variant" "$model_dir/$case.milp" "$audit/$case-$variant.milp" \
+      > "$audit/$case-$variant.tsv"
+  done
+  python3 "$rounds/binary_mutex_drayage_audit.py" "$model_dir/$case.milp" \
+    "$audit/$case-base.milp" "$audit/$case-base.tsv" "$audit/$case-candidate.tsv"
+done
+python3 "$rounds/run_binary_mutex_point.py" --source "$source" \
+  --binaries "$audit/binaries.json" \
+  --reference "$rounds/results/miplib2017-baseline.jsonl" \
+  --public-truth "$rounds/results/miplib2017-sources.json" \
+  --output "$audit/point.jsonl" --gate "$audit/gate.json"
+```
