@@ -2342,14 +2342,14 @@ fn recheck_pending_cuts(
 /// 模块文档），再截断 `max_cuts_per_round`——ledger/recorded 记账的即
 /// 过闸后的行。x̄ 经 [`rebuild_x_bar`] 重建（每轮一次，割批共用）。
 ///
-/// 【S14-第一步：小批增量施加纪律】每轮过闸割批（割集合与施加序确定且
-/// 与既往一致）按 [`CUT_APPLY_CHUNK`]（10，取值依据见该常量文档）切分为
+/// 【S14-第一步：小批增量施加纪律】每轮从过闸割的原顺序开始，按
+/// [`CUT_APPLY_CHUNK`]（10，取值依据见该常量文档）分成
 /// 连续小批，逐批 `add_row` 记账 + 预算内 resolve——**收敛一批提交一批**；
 /// 某小批 resolve 触发迭代上限只回退该小批（旧行为弃整轮 ≤40 条），回滚
 /// 后的 committed 集仍是『已 resolve 收敛过的前缀』（与既有整轮回滚语义
 /// 同构，详见函数体内注释）。全部割行照走 `add_row` + [`CutRecord`]
 /// 记账（施加序 = 记账序 = recorded 序），worker 按序重放契约不变。
-/// 默认关闭的 `root_cut_recheck` 在小批返回 Optimal 后借用这次报告解，
+/// 默认开启的 `root_cut_recheck` 在小批返回 Optimal 后借用这次报告解，
 /// 保序跳过有限违反量低于原阈值的剩余候选，下一小批取剩余前 10 条。
 /// 报告解不可用或单条违反量非有限时保留该候选。复查只影响选割。
 pub fn cut_loop_recorded<E: LpEngine>(
@@ -2483,7 +2483,7 @@ pub fn cut_loop_recorded<E: LpEngine>(
         // 与旧行为一致）。小批失败即终止整个割循环（不再尝试后续小批：
         // 失败表明增量割已使 resolve 超收紧预算，后续小批大概率同样超限，
         // 且每次回滚需冷重建 + 全量重放）。小批候选来自本轮同一 x̄ 的一次
-        // 分离。默认保持原候选全批施加，开启复查后只从原来的余池保序筛选。
+        // 分离。开启复查时从原余池保序筛选，关闭时保持原施加序列。
         #[cfg(all(feature = "root_cut_recheck", feature = "proof_profile"))]
         let mut candidate_ordinals: Vec<usize> = (0..batch.len()).collect();
         let mut chunk_start = 0usize;

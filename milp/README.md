@@ -599,6 +599,21 @@ S7 起全部割族另在施加边界统一过数值卫生闸（清洁化/密度�
 该集合为空时割可切空松弛区域）——终态如实映射 Infeasible（CLI
 `status = infeasible`、退出码 2），不是数值错误。
 
+Cargo 默认开启 `root_cut_recheck`。每轮先按原顺序清洁候选并截断配额。首批割求解
+收敛后，借用这次 LP 的报告解重新检查剩余候选，保序跳过有限违反量低于原阈值的割。
+报告解不可用或单条活动度非有限时保留候选。余池为空只结束当前轮，后续轮仍按原预算
+分离。复查只影响选割。
+
+在仓库根构建下列版本，可关闭复查并保留第十二轮之前的另外两项生产默认特性：
+
+```sh
+cargo build --manifest-path milp/Cargo.toml --release --example round_probe \
+  --no-default-features --features sparse_row_products,binary_coefficient_strengthening
+```
+
+重建第十二轮正式对照的两个探针，或重建推广前的 C ABI 与 Python 依赖库时，使用冻结
+提交 `5f22868`。
+
 #### 表格行聚合 MIR 割（大规模轮 R2）
 
 根割循环的割族在 c-MIR、GMI 之后新增**聚合 MIR**（`cuts::aggregated_mir_cuts`）：
