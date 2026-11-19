@@ -717,6 +717,79 @@ mod tests {
         assert_eq!(p.obj.eval(&greedy) + p.obj_offset, 14.0);
     }
 
+    fn unequal_skip_costs() -> Problem {
+        let mut p = toy();
+        p.obj.add_term(10, 20.0);
+        p.obj.add_term(15, 20.0);
+        p
+    }
+
+    #[test]
+    fn normal_entry_keeps_first_feasible_route_when_node_budget_runs_out() {
+        let p = unequal_skip_costs();
+        let opts = crate::solver::SolveOptions {
+            bb: crate::branch_bound::BbOptions {
+                node_limit: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let observed = std::cell::RefCell::new(Vec::new());
+        let result = crate::solver::solve_controlled_with_incumbent(
+            &p,
+            &opts,
+            &Default::default(),
+            None,
+            &|_, objective, values| observed.borrow_mut().push((objective, values.to_vec())),
+        )
+        .unwrap();
+        assert_eq!(
+            result.report.status,
+            crate::model::SolveStatus::LimitReached
+        );
+        assert_eq!(result.report.stats.nodes, 1);
+        assert_eq!(result.report.objective, Some(34.0));
+        let bound = result.bound.unwrap();
+        assert!((14.0 - 1.0e-10..=14.0).contains(&bound));
+        let observed = observed.into_inner();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(result.report.values.unwrap(), observed[0].1);
+    }
+
+    #[test]
+    fn rounded_objective_tie_reports_vector_actually_certified() {
+        let mut p = unequal_skip_costs();
+        p.obj_offset = (1_u64 << 60) as f64;
+        let observed = std::cell::RefCell::new(Vec::new());
+        let result = crate::solver::solve_controlled_with_incumbent(
+            &p,
+            &Default::default(),
+            &Default::default(),
+            None,
+            &|_, objective, values| observed.borrow_mut().push((objective, p.obj.eval(values))),
+        )
+        .unwrap();
+        let observed = observed.into_inner();
+        assert_eq!(observed, [(p.obj_offset, 32.0), (p.obj_offset, 12.0)]);
+        assert_eq!(result.report.status, crate::model::SolveStatus::Optimal);
+        let values = result.report.values.unwrap();
+        assert_eq!(p.obj.eval(&values), 12.0);
+        assert_eq!(result.bound, result.report.objective);
+    }
+
+    #[test]
+    fn specialized_proof_respects_maximize_and_offset() {
+        let mut p = unequal_skip_costs();
+        p.sense = Sense::Maximize;
+        for (_, coefficient) in &mut p.obj.terms {
+            *coefficient = -*coefficient;
+        }
+        let result = crate::solver::solve_default(&p).unwrap();
+        assert_eq!(result.status, crate::model::SolveStatus::Optimal);
+        assert_eq!(result.objective, Some(-10.0));
+        assert!(verify_candidate(&p, &result.values.unwrap()));
+    }
+
     #[test]
     fn detects_only_verified_equations_and_obeys_fixed_zero_bounds() {
         let mut p = toy();

@@ -351,7 +351,8 @@ pub struct SearchHooks {
 /// 分支定界统计。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BbStats {
-    /// 处理节点数（每次 resolve 计 1）。
+    /// 处理节点数。通用分支每次 LP resolve 计 1，时间窗路线的精确覆盖
+    /// 搜索每次处理状态也计 1。
     pub nodes: u64,
     /// 累计单纯形迭代数。
     pub lp_iterations: u64,
@@ -492,11 +493,20 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
-    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default(), None)
+    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default(), None, SearchPrelude::default())
 }
 
 /// 单线程搜索接受新解时收到工作尺度向量。
 pub(crate) type WorkIncumbentObserver<'a> = Option<&'a dyn Fn(&[f64])>;
+
+/// 结构化求解回退时，继续沿用同一次求解的预算和工作量。
+#[derive(Default)]
+pub(crate) struct SearchPrelude {
+    pub(crate) start: Option<Instant>,
+    pub(crate) nodes: u64,
+    pub(crate) lp_iterations: u64,
+    pub(crate) incumbent: Option<Incumbent>,
+}
 
 /// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
 pub(crate) fn branch_and_bound_with_preserved(
@@ -507,6 +517,7 @@ pub(crate) fn branch_and_bound_with_preserved(
     hooks: Option<&SearchHooks>,
     preserved: PreservedBinaryRows,
     incumbent_observer: WorkIncumbentObserver<'_>,
+    prelude: SearchPrelude,
 ) -> Result<BbResult> {
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
@@ -548,7 +559,7 @@ pub(crate) fn branch_and_bound_with_preserved(
         }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
-    sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer)
+    sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer, prelude)
 }
 
 /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
@@ -561,14 +572,15 @@ fn sequential_bb(
     hooks: Option<&SearchHooks>,
     mut preserved: PreservedBinaryRows,
     incumbent_observer: WorkIncumbentObserver<'_>,
+    prelude: SearchPrelude,
 ) -> Result<BbResult> {
     debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
-    let start = Instant::now();
+    let start = prelude.start.unwrap_or_else(Instant::now);
     let int_vars = problem.integer_vars();
     let sense = problem.sense;
     // 整数目标门控（cutoff 剪枝 + est 弹出剪枝共用；纯问题属性，算一次）。
     let obj_integral = objective_is_integral(problem);
-    let mut stats = BbStats::default();
+    let mut stats = BbStats { nodes: prelude.nodes, ..BbStats::default() };
     // —— W3 确定性模式：budget = 纯预算制——time_limit 换算为节点预算，
     // 决策通道的进度量单位从墙钟秒改为节点数（progress_units 注入），节点
     // 边界截断改查节点预算；决策路径零墙钟读点（展示通道——进度行时刻/
@@ -587,7 +599,7 @@ fn sequential_bb(
     };
     // 割丢弃回退（根割 IterationLimit 重建 Simplex）前累计的 LP 迭代数：
     // finish 以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
-    let mut base_lp_iterations: u64 = 0;
+    let mut base_lp_iterations = prelude.lp_iterations;
     let mut simplex = new_engine(problem, tol, opts.lp_engine)?;
     // W2 内部墙钟时限：0（不限）= None ⇒ 零墙钟读点（条件读钟）；重建
     // Simplex（预割轮 / R8 回滚）同款重注入。W3：budget 模式不注入（决策
@@ -600,7 +612,7 @@ fn sequential_bb(
     simplex.set_time_deadline(time_deadline);
     let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
-    let mut incumbent: Option<(f64, Vec<f64>)> = None;
+    let mut incumbent = prelude.incumbent.map(|inc| (inc.objective, inc.values));
     // —— 受控扩展状态（默认全关 ⇒ 零行为变化）——
     // 上行进度行的发射时刻（秒）；仅钩子启用时被写入。
     let mut last_log: Option<f64> = None;
@@ -627,7 +639,7 @@ fn sequential_bb(
     let mut sol = simplex.solve(&bounds);
     #[cfg(test)]
     test_root_lp_interrupt::apply("initial", &mut sol);
-    stats.nodes = 1;
+    stats.nodes += 1;
     #[cfg(feature = "proof_profile")]
     crate::proof_profile::lp("root_lp", &sol, simplex.iterations(), Some(profile_root_start.elapsed().as_secs_f64()), 0);
     #[cfg(feature = "proof_profile")]
@@ -702,17 +714,20 @@ fn sequential_bb(
         } else {
             None
         };
-        if let (Some(observe), Some(inc)) = (incumbent_observer, &extracted) {
-            observe(&inc.values);
+        let earlier_objective = incumbent.as_ref().map(|(o, _)| *o);
+        if status != SolveStatus::LimitReached {
+            incumbent = None;
+        } else if let Some(inc) = extracted {
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
         if let Some(h) = hooks {
-            emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+            let progress_objective = earlier_objective.and(incumbent.as_ref().map(|(o, _)| *o));
+            emit_progress(h, &start, stats.nodes, progress_objective, None, sense);
         }
-        let extracted_pair = extracted.map(|inc| (inc.objective, inc.values));
         return Ok(finish(
             status,
-            extracted_pair,
+            incumbent,
             &mut stats,
             &simplex,
             start,
@@ -2840,7 +2855,7 @@ pub(crate) const BUDGET_NODES_PER_SEC: f64 = 6_000.0;
 /// W3：budget 模式下 `time_limit_ms` 的等价节点预算（确定性换算；
 /// `time_limit_ms = 0` = 不限 ⇒ None——降级与预算保护关闭，行为 ≡ 无时限）。
 /// ceil + max(1)：任何正时限至少允许 1 个节点（根）。
-fn budget_node_cap_of(opts: &BbOptions) -> u64 {
+pub(crate) fn budget_node_cap_of(opts: &BbOptions) -> u64 {
     debug_assert!(opts.time_limit_ms > 0);
     let secs = opts.time_limit_ms as f64 / 1000.0;
     ((secs * BUDGET_NODES_PER_SEC).ceil() as u64).max(1)
@@ -3217,7 +3232,7 @@ pub(crate) mod unresolved_bound_tests {
 
 /// 组装并发射一行进度（字段口径与并行引擎一致；gap 由展示层经
 /// [`gap_percent`] 现算，缺任一侧或 inf 语义渲染为 inf）。
-fn emit_progress(
+pub(crate) fn emit_progress(
     hooks: &SearchHooks,
     start: &Instant,
     nodes: u64,
@@ -3309,7 +3324,7 @@ fn parallel_entry(
         probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
         let mut probe_ctrl = *ctrl;
         probe_ctrl.threads = 1;
-        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default(), None)?;
+        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default(), None, SearchPrelude::default())?;
         let budget_exhausted = probe.status == SolveStatus::LimitReached
             && !probe.gap_terminated
             && !probe.auto_degraded
@@ -6588,7 +6603,7 @@ mod binary_propagation_tests {
         assert_eq!(public.best_objective, Some(2.125));
         assert_eq!(public.stats.propagation.accepted_rows, 1, "公开入口只认证传入的强化LP行");
         let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts };
-        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved, None).unwrap_err();
+        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved, None, SearchPrelude::default()).unwrap_err();
         assert!(error.to_string().contains("旧认证行只能移交"));
     }
 
@@ -6625,7 +6640,7 @@ mod binary_propagation_tests {
             let audit = LocalScopeAudit::new();
             let opts = BbOptions { root_cuts: false, local_cuts: true, lp_engine: engine,
                 binary_row_propagation: BinaryPropagationMode::On, ..BbOptions::default() };
-            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved, None).unwrap();
+            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved, None, SearchPrelude::default()).unwrap();
             assert_eq!(result.status, SolveStatus::Optimal);
             assert_eq!(result.best_objective, Some(2331.0));
             assert!(result.stats.cuts > 0 && audit.count() > 0, "须实际退出局部割作用域");

@@ -1,7 +1,7 @@
 //! 统一求解编排与终检（WP4 契约，本文件为 WP4 实现）。
 //!
-//! 流程：`validate` →（可选）presolve → branch_and_bound(缩减问题) → postsolve
-//! → 安全网终检 → 报告。
+//! 流程：`validate` →（可选）时间窗路线求解或 presolve → branch_and_bound
+//! → postsolve → 安全网终检 → 报告。
 //!
 //! 受控入口 [`solve_controlled`] 在同一编排上注入 [`crate::branch_bound::SearchControl`]
 //!（threads/mipgap/自适应启发式/日志周期）与 [`crate::branch_bound::SearchHooks`]
@@ -14,22 +14,31 @@
 //! objective 口径 = 原 sense、含 obj_offset。
 //!
 //! # 实现说明（WP4）
-//! - presolve 关闭时直接在原始问题上求解（`values` 天然同维）；
+//! - 开启预处理和启发式的单线程入口会先尝试可识别的时间窗路径覆盖。
+//!   每条原行必须能由恰选一、时间窗或活动行程解释，候选要通过原模型复核。
+//!   专用求解只有在精确对偶与覆盖搜索共同完成证明时才报最优。
+//!   结构不适用时走通用流程，接手前已核验的解与已消耗的预算仍有效。
+//! - presolve 关闭时不做约束化简（`values` 仍在原列顺序）；
 //!   开启时 `presolve_reductions` = 被固定删除的列数 + 被删除的行数 +
 //!   被聚合合并的重复列数（W5）。
-//! - 只有 B&B 带回取值（Optimal 或有 incumbent 的 LimitReached）才走
-//!   postsolve 与终检；Infeasible/Unbounded/无 incumbent 的 LimitReached
-//!   报告 `objective`/`values` 均为 `None`。
+//! - 时间窗路线可在缩放前直接返回已核验的原空间解。通用路径在 B&B 带回取值
+//!   （Optimal 或有 incumbent 的 LimitReached）时还原并终检，未找到解时
+//!   报告 `objective` 与 `values` 均为 `None`。
 //! - 终检容差为契约固定安全网值（相对 1e-6、整数 1e-5），宽于 WP3 复核
 //!   阶梯，正常路径不会被误伤；超差说明数值已失真，宁可报错也不输出错解。
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::branch_bound::{self, BbOptions, BbStats, SearchControl, SearchHooks};
+use crate::branch_bound::{
+    self, BbOptions, BbStats, NodeRule, SearchControl, SearchHooks, SearchPrelude,
+};
 use crate::error::{MilpError, Result};
-use crate::model::{Problem, RelOp, SolveStatus, Tolerances, VarType};
+use crate::heuristics::{self, Incumbent};
+use crate::model::{Problem, RelOp, Sense, SolveStatus, Tolerances, VarType};
 use crate::presolve;
-use crate::search_ctrl::gap_percent;
+use crate::search_ctrl::{gap_percent, Determinism};
+use crate::simplex::Bounds;
+use crate::time_window_routes::{sum_bounds, RouteModel};
 
 /// 终检约束违反相对容差（契约固定：violation ≤ 1e-6×(1+|rhs|+‖row‖₁)）。
 pub(crate) const FINAL_VIOLATION_REL: f64 = 1e-6;
@@ -136,8 +145,13 @@ fn solve_controlled_impl(
     hooks: Option<&SearchHooks>,
     incumbent_observer: IncumbentObserver<'_>,
 ) -> Result<ControlledSolveReport> {
+    let start = Instant::now();
     problem.validate()?;
     let num_orig_vars = problem.vars.len();
+    let mut route = try_time_window_routes(problem, opts, ctrl, start, incumbent_observer);
+    if let Some(r) = route.take_if(|r| r.status.is_some()) {
+        return Ok(r.report(problem, hooks, 0));
+    }
 
     // （可选）presolve → 缩减问题 + 还原映射。R4 起最前端先做问题级数值
     // 缩放（scale→presolve→solve→postsolve→unscale）：缩放使容差判定
@@ -180,21 +194,40 @@ fn solve_controlled_impl(
             None => x_pre,
         }
     };
+    let prelude = route
+        .as_ref()
+        .map_or_else(SearchPrelude::default, |r| SearchPrelude {
+            start: Some(r.start),
+            nodes: r.stats.nodes,
+            lp_iterations: r.stats.lp_iterations,
+            incumbent: r.best.as_ref().and_then(|incumbent| {
+                work_seed(
+                    &work, map.as_ref(), smap.as_ref(), incumbent, opts.tol, &restore_values,
+                )
+            }),
+        });
+    if let Some(mut r) = route.take_if(|r| r.time_exceeded()) {
+        r.status = Some(SolveStatus::LimitReached);
+        return Ok(r.report(problem, hooks, reductions));
+    }
     let observe_work = |reduced_x: &[f64]| {
-        if let Some(observe) = incumbent_observer {
-            let accepted_at = Instant::now();
-            let x = restore_values(reduced_x.to_vec());
-            observe(accepted_at, problem.obj.eval(&x) + problem.obj_offset, &x);
+        let Some(observe) = incumbent_observer else { return };
+        let accepted_at = Instant::now();
+        let x = restore_values(reduced_x.to_vec());
+        let objective = problem.obj.eval(&x) + problem.obj_offset;
+        let known = route.as_ref().and_then(|r| r.best.as_ref());
+        if known.is_none_or(|inc| !better(problem.sense, inc.objective, objective)) {
+            observe(accepted_at, objective, &x);
         }
     };
     let work_observer = incumbent_observer.map(|_| &observe_work as &dyn Fn(&[f64]));
-    let bb = branch_bound::branch_and_bound_with_preserved(
-        &work, &opts.bb, ctrl, opts.tol, hooks, preserved, work_observer,
+    let mut bb = branch_bound::branch_and_bound_with_preserved(
+        &work, &opts.bb, ctrl, opts.tol, hooks, preserved, work_observer, prelude,
     )?;
 
     // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
     // 带回取值则不带解返回。
-    let (objective, values) = match bb.best_values {
+    let (mut objective, mut values) = match bb.best_values.take() {
         Some(reduced_x) => {
             let mut x = restore_values(reduced_x);
             if x.len() != num_orig_vars {
@@ -210,6 +243,32 @@ fn solve_controlled_impl(
         }
         None => (None, None),
     };
+
+    if let Some(r) = route {
+        if let Some(inc) = r.best {
+            if objective.is_none_or(|old| better(problem.sense, inc.objective, old)) {
+                objective = Some(inc.objective);
+                values = Some(inc.values);
+                if bb.status != SolveStatus::LimitReached {
+                    // 可信的原模型候选与通用终态冲突，保留候选和独立路线界。
+                    bb.status = SolveStatus::LimitReached;
+                    bb.bound = r.bound;
+                } else if bb.bound.is_some_and(|bound| better(problem.sense, inc.objective, bound)) {
+                    bb.bound = r.bound;
+                    bb.gap_terminated = false;
+                    bb.auto_degraded = false;
+                }
+                bb.best_objective = Some(inc.objective);
+            }
+        }
+        if bb.status == SolveStatus::LimitReached && !bb.gap_terminated {
+            if let Some(bound) = r.bound {
+                if bb.bound.is_none_or(|old| better(problem.sense, old, bound)) {
+                    bb.bound = Some(bound);
+                }
+            }
+        }
+    }
 
     // gap 证据：以 (最终 incumbent, 证据 bound) 经统一 clamp 重算——
     // BbResult.bound 在 gap 终止时即触发时刻证据 db（顺序路径触发即断，最终
@@ -240,6 +299,199 @@ fn solve_controlled_impl(
         gap_percent,
         bound: bb.bound,
     })
+}
+
+fn better(sense: Sense, new: f64, old: f64) -> bool {
+    match sense {
+        Sense::Minimize => new < old,
+        Sense::Maximize => new > old,
+    }
+}
+
+struct RoutePrelude {
+    start: Instant,
+    deadline: Option<Instant>,
+    stats: BbStats,
+    best: Option<Incumbent>,
+    bound: Option<f64>,
+    status: Option<SolveStatus>,
+}
+
+impl RoutePrelude {
+    fn time_exceeded(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn report(
+        mut self,
+        problem: &Problem,
+        hooks: Option<&SearchHooks>,
+        reductions: usize,
+    ) -> ControlledSolveReport {
+        let (objective, values) = self
+            .best
+            .map_or((None, None), |inc| (Some(inc.objective), Some(inc.values)));
+        self.stats.time_ms = self.start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        if let Some(hooks) = hooks {
+            branch_bound::emit_progress(
+                hooks,
+                &self.start,
+                self.stats.nodes,
+                objective,
+                self.bound,
+                problem.sense,
+            );
+        }
+        ControlledSolveReport {
+            report: SolveReport {
+                status: self.status.unwrap_or(SolveStatus::LimitReached),
+                objective,
+                values,
+                stats: self.stats,
+                presolve_reductions: reductions,
+            },
+            gap_terminated: false,
+            auto_degraded: false,
+            gap_percent: None,
+            bound: self.bound,
+        }
+    }
+}
+
+fn try_time_window_routes(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    start: Instant,
+    observe: IncumbentObserver<'_>,
+) -> Option<RoutePrelude> {
+    if !opts.use_presolve
+        || !opts.bb.heuristics
+        || ctrl.threads != 1
+        || (opts.bb.node_rule == NodeRule::HybridBestBound && opts.bb.local_cuts)
+    {
+        return None;
+    }
+    let model = RouteModel::detect(problem)?;
+    let budget_mode = ctrl.determinism == Determinism::Budget;
+    let deadline = if !budget_mode && opts.bb.time_limit_ms > 0 {
+        start.checked_add(Duration::from_millis(opts.bb.time_limit_ms))
+    } else {
+        None
+    };
+    let mut node_limit = if opts.bb.node_limit > 0 {
+        opts.bb.node_limit
+    } else {
+        u64::MAX
+    };
+    if budget_mode && opts.bb.time_limit_ms > 0 {
+        node_limit = node_limit.min(branch_bound::budget_node_cap_of(&opts.bb));
+    }
+    let mut r = RoutePrelude {
+        start,
+        deadline,
+        stats: BbStats::default(),
+        best: None,
+        bound: None,
+        status: None,
+    };
+    if !r.time_exceeded() {
+        if let Some(values) = model.greedy_candidate(problem, deadline).or_else(|| {
+            (!r.time_exceeded())
+                .then(|| model.idle_candidate(problem))
+                .flatten()
+        }) {
+            let objective = problem.obj.eval(&values) + problem.obj_offset;
+            if let Some(observe) = observe {
+                observe(Instant::now(), objective, &values);
+            }
+            r.best = Some(Incumbent { objective, values });
+        }
+    }
+    // 有显式 gap 时保留通用搜索的证据与停机语义；贪心结果可供其使用。
+    if !r.time_exceeded() && !ctrl.mipgap_percent.is_some_and(|gap| gap > 0.0) {
+        let result = crate::route_cover::optimize(
+            problem,
+            &model,
+            opts.tol,
+            deadline,
+            node_limit,
+            r.best.as_ref().map(|inc| inc.values.as_slice()),
+        );
+        r.stats.nodes = result.nodes;
+        r.stats.lp_iterations = result.lp_iterations;
+        r.bound = result.bound.and_then(|bound| match problem.sense {
+            Sense::Minimize => sum_bounds(problem.obj_offset, bound).map(|(lower, _)| lower),
+            Sense::Maximize => sum_bounds(problem.obj_offset, -bound).map(|(_, upper)| upper),
+        });
+        if let Some(values) = result.best {
+            let objective = problem.obj.eval(&values) + problem.obj_offset;
+            // 证书对应的是精确比较选出的向量。即使浮点重算目标相同，
+            // 也必须使用证书对应的向量。
+            if result.proven_optimal
+                || r.best
+                    .as_ref()
+                    .is_none_or(|inc| better(problem.sense, objective, inc.objective))
+            {
+                if let Some(observe) = observe {
+                    if r.best.as_ref().is_none_or(|inc| inc.values != values) {
+                        observe(Instant::now(), objective, &values);
+                    }
+                }
+                r.best = Some(Incumbent { objective, values });
+            }
+            if result.proven_optimal {
+                r.status = Some(SolveStatus::Optimal);
+                r.bound = Some(objective);
+            }
+        }
+        if r.status.is_none() && (result.interrupted || r.stats.nodes >= node_limit) {
+            r.status = Some(SolveStatus::LimitReached);
+        }
+    }
+    if r.time_exceeded() {
+        r.status = Some(SolveStatus::LimitReached);
+    }
+    Some(r)
+}
+
+/// 缩放和预处理后先往返核验。原空间的候选由调用方单独保留，以防
+/// 工作映射中的舍入或交换重复列改变了已核验的向量。
+fn work_seed(
+    work: &Problem,
+    map: Option<&presolve::PostsolveMap>,
+    scale: Option<&crate::scaling::ScaleMap>,
+    incumbent: &Incumbent,
+    tol: Tolerances,
+    restore: &impl Fn(Vec<f64>) -> Vec<f64>,
+) -> Option<Incumbent> {
+    let scaled = match scale {
+        Some(scale) => incumbent
+            .values
+            .iter()
+            .zip(&scale.col)
+            .map(|(x, factor)| x * factor)
+            .collect(),
+        None => incumbent.values.clone(),
+    };
+    let reduced = if let Some(map) = map {
+        let mut reduced: Vec<_> = map
+            .var_map
+            .iter()
+            .map(|&j| scaled.get(j).copied().unwrap_or(0.0))
+            .collect();
+        for (members, j, fixed) in &map.aggregations {
+            if fixed.is_none() {
+                *reduced.get_mut(*j)? = members.iter().map(|&k| scaled[k]).sum();
+            }
+        }
+        reduced
+    } else {
+        scaled
+    };
+    let candidate = heuristics::round_and_check(work, &Bounds::from_problem(work), &reduced, &tol)?;
+    (restore(candidate.values.clone()) == incumbent.values).then_some(candidate)
 }
 
 /// 统一求解入口（签名不变；默认受控路径的薄委托——

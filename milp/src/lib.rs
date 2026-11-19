@@ -44,6 +44,7 @@ pub mod scaling;
 pub mod simplex_sparse;
 
 mod binary_propagation;
+mod route_cover;
 mod time_window_routes;
 
 #[cfg(feature = "proof_profile")]
