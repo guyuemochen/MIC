@@ -6,9 +6,10 @@
 //! 因此站点容量和逐任务恰覆盖描述了必要的组合约束；构造的上界另用原模型检查。
 
 use crate::model::{Constraint, LinearExpr, Problem, RelOp, Sense, Tolerances, VarType, Variable};
-use crate::simplex::{Bounds, LpStatus, Simplex};
+use crate::simplex::{Bounds, LpStatus};
+use crate::simplex_sparse::{new_engine, LpEngineKind};
 use crate::time_window_routes::RouteModel;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 const MAX_JOBS: usize = 96;
@@ -457,11 +458,18 @@ struct SearchRoute {
     share: Exact,
 }
 
+struct JobClass {
+    jobs: u128,
+    // 下标为剩余任务数，对应保留该组最小的若干任务编号。
+    prefixes: Vec<u128>,
+}
+
 struct CoverSearch {
     routes: Vec<SearchRoute>,
     by_job: Vec<Vec<usize>>,
     stations: usize,
     penalty: Exact,
+    classes: Vec<JobClass>,
     seen: HashMap<(u128, usize), Exact>,
     nodes: u64,
     node_limit: u64,
@@ -504,6 +512,7 @@ impl CoverSearch {
             by_job,
             stations,
             penalty: proof.station_penalty,
+            classes: Vec::new(),
             seen: HashMap::new(),
             nodes: 0,
             node_limit,
@@ -514,7 +523,67 @@ impl CoverSearch {
         }
     }
 
+    /// 两个任务互换后，每条可用路线都须有任务集合、站点占用和减价完全
+    /// 对应的路线。同组内与代表的两两交换能生成该组的任意排列。
+    fn interchangeable_jobs(&self, cutoff: Exact) -> Option<Vec<JobClass>> {
+        let active: HashSet<_> = self
+            .routes
+            .iter()
+            .filter(|r| r.cost < cutoff)
+            .map(|r| (r.jobs, r.station, r.cost))
+            .collect();
+        let by_job: Vec<_> = self
+            .by_job
+            .iter()
+            .map(|ids| {
+                let end = ids.partition_point(|&i| self.routes[i].cost < cutoff);
+                &ids[..end]
+            })
+            .collect();
+        let mut classes = Vec::new();
+        let mut assigned = 0u128;
+        for a in 0..by_job.len() {
+            if expired(self.deadline) {
+                return None;
+            }
+            if assigned & (1 << a) != 0 || by_job[a].is_empty() {
+                continue;
+            }
+            let mut jobs = 1u128 << a;
+            let mut prefixes = vec![0, jobs];
+            for b in a + 1..by_job.len() {
+                // 列数不同可以保守跳过这对，重复列只会减少识别机会。
+                if assigned & (1 << b) != 0 || by_job[a].len() != by_job[b].len() {
+                    continue;
+                }
+                let pair = (1u128 << a) | (1u128 << b);
+                let interchangeable = by_job[a].iter().chain(by_job[b]).all(|&i| {
+                    let r = self.routes[i];
+                    r.jobs & pair == pair || active.contains(&(r.jobs ^ pair, r.station, r.cost))
+                });
+                if interchangeable {
+                    jobs |= 1u128 << b;
+                    prefixes.push(jobs);
+                }
+            }
+            assigned |= jobs;
+            if prefixes.len() > 2 {
+                classes.push(JobClass { jobs, prefixes });
+            }
+        }
+        Some(classes)
+    }
+
     fn run(&mut self, cutoff: Exact) {
+        if self.nodes >= self.node_limit {
+            self.interrupted = true;
+            return;
+        }
+        let Some(classes) = self.interchangeable_jobs(cutoff) else {
+            self.interrupted = true;
+            return;
+        };
+        self.classes = classes;
         self.seen.clear();
         self.best = cutoff;
         let remaining = (1 << self.by_job.len()) - 1;
@@ -539,7 +608,13 @@ impl CoverSearch {
             return;
         }
 
-        let state = (remaining, stations);
+        // 等价只用于记忆已搜状态。真实路线编号保留在 choices 中供原模型复核。
+        let mut canonical = remaining;
+        for class in &self.classes {
+            let count = (remaining & class.jobs).count_ones() as usize;
+            canonical = (canonical & !class.jobs) | class.prefixes[count];
+        }
+        let state = (canonical, stations);
         if self
             .seen
             .get(&state)
@@ -653,21 +728,36 @@ fn optimize_inner(
         network.stations.len(),
         network.cost_exp,
     );
-    let mut simplex = Simplex::new(&lp, tol).ok()?;
-    simplex.set_time_deadline(deadline);
-    let relaxed = simplex.solve(&Bounds::from_problem(&lp));
-    outcome.nodes = 1;
-    outcome.lp_iterations = simplex.iterations();
-    if relaxed.status != LpStatus::Optimal {
-        return None;
+    // 路线只经过少数任务。先用稀疏引擎选基，若最优基无法精确复核，
+    // 再尝试稠密基。两次计算同一个根松弛，共用墙钟并累计迭代数。
+    let bounds = Bounds::from_problem(&lp);
+    let mut certificate = None;
+    for kind in [LpEngineKind::Revised, LpEngineKind::Tableau] {
+        if expired(deadline) {
+            return None;
+        }
+        let Ok(mut simplex) = new_engine(&lp, tol, kind) else {
+            continue;
+        };
+        simplex.set_time_deadline(deadline);
+        let relaxed = simplex.solve(&bounds);
+        outcome.nodes = 1;
+        outcome.lp_iterations += simplex.iterations();
+        if relaxed.status != LpStatus::Optimal {
+            return None;
+        }
+        certificate = Certificate::from_basis(
+            simplex.basis_columns(),
+            &routes,
+            network.jobs.len(),
+            network.stations.len(),
+            deadline,
+        );
+        if certificate.is_some() {
+            break;
+        }
     }
-    let certificate = Certificate::from_basis(
-        simplex.basis_columns(),
-        &routes,
-        network.jobs.len(),
-        network.stations.len(),
-        deadline,
-    )?;
+    let certificate = certificate?;
     outcome.bound = certificate.bound(0, network.cost_exp);
 
     let seed = seed.and_then(|seed| {
@@ -751,15 +841,17 @@ fn optimize_inner(
         }
 
         outcome.bound = certificate.bound(cutoff, network.cost_exp);
-        // 首轮只查看零减价路线。之后按两倍提高上界，尽快覆盖正减价的选择。
+        // 界是严格上界。首轮仅含零减价；下一轮先查小于两倍最小正减价的解，
+        // 两项最小正减价之和留到后续层。最后一层仍覆盖所有可能严格改善。
         let step = cutoff.max(first_positive.unwrap_or(1));
-        cutoff = step.saturating_mul(2).saturating_add(1).min(final_cutoff);
+        cutoff = step.saturating_mul(2).min(final_cutoff);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simplex::Simplex;
 
     fn two_jobs(upper: f64) -> Problem {
         let mut p = Problem::new("时间窗临界值", Sense::Minimize);
@@ -895,18 +987,77 @@ mod tests {
         assert!(grid_value(1.0, -90).is_none());
     }
 
-    #[test]
-    fn fractional_cover_needs_an_exact_positive_cost_search() {
-        // 三条双任务路线各选一半得 LP 界 6。整数覆盖至少须有一个闲置任务，
-        // 选一条双任务路线加一个闲置任务的目标为 13。
-        let route = |jobs, uses_station, cost| Route {
+    fn route(jobs: u128, uses_station: bool, cost: Exact) -> Route {
+        Route {
             jobs,
             first: 0,
             last: 0,
             inside: Vec::new(),
             uses_station,
             cost,
-        };
+        }
+    }
+
+    #[test]
+    fn symmetry_respects_prices_and_station_use_in_each_layer() {
+        // 前三个任务在便宜路线中可互换；开放更多路线后，站点占用或减价各不相同。
+        let mut routes = vec![route(16, false, 0)];
+        for bit in [1, 2, 4] {
+            routes.push(route(bit | 8, true, 0));
+            routes.push(route(bit, false, 2));
+        }
+        routes.extend([route(17, true, 3), route(18, false, 3), route(20, true, 4)]);
+        for stations in 0..=3 {
+            for penalty in [0, 2] {
+                let proof = Certificate {
+                    dual_bound: 0,
+                    denominator: 1,
+                    station_penalty: penalty,
+                    reduced_costs: routes.iter().map(|r| r.cost).collect(),
+                };
+                let mut search = CoverSearch::new(5, stations, &routes, &proof, None, 10000);
+                let cheap = search.interchangeable_jobs(3).unwrap();
+                assert!(cheap.iter().any(|class| class.jobs == 7));
+                let full = search.interchangeable_jobs(5).unwrap();
+                assert!(full.iter().all(|class| (class.jobs & 7).count_ones() <= 1));
+
+                // 直接检查全部路线子集，独立核对严格上界、最优代价和重建的选择。
+                let evaluate = |ids: &[usize]| {
+                    let (mut jobs, mut used, mut cost) = (0, 0, 0);
+                    for &i in ids {
+                        let r = &routes[i];
+                        if jobs & r.jobs != 0 {
+                            return None;
+                        }
+                        jobs |= r.jobs;
+                        used += usize::from(r.uses_station);
+                        cost += r.cost;
+                    }
+                    if jobs != 31 || used > stations {
+                        return None;
+                    }
+                    Some(cost + (stations - used) as Exact * penalty)
+                };
+                let optimum = (0..(1 << routes.len()))
+                    .filter_map(|subset| evaluate(&Bits(subset).collect::<Vec<_>>()))
+                    .min();
+                for cutoff in 1..=10 {
+                    search.run(cutoff);
+                    assert!(!search.interrupted);
+                    let expected = optimum.filter(|&v| v < cutoff);
+                    let selected = search.selected.take();
+                    assert_eq!(selected.is_some(), expected.is_some());
+                    assert_eq!(selected.as_deref().and_then(evaluate), expected);
+                    assert_eq!(search.best, expected.unwrap_or(cutoff));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_cover_needs_an_exact_positive_cost_search() {
+        // 三条双任务路线各选一半得 LP 界 6。整数覆盖至少须有一个闲置任务，
+        // 选一条双任务路线加一个闲置任务的目标为 13。
         let routes = [
             route(0b011, true, 4),
             route(0b101, true, 4),

@@ -175,10 +175,16 @@ def mic_command(probe_binary, case, seconds, mode):
 
 def run(args):
     require(args.seconds > 0 and args.repetitions > 0, '时限和重复次数须为正')
+    require(bool(args.baseline_mic) == bool(args.baseline_revision), '旧版二进制与源码版本须同时指定')
     _, version = load_library(args.library)
     require(version == VERSION, f'冻结的动态库版本为 {VERSION}，实际版本为 {version}')
     source = Path(__file__).resolve().parents[2]
     source_commit = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
+    revisions = {'mic': source_commit}
+    if args.baseline_mic:
+        revisions['mic-baseline'] = subprocess.check_output(
+            ['git', '-C', source, 'rev-parse', '--verify', f'{args.baseline_revision}^{{commit}}'],
+            text=True).strip()
     source_status = subprocess.check_output(
         ['git', '-C', source, 'status', '--porcelain', '--untracked-files=all'], text=True)
     require(not source_status, '冻结前须提交并核对全部源码')
@@ -191,6 +197,9 @@ def run(args):
         parsed = invoke([str(args.mic), 'export', str(instance)], 10)
         data = json.loads(model.read_text(encoding='utf-8'))
         require(all(parsed[key] == data[key] for key in parsed), f'{name} 完整 MIC 输入与归档模型不同')
+        if args.baseline_mic:
+            previous = invoke([str(args.baseline_mic), 'export', str(instance)], 10)
+            require(previous == parsed, f'{name} 两版 MIC 的完整输入不同')
         staged[name] = model, instance, {key: record[key] for key in METADATA}
 
     args.output.mkdir(parents=True)
@@ -209,6 +218,9 @@ def run(args):
                     input_hashes={name: {key: data[key] for key in
                                          ('model_sha256', 'milp_sha256', 'mps_sha256')}
                                   for name, (_, _, data) in staged.items()})
+    if args.baseline_mic:
+        metadata.update(baseline_mic=str(args.baseline_mic), baseline_mic_sha256=sha(args.baseline_mic),
+                        baseline_revision=revisions['mic-baseline'])
     (args.output / 'freeze.json').write_text(render(metadata), encoding='utf-8')
     failed = False
     with (args.output / 'timings.jsonl').open('x', encoding='utf-8') as stream:
@@ -221,6 +233,11 @@ def run(args):
                 commands = [('gurobi', gurobi), ('mic', mic)]
                 if (rep + CASES.index(name)) % 2:
                     commands.reverse()
+                if args.baseline_mic:
+                    # 六遍涵盖三种求解器的六种次序，避免固定把旧版放在首位或末位。
+                    slot = (rep + CASES.index(name)) % 3
+                    commands.insert(slot, ('mic-baseline', mic_command(
+                        args.baseline_mic, instance, args.seconds, 'timed-solve')))
                 for order, (solver, command) in enumerate(commands):
                     try:
                         row = invoke(command, args.seconds + 30)
@@ -233,8 +250,8 @@ def run(args):
                                   case_order=case_order, time_limit_secs=args.seconds, node_limit=NODES,
                                   host=host, model=os.path.relpath(model, args.output), command=command,
                                   proof_elapsed_secs=row['elapsed_secs'] if row['status'] == 'optimal' else None)
-                    if solver == 'mic':
-                        merged['version'] = source_commit
+                    if solver in revisions:
+                        merged['version'] = revisions[solver]
                     failed |= row['status'] == 'error'
                     stream.write(json.dumps(merged, ensure_ascii=False, allow_nan=False) + '\n')
                     stream.flush()
@@ -304,6 +321,8 @@ def main():
     matrix = subcommands.add_parser('run')
     for parameter in ('library', 'mic', 'instances', 'output'):
         matrix.add_argument(f'--{parameter}', type=lambda arg: Path(arg).resolve(), required=True)
+    matrix.add_argument('--baseline-mic', type=lambda arg: Path(arg).resolve(), help='可选的旧版 MIC')
+    matrix.add_argument('--baseline-revision', help='构建旧版 MIC 的 Git 提交')
     matrix.add_argument('--seconds', type=int, default=SECONDS)
     matrix.add_argument('--repetitions', type=int, default=REPETITIONS)
     check = subcommands.add_parser('verify')
