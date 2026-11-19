@@ -1,0 +1,132 @@
+{
+  "source_commit": "bf0d21d44c3d61d65366bc1aea1ade6f97bcb6c8",
+  "milp_tree": "c6871fb661e882125ab35f4087533aeeba35ad9c",
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening",
+    "root_cut_recheck"
+  ],
+  "combination_explicit_features": [
+    "binary_mutex_row_fixing",
+    "sparse_phase1_recovery"
+  ],
+  "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)\nrelease: 1.97.0\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: aarch64-apple-darwin\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.7.1 (sys:0.4.88+curl-8.20.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Mac OS 27.2.1 [64-bit]",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "python": "3.13.14 (main, Jun 10 2026, 12:24:04) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "results": {
+    "01-milp-default": {
+      "exit_code": 0,
+      "sha256": "afee67565c86a8f80c41ad7960cbf62e7e0c93c7d3c61285078d7933d9fed260",
+      "rust_passed": 539,
+      "rust_failed": 0,
+      "rust_ignored": 6,
+      "python_total": null
+    },
+    "02-milp-experimental-combination": {
+      "exit_code": 0,
+      "sha256": "7d40dad0555f8bce9ff5441ebbf97e1bd1be486a1019a0bcafb92f483c00478d",
+      "rust_passed": 508,
+      "rust_failed": 0,
+      "rust_ignored": 4,
+      "python_total": null
+    },
+    "03-acceptance-default": {
+      "exit_code": 0,
+      "sha256": "8504eb6cf132b0f68cfd58f69ecc35992155924a72ef1d45032621cc8a2f8dae",
+      "rust_passed": 16,
+      "rust_failed": 0,
+      "rust_ignored": 0,
+      "python_total": null
+    },
+    "04-acceptance-experimental-combination": {
+      "exit_code": 0,
+      "sha256": "2e9199f04ff3a9b7c95a8e85e364441c6b998def20c57b10725ebd2a4bf71dd4",
+      "rust_passed": 16,
+      "rust_failed": 0,
+      "rust_ignored": 0,
+      "python_total": null
+    },
+    "05-planner": {
+      "exit_code": 0,
+      "sha256": "6be111511869f7ca5ca483ac8fbb487dcee17a6c2f6bcf8879cae5c37808b6c3",
+      "rust_passed": 127,
+      "rust_failed": 0,
+      "rust_ignored": 2,
+      "python_total": null
+    },
+    "06-ffi-default": {
+      "exit_code": 0,
+      "sha256": "6ff56ca76efd581159e63484ac5a8ee8cbb992f12348ad379245204fbeb580f0",
+      "rust_passed": 27,
+      "rust_failed": 0,
+      "rust_ignored": 0,
+      "python_total": null
+    },
+    "07-ffi-build": {
+      "exit_code": 0,
+      "sha256": "4b066cfef6ff68b88dcb266893e3f7f474024349886b74c976857fd172d95db5",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": null
+    },
+    "08-python-default": {
+      "exit_code": 0,
+      "sha256": "b3954d6dbaf7051c38962205de72960bf77cc43d26ca7b16529adff70d969b7a",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": 65
+    },
+    "09-python-knapsack": {
+      "exit_code": 0,
+      "sha256": "21183c0bf819a9be38e68b5906fd578bea68d787ada3d9faa04af8f8d061ec8a",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": null
+    },
+    "10-bench-unit": {
+      "exit_code": 0,
+      "sha256": "f78bd73d3f301e3718201c0c78e74e8a4fe925f62cc64ac068f792e3590152b6",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": 9
+    },
+    "11-r12-summary": {
+      "exit_code": 0,
+      "sha256": "bb1ff7b84a3d32fdda6dd7d56f1e9b90948eaf60a4cf3964906659887afc6739",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": null
+    },
+    "12-r12-gate": {
+      "exit_code": 0,
+      "sha256": "7c5f73bacc810f8a0da81505101e7f1a9330adb95b713ad9ee6935150b214d74",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": null
+    },
+    "13-public-independent-check": {
+      "exit_code": 0,
+      "sha256": "e360d175e74c7f982c47af0c95ef5aef98d89ecd4b336f5ba221fe7d3ea61128",
+      "rust_passed": null,
+      "rust_failed": null,
+      "rust_ignored": null,
+      "python_total": null
+    }
+  },
+  "support_sha256": {
+    "public-independent-check.json": "22582e984e75a6240d8a331a2446c96bc1b1d9e884fbbd11a4c20600097b69d4",
+    "r12-replay-gate.json": "9cb309eab26004b3b44f7d725180f63365c9a7106e74fa1235d81263dc7883a4",
+    "r12-replay-summary.json": "50f9dafa4d7a64001a38ec0aab2d3b9b2edb02b6935e723d8c12fceed2f1a53c",
+    "run-validation.sh": "19e7a16172e16dff24c786912c77efc4a4ec2061eaeb2e4f65c7f1435a65f38d",
+    "status.tsv": "e42252c1d0d4ea0558a02e8370b6b761e70d7dd15a6df34c6652a1d52f2be2c4",
+    "worktree.log": "a24595d1611f4024eeb9ab5a87f67c1a71060769220b6873e959a26b7317f9c9"
+  },
+  "passed": true
+}
