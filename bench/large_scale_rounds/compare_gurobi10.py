@@ -208,16 +208,20 @@ def effort(value):
 
 
 def optimize(library, env, model, version, data):
+    start = time.perf_counter()
+    code = library.GRBoptimize(model)
+    elapsed = time.perf_counter() - start
+    check(library, env, code, '求解')
+    return read_outcome(library, env, model, version, data, elapsed)
+
+
+def read_outcome(library, env, model, version, data, elapsed):
     def int_attr(name):
         return scalar(library, env, library.GRBgetintattr, model, name, ct.c_int)
 
     def dbl_attr(name, optional=False):
         return scalar(library, env, library.GRBgetdblattr, model, name, ct.c_double, optional)
 
-    start = time.perf_counter()
-    code = library.GRBoptimize(model)
-    elapsed = time.perf_counter() - start
-    check(library, env, code, '求解')
     status_code, count = int_attr('Status'), int_attr('SolCount')
     status, raw_status = STATUSES.get(status_code, ('error', f'UNKNOWN_STATUS_{status_code}'))
     has_solution = count > 0 and status in ('optimal', 'limit_reached')
@@ -239,7 +243,7 @@ def optimize(library, env, model, version, data):
     return row
 
 
-def solve(path, data, seconds, nodes):
+def solve(path, data, seconds, nodes, optimizer=optimize):
     library, version = load_library(path)
     env, model = ct.c_void_p(), ct.c_void_p()
     parameters = None
@@ -257,7 +261,7 @@ def solve(path, data, seconds, nodes):
         require(model_env, 'Gurobi 未返回模型环境')
         parameters = effective_params(library, model_env, ints, reals)
         verify_model(library, model_env, model, data, arrays)
-        row = optimize(library, model_env, model, version, data)
+        row = optimizer(library, model_env, model, version, data)
     except GurobiError as error:
         row = result('error', f'GUROBI_ERROR_{error.code}', None, None, None, None, -1, -1, version)
         row.update(error=str(error), error_code=error.code, error_stage=error.operation)

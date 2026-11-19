@@ -4,7 +4,8 @@ use milp::instance::{load_instance, write_instance};
 use milp::model::{Constraint, LinearExpr, Problem, RelOp, Sense, SolveStatus, VarType, Variable};
 use milp::search_ctrl::{gap_percent, DegradePolicy};
 use milp::simplex_sparse::LpEngineKind;
-use milp::solver::{solve_controlled, SolveOptions};
+use milp::solver::{solve_controlled, solve_controlled_with_incumbent, SolveOptions};
+use std::cell::RefCell;
 use std::error::Error;
 use std::io::{self, Write};
 use std::path::Path;
@@ -97,7 +98,12 @@ fn toggle(arg: &str) -> Result<bool, Box<dyn Error>> {
     }
 }
 
-fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(), Box<dyn Error>> {
+fn solve(
+    out: &mut impl Write,
+    problem: &Problem,
+    args: &[String],
+    observe_incumbents: bool,
+) -> Result<(), Box<dyn Error>> {
     let mut opts = SolveOptions::default();
     let mut ctrl = SearchControl {
         adaptive_heuristics: true,
@@ -165,8 +171,15 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
     }
     #[cfg(feature = "proof_profile")]
     milp::proof_profile::reset(ctrl.threads);
+    let events = RefCell::new(Vec::new());
     let start = Instant::now();
-    let result = solve_controlled(problem, &opts, &ctrl, None)?;
+    let result = if observe_incumbents {
+        solve_controlled_with_incumbent(problem, &opts, &ctrl, None, &|accepted, objective, x| {
+            events.borrow_mut().push((accepted.duration_since(start).as_secs_f64(), objective, x.to_vec()));
+        })?
+    } else {
+        solve_controlled(problem, &opts, &ctrl, None)?
+    };
     let elapsed = start.elapsed().as_secs_f64();
     let report = &result.report;
     let stats = report.stats;
@@ -196,6 +209,14 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
         })?;
     } else {
         write!(out, "null")?;
+    }
+    if observe_incumbents {
+        write!(out, ",\"incumbent_events\":")?;
+        array(out, &events.into_inner(), |w, (elapsed, objective, values)| {
+            write!(w, "{{\"elapsed_secs\":{elapsed:?},\"objective\":{},\"values\":", number(Some(*objective)))?;
+            array(w, values, |w, value| write!(w, "{}", number(Some(*value))))?;
+            write!(w, "}}")
+        })?;
     }
     #[cfg(feature = "proof_profile")]
     {
@@ -261,12 +282,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             export(&mut out, &reduced)?;
         }
         [command, path] if command == "export" => export(&mut out, &load_instance(Path::new(path))?)?,
-        [command, path, opts @ ..] if command == "solve" => solve(&mut out, &load_instance(Path::new(path))?, opts)?,
+        [command, path, opts @ ..] if matches!(command.as_str(), "solve" | "timed-solve") => {
+            solve(&mut out, &load_instance(Path::new(path))?, opts, command == "timed-solve")?;
+        }
         [command, size, width, kind] if command == "generate" => {
             let model = generate(size.parse()?, width.parse()?, kind)?;
             out.write_all(write_instance(&model)?.as_bytes())?;
         }
-        _ => return Err("用法：round_probe solve <模型> [选项] | export <模型> | export-presolved <模型>（含默认缩放） | generate <维数> <每行项数> <类型>".into()),
+        _ => return Err("用法：round_probe solve|timed-solve <模型> [选项] | export <模型> | export-presolved <模型>（含默认缩放） | generate <维数> <每行项数> <类型>".into()),
     }
     out.flush()?;
     Ok(())
