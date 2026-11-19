@@ -308,7 +308,7 @@ python3 "$rounds/summarize_default_validation.py" \
 `compare_gurobi10.py` 从两份已归档基线选取冻结的 20 个原模型，每例单独启动一个
 Gurobi 10 进程。脚本只用 Python 标准库调用本机授权的官方 C 动态库，先检查主版本为 10，
 在优化之前把模型读回并核对列顺序、变量类型、界、目标方向与常数、右端和每项系数。
-脚本不会导入 Python 求解器包或保存许可证信息。
+许可证初始化由本机官方库完成。
 
 每例单线程、30 秒、2000000 节点，Gurobi 的 `MIPGap` 和 `MIPGapAbs` 均为 0，
 主动将 `IntFeasTol` 设为独立复核的绝对容差。`DualReductions`、`FeasibilityTol`、
@@ -335,4 +335,4 @@ python3.13 "$rounds/check_results.py" "$refs/external-baseline.jsonl" \
 
 原模型摘要、版本或模型读回不匹配会报告错误。若许可拒绝某个模型，记录对应错误码，
 保留其余模型结果，整轮命令返回非零。复核可加同一批模型的 MIC 实测记录，统一核对解、
-界及最优目标。Gurobi 每个模型只有一次外部观测，耗时不进入特性推广门禁。
+界及最优目标。Gurobi 每个模型只有一次外部观测。特性推广门禁采用独立的同源 MIC 配对。
