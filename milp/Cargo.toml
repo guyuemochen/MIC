@@ -36,6 +36,9 @@ certified_row_fallback = ["binary_coefficient_strengthening"]
 # 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
 risk_pivot_refresh = []
 
+# 稀疏冷启动第一阶段在有限主元分解失败后，有界重建一次并复核风险主元。
+sparse_phase1_recovery = []
+
 # 首次LU失败的基/换基证据捕获；只供显式诊断，不改变算法和默认路径。
 lu_failure_diagnostics = []
 
