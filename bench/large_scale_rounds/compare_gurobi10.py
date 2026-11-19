@@ -98,7 +98,7 @@ def check(library, env, code, operation):
 
 
 def configure(library, env, seconds, nodes):
-    expected_ints = {'OutputFlag': 0, 'Threads': 1, 'DualReductions': 0}
+    expected_ints = {'OutputFlag': 0, 'Threads': 1}
     expected_reals = {'TimeLimit': float(seconds), 'NodeLimit': float(nodes),
                       'MIPGap': 0.0, 'MIPGapAbs': 0.0, 'IntFeasTol': ABS_TOL}
     for setter, values in ((library.GRBsetintparam, expected_ints), (library.GRBsetdblparam, expected_reals)):
@@ -123,6 +123,7 @@ def effective_params(library, env, expected_ints, expected_reals):
         for name, value in expected.items():
             actual[name] = scalar(library, env, getter, env, name, kind)
             require(actual[name] == value, f'模型环境参数 {name} 与冻结值不同')
+    actual['DualReductions'] = scalar(library, env, library.GRBgetintparam, env, 'DualReductions', ct.c_int)
     for name in ('FeasibilityTol', 'OptimalityTol'):
         actual[name] = scalar(library, env, library.GRBgetdblparam, env, name, ct.c_double)
     return actual

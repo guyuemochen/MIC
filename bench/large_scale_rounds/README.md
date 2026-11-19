@@ -311,8 +311,8 @@ Gurobi 10 进程。脚本只用 Python 标准库调用本机授权的官方 C �
 脚本不会导入 Python 求解器包或保存许可证信息。
 
 每例单线程、30 秒、2000000 节点，Gurobi 的 `MIPGap` 和 `MIPGapAbs` 均为 0，
-整数容差与独立复核的绝对容差一致。`DualReductions=0` 保留不可行与无界的分别判定。
-实际参数、终态、可用解和界、优化阶段墙钟与进程峰值内存逐例记录。求解器之间的
+主动将 `IntFeasTol` 设为独立复核的绝对容差。`DualReductions`、`FeasibilityTol`、
+`OptimalityTol` 沿用默认，若返回 `INF_OR_UNBD` 则保留原始歧义终态。实际参数、终态、可用解和界、优化阶段墙钟与进程峰值内存逐例记录。求解器之间的
 浮点容差语义、节点和迭代记账存在差异。
 [Gurobi 10 参考手册](https://docs.gurobi.com/_/downloads/optimizer/en/10.0/pdf/)
 
