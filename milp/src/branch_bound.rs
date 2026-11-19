@@ -492,8 +492,11 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
-    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default())
+    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default(), None)
 }
+
+/// 单线程搜索接受新解时收到工作尺度向量。
+pub(crate) type WorkIncumbentObserver<'a> = Option<&'a dyn Fn(&[f64])>;
 
 /// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
 pub(crate) fn branch_and_bound_with_preserved(
@@ -503,6 +506,7 @@ pub(crate) fn branch_and_bound_with_preserved(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
     preserved: PreservedBinaryRows,
+    incumbent_observer: WorkIncumbentObserver<'_>,
 ) -> Result<BbResult> {
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
@@ -544,7 +548,7 @@ pub(crate) fn branch_and_bound_with_preserved(
         }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
-    sequential_bb(problem, opts, ctrl, tol, hooks, preserved)
+    sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer)
 }
 
 /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
@@ -556,6 +560,7 @@ fn sequential_bb(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
     mut preserved: PreservedBinaryRows,
+    incumbent_observer: WorkIncumbentObserver<'_>,
 ) -> Result<BbResult> {
     debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
     let start = Instant::now();
@@ -641,6 +646,9 @@ fn sequential_bb(
         };
         let lp_obj = sol.objective;
         let incumbent = if sol.status == LpStatus::Optimal {
+            if let Some(observe) = incumbent_observer {
+                observe(&sol.x);
+            }
             Some((sol.objective, sol.x))
         } else {
             None
@@ -694,6 +702,9 @@ fn sequential_bb(
         } else {
             None
         };
+        if let (Some(observe), Some(inc)) = (incumbent_observer, &extracted) {
+            observe(&inc.values);
+        }
         // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
         if let Some(h) = hooks {
             emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
@@ -739,7 +750,7 @@ fn sequential_bb(
         #[cfg(feature = "root_snapshot_restore")]
         let root_snapshot = simplex.snapshot();
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
@@ -750,7 +761,7 @@ fn sequential_bb(
             &tol,
             root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         // 子集和 MITM（R5-retry）：全 Eq + 全 Binary 类的最后手段——
         // round/dive（及一切 LP 驱动机制）在该类零产出（marketsplit 大规格
@@ -767,7 +778,7 @@ fn sequential_bb(
                 opts.mitm_windows,
                 &tol,
             ) {
-                maybe_update(sense, &mut incumbent, inc);
+                maybe_update(sense, &mut incumbent, inc, incumbent_observer);
             }
         }
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
@@ -970,7 +981,7 @@ fn sequential_bb(
     // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
     if opts.heuristics {
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
@@ -981,7 +992,7 @@ fn sequential_bb(
             &tol,
             root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         // —— 根节点 sub-MIP 启发式（方向 1，RENS 型受限子问题嵌套分支定界）——
         // 根 LP + 根割循环求解完成后运行：根 LP 解中已取整数值的整数变量按
@@ -1001,7 +1012,7 @@ fn sequential_bb(
             &tol,
             root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         if opts.mitm_windows > 0 && incumbent.is_none() {
             if let Some(inc) = heuristics::subset_sum_mitm(
@@ -1011,7 +1022,7 @@ fn sequential_bb(
                 opts.mitm_windows,
                 &tol,
             ) {
-                maybe_update(sense, &mut incumbent, inc);
+                maybe_update(sense, &mut incumbent, inc, incumbent_observer);
             }
         }
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
@@ -1147,6 +1158,7 @@ fn sequential_bb(
         opts,
         obj_integral,
         &mut incumbent,
+        incumbent_observer,
         &mut stack,
         &mut trail,
         &mut simplex,
@@ -1515,6 +1527,7 @@ fn sequential_bb(
             opts,
             obj_integral,
             &mut incumbent,
+            incumbent_observer,
             &mut stack,
             &mut trail,
             &mut simplex,
@@ -2567,6 +2580,7 @@ fn branch_or_close(
     opts: &BbOptions,
     obj_integral: bool,
     incumbent: &mut Option<(f64, Vec<f64>)>,
+    incumbent_observer: WorkIncumbentObserver<'_>,
     stack: &mut Vec<Pending>,
     trail: &mut Vec<TrailEntry>,
     simplex: &mut dyn LpEngine,
@@ -2599,7 +2613,7 @@ fn branch_or_close(
     let mut improved = false;
     if integral {
         if let Some(inc) = heuristics::round_and_check(problem, bounds, &sol.x, &tol) {
-            improved = maybe_update(problem.sense, incumbent, inc);
+            improved = maybe_update(problem.sense, incumbent, inc, incumbent_observer);
             check_passed = true;
         }
     }
@@ -2632,7 +2646,7 @@ fn branch_or_close(
                 opts.dive_max_fixes,
                 &tol,
             ) {
-                Some(inc) => maybe_update(problem.sense, incumbent, inc),
+                Some(inc) => maybe_update(problem.sense, incumbent, inc, incumbent_observer),
                 None => false,
             };
             state.controller.record(hit);
@@ -2760,7 +2774,12 @@ impl AdaptiveState {
 
 /// 严格更优才替换 incumbent（按原始 sense 方向；目标与取值均为 WP3 取整后
 /// 口径，防报不可行值）。返回是否发生了替换（自适应控制器的 hit 语义）。
-fn maybe_update(sense: Sense, incumbent: &mut Option<(f64, Vec<f64>)>, inc: Incumbent) -> bool {
+fn maybe_update(
+    sense: Sense,
+    incumbent: &mut Option<(f64, Vec<f64>)>,
+    inc: Incumbent,
+    incumbent_observer: WorkIncumbentObserver<'_>,
+) -> bool {
     if !inc.objective.is_finite() {
         return false; // 防御：非有限目标不入 incumbent
     }
@@ -2772,6 +2791,9 @@ fn maybe_update(sense: Sense, incumbent: &mut Option<(f64, Vec<f64>)>, inc: Incu
         },
     };
     if better {
+        if let Some(observe) = incumbent_observer {
+            observe(&inc.values);
+        }
         *incumbent = Some((inc.objective, inc.values));
     }
     better
@@ -3287,7 +3309,7 @@ fn parallel_entry(
         probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
         let mut probe_ctrl = *ctrl;
         probe_ctrl.threads = 1;
-        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default())?;
+        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default(), None)?;
         let budget_exhausted = probe.status == SolveStatus::LimitReached
             && !probe.gap_terminated
             && !probe.auto_degraded
@@ -5348,7 +5370,7 @@ mod tests {
         let mut pc = Pseudocosts::new(p.vars.len());
         branch_or_close(
             p, &p.integer_vars(), bounds, sol, tol(), opts, objective_is_integral(p),
-            &mut incumbent, &mut stack, &mut trail, engine, 1, 0.0, None,
+            &mut incumbent, None, &mut stack, &mut trail, engine, 1, 0.0, None,
             &mut pc, None, None, 0,
         );
         stack
@@ -6566,7 +6588,7 @@ mod binary_propagation_tests {
         assert_eq!(public.best_objective, Some(2.125));
         assert_eq!(public.stats.propagation.accepted_rows, 1, "公开入口只认证传入的强化LP行");
         let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts };
-        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved).unwrap_err();
+        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved, None).unwrap_err();
         assert!(error.to_string().contains("旧认证行只能移交"));
     }
 
@@ -6603,7 +6625,7 @@ mod binary_propagation_tests {
             let audit = LocalScopeAudit::new();
             let opts = BbOptions { root_cuts: false, local_cuts: true, lp_engine: engine,
                 binary_row_propagation: BinaryPropagationMode::On, ..BbOptions::default() };
-            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved).unwrap();
+            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved, None).unwrap();
             assert_eq!(result.status, SolveStatus::Optimal);
             assert_eq!(result.best_objective, Some(2331.0));
             assert!(result.stats.cuts > 0 && audit.count() > 0, "须实际退出局部割作用域");

@@ -23,6 +23,8 @@
 //! - 终检容差为契约固定安全网值（相对 1e-6、整数 1e-5），宽于 WP3 复核
 //!   阶梯，正常路径不会被误伤；超差说明数值已失真，宁可报错也不输出错解。
 
+use std::time::Instant;
+
 use crate::branch_bound::{self, BbOptions, BbStats, SearchControl, SearchHooks};
 use crate::error::{MilpError, Result};
 use crate::model::{Problem, RelOp, SolveStatus, Tolerances, VarType};
@@ -107,6 +109,33 @@ pub fn solve_controlled(
     ctrl: &SearchControl,
     hooks: Option<&SearchHooks>,
 ) -> Result<ControlledSolveReport> {
+    solve_controlled_impl(problem, opts, ctrl, hooks, None)
+}
+
+/// 单线程受控求解，并在搜索接受新解时报告接受时刻、原尺度目标和变量值。
+/// 回调只读。工作模型的解按原列顺序还原，最终报告仍按原模型终检。
+pub fn solve_controlled_with_incumbent(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    observe: &dyn Fn(Instant, f64, &[f64]),
+) -> Result<ControlledSolveReport> {
+    if ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("新解观测仅支持单线程".into()));
+    }
+    solve_controlled_impl(problem, opts, ctrl, hooks, Some(observe))
+}
+
+type IncumbentObserver<'a> = Option<&'a dyn Fn(Instant, f64, &[f64])>;
+
+fn solve_controlled_impl(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    incumbent_observer: IncumbentObserver<'_>,
+) -> Result<ControlledSolveReport> {
     problem.validate()?;
     let num_orig_vars = problem.vars.len();
 
@@ -141,20 +170,33 @@ pub fn solve_controlled(
         (pre_work, None, 0, crate::binary_propagation::PreservedBinaryRows::default())
     };
 
-    let bb = branch_bound::branch_and_bound_with_preserved(&work, &opts.bb, ctrl, opts.tol, hooks, preserved)?;
+    let restore_values = |reduced_x: Vec<f64>| -> Vec<f64> {
+        let x_pre = match &map {
+            Some(m) => presolve::postsolve(m, &reduced_x, num_orig_vars, &opts.tol),
+            None => reduced_x,
+        };
+        match &smap {
+            Some(s) => s.unscale_x(&x_pre),
+            None => x_pre,
+        }
+    };
+    let observe_work = |reduced_x: &[f64]| {
+        if let Some(observe) = incumbent_observer {
+            let accepted_at = Instant::now();
+            let x = restore_values(reduced_x.to_vec());
+            observe(accepted_at, problem.obj.eval(&x) + problem.obj_offset, &x);
+        }
+    };
+    let work_observer = incumbent_observer.map(|_| &observe_work as &dyn Fn(&[f64]));
+    let bb = branch_bound::branch_and_bound_with_preserved(
+        &work, &opts.bb, ctrl, opts.tol, hooks, preserved, work_observer,
+    )?;
 
     // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
     // 带回取值则不带解返回。
     let (objective, values) = match bb.best_values {
         Some(reduced_x) => {
-            let x_pre = match &map {
-                Some(m) => presolve::postsolve(m, &reduced_x, num_orig_vars, &opts.tol),
-                None => reduced_x,
-            };
-            let mut x = match &smap {
-                Some(s) => s.unscale_x(&x_pre),
-                None => x_pre,
-            };
+            let mut x = restore_values(reduced_x);
             if x.len() != num_orig_vars {
                 return Err(MilpError::Numerical(format!(
                     "解向量维数 {} 与原始变量数 {num_orig_vars} 不符",
@@ -285,6 +327,32 @@ mod tests {
             (a - b).abs() <= 1e-7 * (1.0 + b.abs()),
             "数值不符: {a} vs {b}"
         );
+    }
+
+    #[test]
+    fn incumbent_observer_recovers_original_columns_without_changing_result() {
+        let mut p = Problem::new("观测原尺度", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("y", VarType::Continuous).unwrap();
+        p.vars[1].lb = 4.0;
+        p.vars[1].ub = 4.0;
+        p.set_objective(vec![(0, 1.0), (1, 128.0)], 2.25).unwrap();
+        let opts = SolveOptions::default();
+        let ctrl = SearchControl::default();
+        let normal = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+        let start = Instant::now();
+        let events = std::cell::RefCell::new(Vec::new());
+        let observed = solve_controlled_with_incumbent(&p, &opts, &ctrl, None, &|time, objective, x| {
+            events.borrow_mut().push((time, objective, x.to_vec()));
+        }).unwrap();
+        let events = events.into_inner();
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|(time, _, _)| *time >= start));
+        assert_eq!(observed.report.status, normal.report.status);
+        assert_eq!(observed.report.values, normal.report.values);
+        let (_, goal, values) = events.last().unwrap();
+        assert_eq!(Some(*goal), normal.report.objective);
+        assert_eq!(values, &[1.0, 4.0]);
     }
 
     #[test]
