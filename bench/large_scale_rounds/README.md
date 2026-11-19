@@ -302,3 +302,37 @@ python3 "$rounds/summarize_default_validation.py" \
 
 结果和汇总都保留已有文件。汇总分别记录正确性与证明复现结论。任一未通过时返回 1，
 输入或输出无效时返回 2。即使运行器报告单例失败，只要矩阵完整，也应汇总已保存记录。
+
+## Gurobi 10 外部单次对照
+
+`compare_gurobi10.py` 从两份已归档基线选取冻结的 20 个原模型，每例单独启动一个
+Gurobi 10 进程。脚本只用 Python 标准库调用本机授权的官方 C 动态库，先检查主版本为 10，
+在优化之前把模型读回并核对列顺序、变量类型、界、目标方向与常数、右端和每项系数。
+脚本不会导入 Python 求解器包或保存许可证信息。
+
+每例单线程、30 秒、2000000 节点，Gurobi 的 `MIPGap` 和 `MIPGapAbs` 均为 0，
+整数容差与独立复核的绝对容差一致。`DualReductions=0` 保留不可行与无界的分别判定。
+实际参数、终态、可用解和界、优化阶段墙钟与进程峰值内存逐例记录。求解器之间的
+浮点容差语义、节点和迭代记账存在差异。
+[Gurobi 10 参考手册](https://docs.gurobi.com/_/downloads/optimizer/en/10.0/pdf/)
+
+使用 Python 3.11 或更新版本，从仓库根目录运行。`lib` 换成本机官方 Gurobi 10 动态库路径。微型探针分别用
+2 行列和 2001 行列的简单整数模型检查环境和常见规模限制，无需外部模型。
+
+```sh
+rounds=bench/large_scale_rounds
+refs="$rounds/results"
+out=$(mktemp -d)
+lib=/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib
+python3.13 "$rounds/compare_gurobi10.py" probe --library "$lib"
+python3.13 "$rounds/compare_gurobi10.py" run --library "$lib" \
+  --legacy-baseline "$refs/external-baseline.jsonl" \
+  --modern-baseline "$refs/miplib2017-baseline.jsonl" --output "$out/gurobi10.jsonl"
+python3.13 "$rounds/check_results.py" "$refs/external-baseline.jsonl" \
+  "$refs/miplib2017-baseline.jsonl" "$out/gurobi10.jsonl" \
+  --public-truth "$refs/miplib2017-sources.json" --output "$out/check.json"
+```
+
+原模型摘要、版本或模型读回不匹配会报告错误。若许可拒绝某个模型，记录对应错误码，
+保留其余模型结果，整轮命令返回非零。复核可加同一批模型的 MIC 实测记录，统一核对解、
+界及最优目标。Gurobi 每个模型只有一次外部观测，耗时不进入特性推广门禁。

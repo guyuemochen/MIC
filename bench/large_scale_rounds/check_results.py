@@ -11,6 +11,7 @@ import sys
 
 ABS_TOL = 1e-6
 REL_TOL = 1e-9
+EXTERNAL_SOLVERS = {'highs', 'scip', 'gurobi'}
 
 
 def finite(value):
@@ -198,7 +199,7 @@ def inspect_results(inputs, public_truth=None):
 
     for members in groups.values():
         external = [objective for _, row, objective, _ in members
-                    if row['solver'] in ('highs', 'scip') and row['status'] == 'optimal'
+                    if row['solver'] in EXTERNAL_SOLVERS and row['status'] == 'optimal'
                     and objective is not None]
         optimal = [objective for _, row, objective, _ in members
                    if row['status'] == 'optimal' and objective is not None]
