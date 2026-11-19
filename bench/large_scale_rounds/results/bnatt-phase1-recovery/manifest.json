@@ -1,0 +1,70 @@
+{
+  "candidate_source": "b234f514fd04fdf1a1230a79a6cdf904ed61afc6",
+  "source_frozen_for_probes": "ab838a9da81ca10d774db99e4beadcbe9edffdcb",
+  "milp_tree": "b8470651b19231d969d64bd2d73bd12a849a6529",
+  "production_source": "14d9a22770d6248e7d91e0e28d84eb2f70901588",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening",
+    "root_cut_recheck"
+  ],
+  "solver_arguments": [
+    "--early-stop",
+    "off",
+    "--probe-reuse",
+    "off",
+    "--binary-propagation",
+    "auto",
+    "--threads",
+    "1",
+    "--time-limit-secs",
+    "30",
+    "--node-limit",
+    "2000000"
+  ],
+  "binaries": {
+    "default": {
+      "filename": "round_probe_default",
+      "features": [],
+      "sha256": "7464f6c9850363309b7b6aa4ca525fe1d84a3214adf107c074f5352ee29bbb02"
+    },
+    "candidate": {
+      "filename": "round_probe_candidate",
+      "features": [
+        "sparse_phase1_recovery"
+      ],
+      "sha256": "d33fc66fb427f4f5776b80725856263ed56ab000ef2f7acd8b072ac4105ee1ce"
+    },
+    "default_traced": {
+      "filename": "round_probe_default_traced",
+      "features": [
+        "lu_failure_diagnostics",
+        "proof_profile"
+      ],
+      "sha256": "c2d4232950a8a63b38b8b311639aeba2b4bffc5641df7f9fd66aadd0209d3810"
+    },
+    "candidate_traced": {
+      "filename": "round_probe_candidate_traced",
+      "features": [
+        "sparse_phase1_recovery",
+        "lu_failure_diagnostics",
+        "proof_profile"
+      ],
+      "sha256": "7547b6c9eff8ba9924bd92dd19527b32ed19c28a6b3d21d878ae400a52a5b391"
+    }
+  },
+  "bnatt_input_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+  "assign_input_sha256": "1b83a7e574a5865c0e68d4fe9616a4fb4520a7ef8a5b112cc25667279299de37",
+  "canonical_original_model_sha256": "7d48f7d203013102ca06fca727c334b200c32d5cbbbfe87ccaa35a265bbd7359",
+  "live_default_capture_raw_sha256": "7d1db73306a309c172ca1ce4941f3ac7e5378300fda2a2ee5626c5f134f7d696",
+  "live_candidate_capture_raw_sha256": "7d1db73306a309c172ca1ce4941f3ac7e5378300fda2a2ee5626c5f134f7d696",
+  "tests_passed": {
+    "candidate_only_unit": 8,
+    "candidate_combined_unit": 9,
+    "milp_default": 539,
+    "milp_candidate_combined": 596,
+    "acceptance_candidate_release": 16,
+    "planner": 127
+  }
+}
