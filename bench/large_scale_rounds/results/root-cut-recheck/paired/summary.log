@@ -1,0 +1,39 @@
+{
+  "correctness_passed": true,
+  "variants": {
+    "base": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_base",
+      "binary_sha256": "8a1d3136025be85dab27f1c0f6d8d868be475c706686a62e90a6a30a3c87a22f",
+      "features": [],
+      "status_counts": {
+        "optimal": 27,
+        "limit_reached": 33
+      },
+      "proof_runs": 27,
+      "proved_models_in_all_reps": 9
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_candidate",
+      "binary_sha256": "8793828f775d43510b577967011a982a16520d016e6b33c0031fbe9c1760785b",
+      "features": [
+        "root_cut_recheck"
+      ],
+      "status_counts": {
+        "optimal": 30,
+        "limit_reached": 30
+      },
+      "proof_runs": 30,
+      "proved_models_in_all_reps": 10
+    }
+  },
+  "timing": {
+    "common_optimal_models": 9,
+    "eligible_models": 8,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.5634540934451613,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "paired_proof_losses": 0,
+  "rss_failures": 0
+}

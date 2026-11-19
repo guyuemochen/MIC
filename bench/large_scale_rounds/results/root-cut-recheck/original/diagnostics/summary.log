@@ -1,0 +1,2 @@
+env PYTHONPATH=/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds /opt/homebrew/bin/python3.13 /private/tmp/mic-r12.Cb7d5t4J/root-cut-diagnostics.py summarize --results /private/tmp/mic-r12.Cb7d5t4J/diagnostics/root_cut_recheck-diagnostics.jsonl --baseline /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl --output /private/tmp/mic-r12.Cb7d5t4J/diagnostics/root_cut_recheck-diagnostics-summary.json 
+{"independent_check_passed": true, "errors": []}

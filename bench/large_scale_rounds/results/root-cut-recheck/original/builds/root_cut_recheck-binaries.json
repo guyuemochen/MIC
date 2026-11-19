@@ -1,0 +1,12 @@
+{
+  "base": {
+    "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_base",
+    "features": []
+  },
+  "candidate": {
+    "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_candidate",
+    "features": [
+      "root_cut_recheck"
+    ]
+  }
+}

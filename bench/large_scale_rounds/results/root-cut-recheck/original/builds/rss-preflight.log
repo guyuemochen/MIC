@@ -1,0 +1,2 @@
+env PYTHONPATH=/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds /opt/homebrew/bin/python3.13 -c import\ sys\;\ from\ compare\ import\ invoke\,\ preflight_rss\;\ preflight_rss\(\)\;\ print\(invoke\(\[sys.executable\,\ \"-c\"\,\ \"print\(\\\"\{\}\\\"\)\"\]\,\ 10\,\ rss=True\)\) 
+{'peak_rss_bytes': 13844480}

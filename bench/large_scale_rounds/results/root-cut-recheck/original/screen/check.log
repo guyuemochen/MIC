@@ -1,0 +1,30 @@
+/opt/homebrew/bin/python3.13 /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/check_results.py /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-baseline.jsonl /private/tmp/mic-r12.Cb7d5t4J/screen/root_cut_recheck-screen.jsonl --public-truth /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json --output /private/tmp/mic-r12.Cb7d5t4J/screen/root_cut_recheck-screen-check.json 
+{
+  "passed": true,
+  "runs": 172,
+  "instances": 20,
+  "solutions_checked": 152,
+  "mic_with_external_optimum": 69,
+  "mic_bounds_checked": 66,
+  "errors": [],
+  "public_truth": {
+    "manifest": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json",
+    "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+    "source": "https://miplib.zib.de/",
+    "solution_file": {
+      "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+      "file": "miplib2017-v37.solu",
+      "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+      "release_date": "2026-09-24"
+    },
+    "matched_runs": 40,
+    "hashes_checked": 40,
+    "checked_runs": 40,
+    "optimal_runs": 35,
+    "infeasible_runs": 5,
+    "optimal_claims_checked": 6,
+    "bounds_checked": 31,
+    "feasible_objectives_checked": 24,
+    "skipped": {}
+  }
+}

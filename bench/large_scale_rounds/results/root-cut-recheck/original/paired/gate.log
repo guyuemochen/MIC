@@ -1,0 +1,156 @@
+/opt/homebrew/bin/python3.13 /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/gate_feature_trial.py /private/tmp/mic-r12.Cb7d5t4J/paired/root_cut_recheck-paired-summary.json --output /private/tmp/mic-r12.Cb7d5t4J/paired/root_cut_recheck-paired-gates.json 
+{
+  "feature": "root_cut_recheck",
+  "phase": "paired",
+  "time_limit_secs": 30,
+  "repetitions": 3,
+  "source": {
+    "source_commit": "5f228683858c8dac9bba15a775f76bd641bf93f1",
+    "source_tree": "c6846f32888cc3b3b0c0307dbe8f075056569c4e",
+    "binary_manifest_sha256": "15c64e8b5138fe9d53fbd84749872b374df071ef8f4ecb61cd48d3a001920f31",
+    "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O"
+  },
+  "variants": {
+    "base": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_base",
+      "binary_sha256": "8a1d3136025be85dab27f1c0f6d8d868be475c706686a62e90a6a30a3c87a22f",
+      "features": [],
+      "status_counts": {
+        "optimal": 27,
+        "limit_reached": 33
+      },
+      "proof_runs": 27,
+      "proved_models_in_all_reps": 9
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_candidate",
+      "binary_sha256": "8793828f775d43510b577967011a982a16520d016e6b33c0031fbe9c1760785b",
+      "features": [
+        "root_cut_recheck"
+      ],
+      "status_counts": {
+        "optimal": 30,
+        "limit_reached": 30
+      },
+      "proof_runs": 30,
+      "proved_models_in_all_reps": 10
+    }
+  },
+  "thresholds": {
+    "max_proof_losses": 0,
+    "rss_floor_bytes": 67108864,
+    "rss_base_multiplier": 2,
+    "max_case_ratio": 1.25,
+    "min_eligible_models": 3,
+    "min_base_median_secs": 0.05,
+    "max_geomean_ratio": 0.9,
+    "min_new_stable_proof_models": 2,
+    "max_geomean_ratio_with_new_proofs": 1.05
+  },
+  "gates": {
+    "correctness": true,
+    "no_proof_loss": true,
+    "rss": true,
+    "case_median": true,
+    "enough_eligible": true,
+    "performance": true
+  },
+  "overall_passed": true,
+  "eligible_for_default": true,
+  "correctness_errors": [],
+  "paired_proof_losses": 0,
+  "rss_failures": 0,
+  "timing": {
+    "common_optimal_models": 9,
+    "eligible_models": 8,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.5634540934451613,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "new_stable_proof_models": [
+    "p0201"
+  ],
+  "new_proof_evidence": {
+    "p0201": {
+      "pairs": [
+        {
+          "rep": 0,
+          "base": {
+            "status": "limit_reached",
+            "objective": 7615.0,
+            "bound": 7227.000000639117,
+            "nodes": 7365,
+            "lp_iterations": 940325,
+            "peak_rss_bytes": 11059200,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 17147,
+            "lp_iterations": 1508731,
+            "peak_rss_bytes": 9224192,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "base": {
+            "status": "limit_reached",
+            "objective": 7615.0,
+            "bound": 7227.000000639117,
+            "nodes": 7407,
+            "lp_iterations": 947197,
+            "peak_rss_bytes": 11010048,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 17147,
+            "lp_iterations": 1508731,
+            "peak_rss_bytes": 9175040,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "base": {
+            "status": "limit_reached",
+            "objective": 7615.0,
+            "bound": 7227.000000639117,
+            "nodes": 7425,
+            "lp_iterations": 949636,
+            "peak_rss_bytes": 10960896,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 17147,
+            "lp_iterations": 1508731,
+            "peak_rss_bytes": 9240576,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "common_optimal_timing": null,
+      "included_in_geomean": false,
+      "within_case_time_ratio": null
+    }
+  },
+  "input_summary": "/private/tmp/mic-r12.Cb7d5t4J/paired/root_cut_recheck-paired-summary.json"
+}
