@@ -15,7 +15,7 @@ import sys
 import time
 
 from check_results import close, finite, inspect_results, verify_solution
-from compare import invoke, require, sha
+from compare import invoke, require, result, sha
 from compare_gurobi10 import check, load_library, read_outcome, solve, tiny_model
 from run_probe import METADATA
 from run_proof_diagnostics import baseline_rows
@@ -73,6 +73,11 @@ def observe_gurobi(library, env, model, version, data):
     elapsed = time.perf_counter() - start
     check(library, env, code, '求解')
     row = read_outcome(library, env, model, version, data, elapsed)
+    # 保留异常候选给离线复核，单个坏向量不应中断余下回调。
+    for event in events:
+        if not finite(event['objective']):
+            event['objective'] = None
+        event['values'] = [value if finite(value) else None for value in event['values']]
     row.update(incumbent_events=events, callback_errors=callback_errors)
     return row
 
@@ -136,6 +141,8 @@ def check_events(model, row, skipped=None):
                       objective=event['objective'], values=event['values'])
         goal = verify_solution(model, claims, candidate_errors.append)
         if goal is None or candidate_errors:
+            if not candidate_errors:
+                candidate_errors.append('缺少可复核的解与目标')
             rejected.append(dict(event=index, elapsed_secs=seen, errors=candidate_errors[:8],
                                  violations=len(candidate_errors)))
             continue
@@ -215,7 +222,12 @@ def run(args):
                 if (rep + CASES.index(name)) % 2:
                     commands.reverse()
                 for order, (solver, command) in enumerate(commands):
-                    row = invoke(command, args.seconds + 30)
+                    try:
+                        row = invoke(command, args.seconds + 30)
+                    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                        row = result('error', type(error).__name__, None, None, None, None,
+                                     -1, -1, version if solver == 'gurobi' else source_commit)
+                        row['error'] = str(error)
                     merged = dict(reference, **row)
                     merged.update(solver=solver, variant='drayage-timing', rep=rep, order=order,
                                   case_order=case_order, time_limit_secs=args.seconds, node_limit=NODES,
@@ -258,8 +270,8 @@ def verify(path, truth):
                 status=row['status'], raw_status=row['raw_status'], return_secs=elapsed,
                 time_limit_secs=cap, final_objective=row['objective'], final_bound=row['bound'],
                 proof_return_upper_secs=row['proof_elapsed_secs'],
-                proof_right_censored_at_secs=min(elapsed, cap) if row['status'] == 'limit_reached' else None,
-                first_right_censored_at_secs=(min(elapsed, cap) if first is None and
+                proof_right_censored_at_secs=min(elapsed, cap) if row['status'] == 'limit_reached' and finite(elapsed) else None,
+                first_right_censored_at_secs=(min(elapsed, cap) if first is None and finite(elapsed) and
                                               row['status'] == 'limit_reached' else None),
                 **observed,
             ))
