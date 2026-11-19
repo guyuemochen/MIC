@@ -247,7 +247,7 @@ mod tests {
             rhs,
             alive: true,
         };
-        let detect = |group, short, types, lb, ub| {
+        let detect = |group, short, types: &[VarType], lb: &[f64], ub: &[f64]| {
             zero_fixes(
                 &[group, short],
                 types,
