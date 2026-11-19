@@ -27,7 +27,8 @@
 才固定假设取 1 的列为 0。余量在当前工作行尺度上覆盖单纯形、取整复核和终检形式的
 误差，并给贴界留出余量。完整求解后仍在原模型空间独立复核。
 
-在干净源码树根目录构建两组库与正式探针。以下命令将产物写到临时目录。正式定点的
+在干净源码树根目录构建两组库与正式探针。核查和定点脚本使用 Python 3.11 或更新版本。
+以下命令将产物写到临时目录。正式定点的
 输入使用现有的 `miplib2017-baseline.jsonl` 与官方来源清单，其中归档模型及原
 `.milp` 路径须可读且哈希吻合。
 
@@ -66,9 +67,15 @@ for case in drayage-100-23 drayage-25-23; do
   python3 "$rounds/binary_mutex_drayage_audit.py" "$model_dir/$case.milp" \
     "$audit/$case-base.milp" "$audit/$case-base.tsv" "$audit/$case-candidate.tsv"
 done
-python3 "$rounds/run_binary_mutex_point.py" --source "$source" \
+python3.13 "$rounds/run_binary_mutex_point.py" --source "$source" \
   --binaries "$audit/binaries.json" \
   --reference "$rounds/results/miplib2017-baseline.jsonl" \
   --public-truth "$rounds/results/miplib2017-sources.json" \
   --output "$audit/point.jsonl" --gate "$audit/gate.json"
 ```
+
+## 定点结果
+
+两例的 30 秒对偶下界均严格改善，按冻结判定通过定点。四次求解均在根节点诚实
+限时，尚无整数可行解。两例来自同一家族，特性继续默认关闭。原始字段、固定集、
+独立检查与复现说明见 [定点归档](results/binary-mutex-row-fixing/README.md)。

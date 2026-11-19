@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "correctness": {
+    "passed": true,
+    "runs": 28,
+    "instances": 8,
+    "solutions_checked": 16,
+    "mic_with_external_optimum": 7,
+    "mic_bounds_checked": 4,
+    "errors": [],
+    "public_truth": {
+      "manifest": "/tmp/mic-binary-mutex-row-fixing/bench/large_scale_rounds/results/miplib2017-sources.json",
+      "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+      "source": "https://miplib.zib.de/",
+      "solution_file": {
+        "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+        "file": "miplib2017-v37.solu",
+        "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+        "release_date": "2026-09-24"
+      },
+      "matched_runs": 28,
+      "hashes_checked": 28,
+      "checked_runs": 28,
+      "optimal_runs": 25,
+      "infeasible_runs": 3,
+      "optimal_claims_checked": 6,
+      "bounds_checked": 21,
+      "feasible_objectives_checked": 16,
+      "skipped": {}
+    }
+  },
+  "failures": [],
+  "improvements": {
+    "drayage-100-23": {
+      "new_optimal": false,
+      "new_incumbent": false,
+      "stronger_bound": true
+    },
+    "drayage-25-23": {
+      "new_optimal": false,
+      "new_incumbent": false,
+      "stronger_bound": true
+    }
+  }
+}

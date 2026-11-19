@@ -1,0 +1,13 @@
+b4b2d1000ec34ae68b4e91b53c28442892e2c7f1
+rustc 1.97.0 (2d8144b78 2026-07-07)
+binary: rustc
+commit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3
+commit-date: 2026-07-07
+host: aarch64-apple-darwin
+release: 1.97.0
+LLVM version: 22.1.6
+Cargo 额外特性 --features binary_mutex_row_fixing
+   Compiling milp v0.1.0 (/private/tmp/mic-binary-mutex-row-fixing/milp)
+    Finished `release` profile [optimized] target(s) in 5.43s
+7838c0cf04047fda3b7a52c3c19637edb7a4baa087441acf1507c833d2680d60  /tmp/mic-binary-mutex-point.b4b2d10.uecwxbUh/round_probe_candidate
+a5bfed01a2c220d6e1b1d38a00dd23b953a1f7b3c1d4d70fee7799aae31ac2c5  /tmp/mic-binary-mutex-point.b4b2d10.uecwxbUh/presolve_candidate
