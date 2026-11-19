@@ -1,0 +1,56 @@
+{
+  "source_commit": "0cd922a38d287af51fa46ee6983389b8deef0ffe",
+  "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14 (main, Jun 10 2026, 12:24:04) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "freeze_command": [
+    "/opt/homebrew/opt/python@3.13/bin/python3.13",
+    "bench/large_scale_rounds/compare_drayage_timing.py",
+    "run",
+    "--mic",
+    "milp/target/release/examples/round_probe",
+    "--baseline-mic",
+    "/tmp/mic-cover-search.KviHZw/old/milp/target/release/examples/round_probe",
+    "--baseline-revision",
+    "f85646d",
+    "--library",
+    "/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib",
+    "--instances",
+    "/private/tmp/mic-rounds-miplib2017",
+    "--output",
+    "bench/large_scale_rounds/results/drayage-cover-search",
+    "--repetitions",
+    "6"
+  ],
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "ref_manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+  "baseline_sha256": "d084c6b5a972d27686ddee7d5efa698c8eb5879a56b84ae39c26808c75d545b6",
+  "frozen_at_utc": "2026-11-19T10:00:46.100882+00:00",
+  "library": "/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib",
+  "library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "mic_binary": "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/round_probe",
+  "mic_binary_sha256": "c22d88c31bd5a80b668603e4beb42e6f0bfbe1ee73b4e5ac70b8e7f1293e22ea",
+  "gurobi_version": "10.0.3",
+  "benchmark_sha256": "b151d16bc7b5ec88331ae7554cf4e33ccbaf455145f3e1bf56f403a0c400f9f2",
+  "instances_directory": "/private/tmp/mic-r12.Cb7d5t4J/modern-mps",
+  "time_limit_secs": 30,
+  "node_limit": 2000000,
+  "threads": 1,
+  "mip_gap": 0,
+  "mip_gap_abs": 0,
+  "reps": 6,
+  "input_hashes": {
+    "drayage-100-23": {
+      "model_sha256": "53fe9a4b084d24f18b4fd64d3ca0add5160356a23e7969dd7fdb933568021754",
+      "milp_sha256": "3288c0dab54accd6dd66e4d279597affc1105855da250da79ada3905b3287aa6",
+      "mps_sha256": "507cd6f4a345747f1b3a55c62fb156062068e9f9dad045ee37d539e611fd931a"
+    },
+    "drayage-25-23": {
+      "model_sha256": "62a129f70d8cf7a075d3a0f9b55152127605e3dc04cf208caf0b3e7eae2a7de2",
+      "milp_sha256": "8f480f543bf6f63ff8dde50454f7ed9d816afa53d4f268e6bf06f76dd506dfa6",
+      "mps_sha256": "2d4475840547b7b7253ced6a5e692cd3fc2351799f956cee7bac772015fb201e"
+    }
+  },
+  "baseline_mic": "/private/tmp/mic-cover-search.KviHZw/old/milp/target/release/examples/round_probe",
+  "baseline_mic_sha256": "c7bb9c3514efe0ecacaaca85de8fb08184fa9acb10bf572182d8936e5075b10d",
+  "baseline_revision": "f85646dfcc72a15f04fd018fc59ebb36826e7076"
+}

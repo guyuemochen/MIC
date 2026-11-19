@@ -4034,3 +4034,40 @@ Gurobi 10.0.3 在同机同模型预算下完成固定 20 例的每例一次外�
 35 和 37 个任务，目标为 574298.822022 和 543511.027279。两求解器最终均承运全部任务。
 12 次终态与 39 次解回调均通过独立核验。第一遍 MIC 最优解在两例分别使用 32 和 30 条
 路线，逐站时刻、原变量和复算命令见[本轮实测归档](../bench/large_scale_rounds/results/drayage-route-timing/README.md)。
+
+## 41. 两例运输模型的证优耗时分别下降 49% 和 54%
+
+在同一台机器上重新构建旧版 MIC（`f85646d`）和新版（`0cd922a`），与本机 Gurobi 10.0.3
+各跑六遍。每例轮换三者的全部六种先后次序，单线程、30 秒、200 万节点、零目标间隙。
+时间从原模型载入后进入求解器开始，以毫秒计，取六遍中位数。首解为首次通过原模型核验
+的解回调，证优为同次求解返回最优状态的时间。
+
+| 模型 | 旧版 MIC 首解 | 新版 MIC 首解 | Gurobi 首解 | 旧版 MIC 证优 | 新版 MIC 证优 | Gurobi 证优 |
+|---|---:|---:|---:|---:|---:|---:|
+| drayage-100-23 | 0.840 | 0.845 | 1.407 | 14.89 | 7.62 | 47.03 |
+| drayage-25-23 | 0.856 | 0.811 | 1.358 | 87.59 | 40.26 | 376.69 |
+
+每条运输路线只涉及少数任务。新版用已有的稀疏单纯形求路线覆盖的线性松弛，再用原系数
+精确复核下界。搜索时先检查代价最低的组合，逐层放宽上界。在当前层内，如果互换两项
+任务后，每条路线都找得到覆盖相应任务、占用相同站点数且代价相同的路线，搜索就能
+复用已有结果。用于还原原模型解的任务和路线编号仍保留。100-23 两版均搜索 41 个节点，
+收益主要来自松弛计算。25-23 则从 234,034 个节点降到 102,664 个，六遍计数一致。
+
+36 次求解均与 MIPLIB 公布的最优值吻合，两个目标分别为 103333.874073 和 101282.647018。
+两版 MIC 的首解均承运全部 65 项任务，Gurobi 的首解分别承运 35 和 37 项，三者的最终解均
+承运 65 项。102 次解回调全部通过原模型核验。另将新版节点上限分别设为 1 和正常证优所需
+节点数减 1，四次均保留可行解并返回 `LimitReached`。其中 25-23 在 102,663 个节点时已有
+最优目标，仍正确报告证明尚未完成。
+
+[逐遍核验和中位数](../bench/large_scale_rounds/results/drayage-cover-search/verified.json)、
+[原始向量和时间记录](../bench/large_scale_rounds/results/drayage-cover-search/timings.jsonl.gz)、
+[源码版本、二进制摘要和运行参数](../bench/large_scale_rounds/results/drayage-cover-search/freeze.json)。
+从仓库根目录可离线复核，解压文件放在归档目录下，以便找到相对路径指向的原模型。
+
+```sh
+rounds=bench/large_scale_rounds
+run="$rounds/results/drayage-cover-search"
+gzip -dc "$run/timings.jsonl.gz" > "$run/timings.jsonl"
+python3.13 "$rounds/compare_drayage_timing.py" verify "$run/timings.jsonl"
+python3.13 "$rounds/results/drayage-route-timing/decode_routes.py" "$run/timings.jsonl" mic
+```
