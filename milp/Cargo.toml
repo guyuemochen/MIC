@@ -15,6 +15,9 @@ sparse_row_products_stats = ["sparse_row_products"]
 # 真实生产路径的证明进展诊断，默认不编译。
 proof_profile = []
 
+# 根割小批收敛后复核尚未施加候选的违反度，默认关闭。
+root_cut_recheck = []
+
 # 根预割启发式后恢复完整最优基快照，默认关闭的性能试验。
 root_snapshot_restore = []
 

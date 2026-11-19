@@ -3829,11 +3829,8 @@ mod tests {
         assert_eq!(budget.bound, wall.bound);
     }
 
-    /// （W6）树内局部割：mknap-3x100（多维背包类，类门控命中）默认开启 ⇒
-    /// 触发（cuts > 根割基线 58）、双跑全部行为字段逐字节确定、目标恒同
-    /// 已知最优 2331；`local_cuts = false` ⇒ 与关闭路径逐字节一致
-    /// （根割基线 S14-第一步重钉 57→58（小批增量施加，见测试内注释）；
-    /// 历史基线 57 cuts / 2,120 节点 = W6 前，回归钉）。
+    /// （W6）树内局部割：mknap-3x100 默认触发，双跑行为字段确定，最优目标
+    /// 为 2331。关闭局部割后，分别核对默认和 R12 根割路径的回归计数。
     #[test]
     fn local_cuts_fire_deterministically_and_toggle_restores() {
         // 历史W6节点/割计数只测局部割；传播与真实割出域的组合另有专项覆盖。
@@ -3844,6 +3841,8 @@ mod tests {
         );
         let problem = crate::instance::load_instance(std::path::Path::new(&path))
             .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
+        // 独立根割循环同时核对计数、记录清单和实际行数。
+        let root_cut_count = if cfg!(feature = "root_cut_recheck") { 43 } else { 58 };
         let on1 = branch_and_bound(&problem, &legacy, tol()).unwrap();
         let on2 = branch_and_bound(&problem, &legacy, tol()).unwrap();
         assert_eq!(on1.status, SolveStatus::Optimal);
@@ -3853,11 +3852,12 @@ mod tests {
         assert_eq!(on1.stats.lp_iterations, on2.stats.lp_iterations);
         assert_eq!(on1.stats.cuts, on2.stats.cuts);
         assert_eq!(on1.bound, on2.bound);
-        // 触发：局部割计入 cuts（根割基线 58 → 更高）。
+        // 启用局部割后，割数应超过对应的根割基线。
         assert!(
-            on1.stats.cuts > 58,
-            "局部割应触发（cuts = {}，根割基线 58）",
-            on1.stats.cuts
+            on1.stats.cuts > root_cut_count,
+            "局部割应触发（cuts = {}，根割基线 {}）",
+            on1.stats.cuts,
+            root_cut_count
         );
         // 开关：关闭后无局部割（cuts = 根割基线 58）且目标恒同；对照
         // adaptive-on 口径（探针/CLI 默认）与 pre-W6 基线 2,120 节点逐位
@@ -3876,7 +3876,8 @@ mod tests {
             tol(),
         )
         .unwrap();
-        assert_eq!(off.stats.cuts, 58, "关闭后只剩根割");
+        assert_eq!(off.status, SolveStatus::Optimal);
+        assert_eq!(off.stats.cuts, root_cut_count, "关闭后只剩根割");
         assert_close(off.best_objective.unwrap(), 2331.0);
         let off_auto = branch_and_bound_controlled(
             &problem,
@@ -3892,7 +3893,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(off_auto.stats.cuts, 58); // S14-第一步重钉（57→58），见上
+        assert_eq!(off_auto.status, SolveStatus::Optimal);
+        assert_eq!(off_auto.stats.cuts, root_cut_count);
         // raw（无 presolve）+ adaptive-on 的 pre-W6 基线 = 2,106 节点 /
         // 24,072 迭代（HEAD 实测钉；探针口径的 2,120 是 presolve 重建后
         // 的问题——与本测试的 raw 路径无关）。
@@ -3913,7 +3915,12 @@ mod tests {
         // 17,258→20,160 迭代（实测钉，双跑逐位一致；目标恒 2331。树形对
         // 割集混沌敏感为既有观察（S13-B 遗留②同性质），净性能裁决按 S14
         // 任务书的算例配对 A/B 守门，本测试只钉确定性与目标恒同。））
-        assert_eq!(off_auto.stats.nodes, 1719, "S14-第一步小批施加后的 raw 基线");
+        let (expected_nodes, expected_iterations) = if cfg!(feature = "root_cut_recheck") {
+            (2152, 20958)
+        } else {
+            (1719, 20160)
+        };
+        assert_eq!(off_auto.stats.nodes, expected_nodes, "对应根割选择的独立双跑基线");
         // 快照试验只消除了重复的冷根LP工作，节点/割/目标基线仍保持上面的严格断言。
         // 独立重解原根松弛给出应扣工作量，不能把观测到的总计差直接改成新基线。
         #[cfg(feature = "root_snapshot_restore")]
@@ -3925,8 +3932,26 @@ mod tests {
         };
         #[cfg(not(feature = "root_snapshot_restore"))]
         let saved_root_iterations = 0;
-        assert_eq!(off_auto.stats.lp_iterations, 20160 - saved_root_iterations);
+        assert_eq!(off_auto.stats.lp_iterations, expected_iterations - saved_root_iterations);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
+        #[cfg(feature = "root_cut_recheck")]
+        for (expected, adaptive) in [(&off, false), (&off_auto, true)] {
+            let mut repeated = branch_and_bound_controlled(
+                &problem,
+                &BbOptions { local_cuts: false, ..legacy },
+                &SearchControl { adaptive_heuristics: adaptive, ..SearchControl::default() },
+                tol(),
+                None,
+            )
+            .unwrap();
+            let mut expected = expected.clone();
+            assert_eq!(repeated.status, SolveStatus::Optimal);
+            assert_close(repeated.best_objective.unwrap(), 2331.0);
+            // 仅排除墙钟，完整结果包含解、界、全部行为计数和终止标志。
+            expected.stats.time_ms = 0;
+            repeated.stats.time_ms = 0;
+            assert_eq!(format!("{expected:?}"), format!("{repeated:?}"));
+        }
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为
