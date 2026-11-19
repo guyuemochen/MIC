@@ -9,8 +9,14 @@ use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    let [input, output] = paths.as_slice() else {
-        return Err(Error::new(ErrorKind::InvalidInput, "需要输入模型与缩减模型路径").into());
+    let (input, output) = match paths.as_slice() {
+        [input] => (input, None),
+        [input, output] => (input, Some(output)),
+        _ => {
+            return Err(
+                Error::new(ErrorKind::InvalidInput, "需要输入模型，可另给缩减输出路径").into(),
+            )
+        }
     };
     let problem = load_instance(input)?;
     problem.validate()?;
@@ -20,7 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let presolve_start = Instant::now();
     let (reduced, map) = presolve(&scaled, &Tolerances::default())?;
     let elapsed_presolve = presolve_start.elapsed();
-    std::fs::write(output, write_instance(&reduced)?)?;
+    if let Some(output) = output {
+        std::fs::write(output, write_instance(&reduced)?)?;
+    }
     eprintln!(
         "{} {}列/{}行 → {}列/{}行 固定{} 聚合{} 缩放{:.3}ms 预处理{:.3}ms",
         input.display(),
