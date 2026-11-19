@@ -1,0 +1,30 @@
+{
+  "capture_sha256": "7d1db73306a309c172ca1ce4941f3ac7e5378300fda2a2ee5626c5f134f7d696",
+  "replayed_pivots": 64,
+  "prior_bases_proven_nonsingular": null,
+  "prime": null,
+  "row_weights": {
+    "27": -2,
+    "102": 1,
+    "106": -1,
+    "496": -4,
+    "508": 2,
+    "810": -2,
+    "818": -2,
+    "1734": -4,
+    "1740": -4,
+    "1744": -4,
+    "1990": 1,
+    "1992": -1,
+    "2228": 2,
+    "2998": 2,
+    "3002": 2,
+    "3676": 2,
+    "3678": 2,
+    "4068": 2,
+    "4076": 2
+  },
+  "departing_column_exact_product": "7205759403792785/18014398509481984",
+  "exact_zero_products_after_transition": 5058,
+  "exact_entering_pivot": 0
+}

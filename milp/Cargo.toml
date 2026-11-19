@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [features]
-default = ["sparse_row_products", "binary_coefficient_strengthening"]
+default = ["sparse_row_products", "binary_coefficient_strengthening", "root_cut_recheck"]
 # 诊断计时完全独立于求解决策，默认不编译。
 sparse_profile = []
 # 受影响行累加通过独立配对门槛，默认开启；诊断访问计数仍单独编译。
@@ -15,7 +15,7 @@ sparse_row_products_stats = ["sparse_row_products"]
 # 真实生产路径的证明进展诊断，默认不编译。
 proof_profile = []
 
-# 根割小批收敛后复核尚未施加候选的违反度，默认关闭。
+# 根割小批收敛后复核尚未施加候选的违反度，通过独立配对门槛，默认开启。
 root_cut_recheck = []
 
 # 二元互斥结合短行活动度固定，默认关闭的预处理试验。
