@@ -1,6 +1,6 @@
 //! 保守预处理与还原（WP3 实现）。
 //!
-//! 规则五类且可证明安全，每轮严格按 R1→R2→R3→R4→R5 顺序施加，禁止重排
+//! 五条生产规则每轮按 R1→R2→R3→R4→R5 顺序施加，禁止重排
 //! （反例：整数变量的非整数单点区间 [2.3,2.3] 若先被 R2 固定列规则处理，
 //! 会把整数变量固定在非整数值 2.3，终检报 `Err(Numerical)` 而非正确的
 //! Infeasible；先 R1 取整则 lb←3 > ub←2 得空界，Simplex 判 Infeasible）：
@@ -16,6 +16,8 @@
 //!   Infeasible。
 //! - R4：单系数行 a·x_j (op) rhs：换算为 x_j 的界（a<0 时翻转 op，Eq 双侧），
 //!   与现界取交集（只收紧）后删行；整数变量交集后再按 R1 取整。
+//!   默认关闭的 `binary_mutex_row_fixing` 在此之后用认证互斥组和短行
+//!   活动度排除二元变量取 1，批量替换被固定为 0 的列。
 //! - R5（W5）：等价二元列聚合——全部存活行中系数向量相同**且目标系数相等**
 //!   的 m 个 Binary 列聚合为单个 Integer 变量 x'∈[0,m]（行/目标只看组内
 //!   总和，双射保最优；postsolve 把 x'=t 还原为组内前 t 个成员置 1）。
@@ -37,6 +39,9 @@
 
 use crate::error::{MilpError, Result};
 use crate::binary_propagation::PreservedBinaryRows;
+
+#[cfg(feature = "binary_mutex_row_fixing")]
+mod binary_mutex;
 use crate::model::{Constraint, LinearExpr, Problem, RelOp, Tolerances, VarType, Variable};
 
 /// 预处理轮数上限（轮内无 reductions 即提前停止）。
@@ -129,16 +134,10 @@ fn strengthen_negative_binary_coefficients(
                 valid = false;
                 break;
             }
-            let product = a * bound;
-            if !product.is_finite() {
+            // 乘积及每次求和向外扩，包含真实实数活动度。
+            let Some((lo, hi)) = outward_product(a, bound) else {
                 valid = false;
                 break;
-            }
-            // 乘零精确；其他乘积及每次求和各向外扩一格，包含真实实数活动度。
-            let (lo, hi) = if a == 0.0 || bound == 0.0 {
-                (0.0, 0.0)
-            } else {
-                (next_down(product), next_up(product))
             };
             lower = next_down(lower + lo);
             upper = next_up(upper + hi);
@@ -181,7 +180,7 @@ fn strengthen_negative_binary_coefficients(
 }
 
 /// 有限双精度数的相邻外侧浮点数；兼容尚未提供 next_up/down 的工具链。
-#[cfg(feature = "binary_coefficient_strengthening")]
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
 fn next_up(value: f64) -> f64 {
     if value.is_nan() || value == f64::INFINITY {
         value
@@ -192,9 +191,23 @@ fn next_up(value: f64) -> f64 {
     }
 }
 
-#[cfg(feature = "binary_coefficient_strengthening")]
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
 fn next_down(value: f64) -> f64 {
     -next_up(-value)
+}
+
+/// 乘零精确。其它有限乘积包在相邻浮点数之间。
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
+fn outward_product(a: f64, b: f64) -> Option<(f64, f64)> {
+    let rounded = a * b;
+    if !rounded.is_finite() {
+        return None;
+    }
+    if a == 0.0 || b == 0.0 {
+        Some((0.0, 0.0))
+    } else {
+        Some((next_down(rounded), next_up(rounded)))
+    }
 }
 
 /// 变量类型是否要求取整（Integer/Binary）。
@@ -407,6 +420,32 @@ pub(crate) fn presolve_for_solve(
             row.alive = false;
             dropped_rows.push(row.origin);
             reductions += 1;
+        }
+
+        #[cfg(feature = "binary_mutex_row_fixing")]
+        {
+            let zero_fixes = binary_mutex::zero_fixes(&rows, &types, &var_alive, &lb, &ub, *tol);
+            let mut fixed_this_round = 0;
+            for (j, is_fixed) in zero_fixes.iter().copied().enumerate() {
+                if is_fixed {
+                    var_alive[j] = false;
+                    fixed.push((j, 0.0));
+                    fixed_this_round += 1;
+                }
+            }
+            if fixed_this_round > 0 {
+                // 零代入不改变右端或目标常数。共享一次行和目标扫描，沿用 R2 的还原记录。
+                for row in rows.iter_mut().filter(|row| row.alive) {
+                    row.terms.retain(|&(j, _)| !zero_fixes[j]);
+                }
+                obj_terms.retain(|&(j, _)| !zero_fixes[j]);
+                reductions += fixed_this_round;
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::record("presolve_binary_mutex", vec![
+                    ("round", _round.into()),
+                    ("fixed_zero", fixed_this_round.into()),
+                ]);
+            }
         }
 
         // —— R5（W5）：等价二元列聚合（duplicate column aggregation）——

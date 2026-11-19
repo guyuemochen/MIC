@@ -18,6 +18,9 @@ proof_profile = []
 # 根割小批收敛后复核尚未施加候选的违反度，通过独立配对门槛，默认开启。
 root_cut_recheck = []
 
+# 二元互斥结合短行活动度固定，默认关闭的预处理试验。
+binary_mutex_row_fixing = []
+
 # 根预割启发式后恢复完整最优基快照，默认关闭的性能试验。
 root_snapshot_restore = []
 
