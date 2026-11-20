@@ -1,4 +1,4 @@
-//! 基础启发式（只供应 incumbent，不影响正确性）（WP3 实现）。
+//! 基础启发式与二元等式的折半枚举。
 //!
 //! - [`round_and_check`]：整数变量取最近整数并夹回界，经与 integrality 联动
 //!   的容差阶梯复核后评估目标。
@@ -11,10 +11,14 @@
 //!   全变量半枚举；n ≤ 84 窗口半枚举 + LCG 确定性窗口），脱离 LP 信息源
 //!   （round/dive/泵均锚定 LP 顶点邻域，在 market-split 类上零产出——
 //!   planted 解与 LP 取整点汉明距离 ~15，LP 驱动机制原理上跨不过）。
+//!   顺序根搜索还可要求全列匹配检查所有目标，只有通过精确性检查才给出证明。
+
+use std::hash::{DefaultHasher, Hasher};
+use std::time::Instant;
 
 use crate::branch_bound::{is_integral, select_branch_var};
 use crate::model::{Problem, RelOp, Sense, Tolerances, VarType};
-use crate::simplex::{Bounds, LpStatus};
+use crate::simplex::{Bounds, LpSolution, LpStatus};
 use crate::simplex_sparse::LpEngine;
 
 /// 启发式得到的可行整数解。
@@ -24,6 +28,43 @@ pub struct Incumbent {
     pub objective: f64,
     /// 结构变量取值（整数变量已取整）。
     pub values: Vec<f64>,
+}
+
+/// 启发式共享的剩余 LP 工作预算；不用于数学剪枝，不修改引擎的时限或迭代提示。
+///
+/// 旧特性在resolve边界扣累计迭代，允许超支一次调用；新增
+/// root_heuristic_work_limit才改为调用内部的工作步（每次换基/界翻转），
+/// 不改变原迭代统计。两种路径都计失败、反向重试和嵌套节点；均不保证
+/// 给主搜索留下固定墙钟时间，重构等操作不是可抢断的工作步。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HeuristicWorkBudget {
+    pub remaining_work: u64,
+    pub lp_calls: u64,
+}
+
+/// 在实际调用边界统一记账，避免快照恢复或引擎重建影响跨启发式余额。
+fn resolve_with_work_budget(
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    budget: &mut Option<&mut HeuristicWorkBudget>,
+) -> Option<LpSolution> {
+    let Some(work) = budget.as_deref_mut() else {
+        return Some(simplex.resolve(bounds));
+    };
+    if work.remaining_work == 0 || work.lp_calls == 0 {
+        return None;
+    }
+    #[cfg(feature = "root_heuristic_work_limit")]
+    let sol = simplex.resolve_with_work_limit(bounds, &mut work.remaining_work);
+    #[cfg(not(feature = "root_heuristic_work_limit"))]
+    let sol = {
+        let before = simplex.iterations();
+        let sol = simplex.resolve(bounds);
+        work.remaining_work = work.remaining_work.saturating_sub(simplex.iterations().saturating_sub(before));
+        sol
+    };
+    work.lp_calls -= 1;
+    Some(sol)
 }
 
 /// 简单取整 + 可行性复核。
@@ -118,6 +159,19 @@ pub fn dive(
     max_fixes: usize,
     tol: &Tolerances,
 ) -> Option<Incumbent> {
+    dive_with_work_budget(problem, simplex, bounds, lp_x, max_fixes, tol, None)
+}
+
+/// 带可选共享工作预算的潜水；None 严格保留旧调用顺序，耗尽时复核最后已知点。
+pub(crate) fn dive_with_work_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    lp_x: &[f64],
+    max_fixes: usize,
+    tol: &Tolerances,
+    mut budget: Option<&mut HeuristicWorkBudget>,
+) -> Option<Incumbent> {
     let n = problem.vars.len();
     if lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
         return None;
@@ -162,7 +216,9 @@ pub fn dive(
         dive_bounds.lb[j] = target;
         dive_bounds.ub[j] = target;
         fixes += 1;
-        let sol = simplex.resolve(&dive_bounds);
+        let Some(sol) = resolve_with_work_budget(simplex, &dive_bounds, &mut budget) else {
+            return round_and_check(problem, bounds, &cur_x, tol);
+        };
         match sol.status {
             LpStatus::Optimal => cur_x = sol.x,
             LpStatus::Infeasible if !flipped[j] => {
@@ -178,7 +234,9 @@ pub fn dive(
                     flipped[j] = true;
                     dive_bounds.lb[j] = other;
                     dive_bounds.ub[j] = other;
-                    let retry = simplex.resolve(&dive_bounds);
+                    let Some(retry) = resolve_with_work_budget(simplex, &dive_bounds, &mut budget) else {
+                        return round_and_check(problem, bounds, &cur_x, tol);
+                    };
                     match retry.status {
                         LpStatus::Optimal => cur_x = retry.x,
                         _ => {
@@ -269,6 +327,19 @@ pub fn sub_mip(
     incumbent_obj: Option<f64>,
     tol: &Tolerances,
 ) -> Option<Incumbent> {
+    sub_mip_with_work_budget(problem, simplex, bounds, root_lp_x, incumbent_obj, tol, None)
+}
+
+/// 带可选共享工作预算的受限搜索；所有嵌套节点共用同一余额。
+pub(crate) fn sub_mip_with_work_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    bounds: &Bounds,
+    root_lp_x: &[f64],
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+    budget: Option<&mut HeuristicWorkBudget>,
+) -> Option<Incumbent> {
     let n = problem.vars.len();
     if root_lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
         return None;
@@ -294,7 +365,11 @@ pub fn sub_mip(
     if fractional == 0 {
         return None; // 根 LP 已全整：无受限邻域可搜（主流程按 (e) 记录）
     }
-    sub_mip_with_caps(
+    if budget.is_none() {
+        return sub_mip_with_caps(problem, simplex, bounds, &sub, incumbent_obj, tol,
+            SUB_MIP_MAX_DEPTH, SUB_MIP_NODE_LIMIT);
+    }
+    sub_mip_with_caps_and_budget(
         problem,
         simplex,
         bounds,
@@ -303,6 +378,8 @@ pub fn sub_mip(
         tol,
         SUB_MIP_MAX_DEPTH,
         SUB_MIP_NODE_LIMIT,
+        budget,
+        Some(root_lp_x),
     )
 }
 
@@ -321,6 +398,23 @@ pub(crate) fn sub_mip_with_caps(
     max_depth: u32,
     node_limit: u64,
 ) -> Option<Incumbent> {
+    sub_mip_with_caps_and_budget(problem, simplex, base, sub, incumbent_obj, tol,
+        max_depth, node_limit, None, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sub_mip_with_caps_and_budget(
+    problem: &Problem,
+    simplex: &mut dyn LpEngine,
+    base: &Bounds,
+    sub: &Bounds,
+    incumbent_obj: Option<f64>,
+    tol: &Tolerances,
+    max_depth: u32,
+    node_limit: u64,
+    budget: Option<&mut HeuristicWorkBudget>,
+    fallback_x: Option<&[f64]>,
+) -> Option<Incumbent> {
     let int_vars = problem.integer_vars();
     let mut ctx = SubMipCtx {
         problem,
@@ -333,13 +427,19 @@ pub(crate) fn sub_mip_with_caps(
         nodes_left: node_limit,
         max_depth,
         best: None,
+        budget,
     };
+    // 新增预算路径先复核最后已知根点，首次调用耗尽或失败也能保留候选。
+    // None 不增加候选或阈值更新，严格保持历史搜索顺序。
+    if ctx.budget.is_some() {
+        if let Some(x) = fallback_x { ctx.offer(x); }
+    }
     sub_mip_dfs(&mut ctx, simplex, sub, 0);
     ctx.best
 }
 
 /// 嵌套 DFS 的共享上下文（问题与容差只读引用 + 上限/阈值/预算/候选状态）。
-struct SubMipCtx<'a> {
+struct SubMipCtx<'a, 'b> {
     problem: &'a Problem,
     /// 原始根界（候选复核用——保证 incumbent 全局有效，与 dive 同契约）。
     base: &'a Bounds,
@@ -354,9 +454,10 @@ struct SubMipCtx<'a> {
     max_depth: u32,
     /// 已找到的最优候选。
     best: Option<Incumbent>,
+    budget: Option<&'b mut HeuristicWorkBudget>,
 }
 
-impl<'a> SubMipCtx<'a> {
+impl SubMipCtx<'_, '_> {
     /// 候选提取与采纳：对 LP 点做 [`round_and_check`] 复核（整数变量取整 +
     /// 逐行可行性核对 + 目标按 x 重算），通过且严格优于阈值才更新候选并
     /// 收紧阈值。
@@ -402,8 +503,10 @@ fn sub_mip_dfs(ctx: &mut SubMipCtx, simplex: &mut dyn LpEngine, node_bounds: &Bo
     if ctx.nodes_left == 0 {
         return; // 节点预算耗尽：整体停止（确定性封顶）
     }
+    let Some(sol) = resolve_with_work_budget(simplex, node_bounds, &mut ctx.budget) else {
+        return; // 已求解节点均已复核，保留现有候选，不将预算当成不可行证据。
+    };
     ctx.nodes_left -= 1;
-    let sol = simplex.resolve(node_bounds);
     if sol.status != LpStatus::Optimal {
         return; // 不可行 / 上限截断 / 数值异常：子树放弃
     }
@@ -440,8 +543,8 @@ fn sub_mip_dfs(ctx: &mut SubMipCtx, simplex: &mut dyn LpEngine, node_bounds: &Bo
 /// v 的「2 的幂分母指数」：最小 q ≥ 0 使 v·2^q 为整数（|v| < 2^52 内
 /// 精确）；v 非有限/分母含非 2 素因子/超出精度返回 None。
 fn pow2_denom(v: f64) -> Option<u32> {
-    if !v.is_finite() || v == 0.0 {
-        return Some(0); // 0 恒整
+    if !v.is_finite() {
+        return None;
     }
     let a = v.abs();
     if a >= 9.0e15 {
@@ -469,125 +572,414 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a.abs()
 }
 
-/// MITM 窗口模式支持的变量数上限（窗口 42 ⇒ 半枚举 2^21 ≈ 2M 项/半，
-/// release 每窗 ~0.5-1s）。
-const MITM_MAX_VARS: usize = 84;
+/// 每半至多 2²¹ 个掩码，开放寻址表最多占 16 MiB。
+const MITM_WINDOW: usize = 42;
+const MITM_MAX_VARS: usize = 2 * MITM_WINDOW;
 
-/// 行部分和的打包键：m ≤ 8 行 × 16 位（i16 分量，越界返回 None）。
-fn pack_sums(sums: &[i64]) -> Option<u128> {
-    if sums.len() > 8 {
-        return None;
-    }
-    let mut key = 0u128;
-    for (i, &s) in sums.iter().enumerate() {
-        if !(-32768..=32767).contains(&s) {
-            return None;
-        }
-        key |= ((s as i16) as u16 as u128) << (16 * i);
-    }
-    Some(key)
+/// 一个子集的等式行和与目标贡献。每条行占 16 位，按模 2¹²⁸ 加减。
+/// 窗口内每行的活动范围宽度小于 65536，目标也必须在其范围内。
+/// 因而最低一个不等的行差绝对值在 1..65535，后面的行无法抵消它。
+#[derive(Clone, Copy, Default)]
+struct SubsetSum {
+    key: u128,
+    cost: i64,
 }
 
-/// 半枚举 + 排序 + 二分的精确匹配内核：在给定变量子集 `vars`（升序，
-/// |vars| = w）上枚举全部 0/1 赋值，找 A·x_vars = `target`（窗口外取 x0
-/// 已折算进 target 的口径）的赋值。确定性（枚举序 + (key,mask) 全序排序）。
-/// 返回该子集上的 0/1 赋值。
+impl SubsetSum {
+    fn plus(self, other: Self) -> Self {
+        Self {
+            key: self.key.wrapping_add(other.key),
+            cost: self.cost + other.cost,
+        }
+    }
+}
+
+/// 将半边再分成两组，按掩码查两个小表即可恢复行和及目标。
+/// 一个 42 列窗口每个小表至多 2048 项，大表只需保存左半掩码。
+struct HalfSums {
+    low: Vec<SubsetSum>,
+    high: Vec<SubsetSum>,
+}
+
+impl HalfSums {
+    fn new(columns: &[SubsetSum]) -> Self {
+        fn sums(columns: &[SubsetSum]) -> Vec<SubsetSum> {
+            let mut table = Vec::with_capacity(1 << columns.len());
+            table.push(SubsetSum::default());
+            for &column in columns {
+                for i in 0..table.len() {
+                    table.push(table[i].plus(column));
+                }
+            }
+            table
+        }
+        let (low, high) = columns.split_at(columns.len() / 2);
+        Self {
+            low: sums(low),
+            high: sums(high),
+        }
+    }
+
+    fn get(&self, mask: u32) -> SubsetSum {
+        let mask = mask as usize;
+        self.low[mask % self.low.len()].plus(self.high[mask / self.low.len()])
+    }
+    // 表至多半满。散列只确定初始位置，命中时重建完整的行和键再比较。
+    fn slot(&self, slots: &[u32], key: u128) -> usize {
+        let mut hash = DefaultHasher::new();
+        hash.write_u128(key);
+        let mut i = (hash.finish() as usize) & (slots.len() - 1);
+        while slots[i] != u32::MAX && self.get(slots[i]).key != key {
+            i = (i + 1) & (slots.len() - 1);
+        }
+        i
+    }
+}
+
+fn mitm_expired(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|end| Instant::now() >= end)
+}
+
 fn mitm_match(
-    a_rows: &[Vec<i64>], // m × n 全矩阵（列按原变量空间）
+    rows: &[Vec<i64>],
     vars: &[usize],
     target: &[i64],
-) -> Option<Vec<u8>> {
-    let m = a_rows.len();
-    let w = vars.len();
-    let h = w / 2;
-    let g2 = w - h;
-    // 窗口列系数。
-    let aw: Vec<Vec<i64>> = (0..m)
-        .map(|i| vars.iter().map(|&j| a_rows[i][j]).collect())
+    costs: Option<&[i64]>,
+    deadline: Option<Instant>,
+) -> Option<(Vec<u8>, bool)> {
+    let mut columns: Vec<_> = vars
+        .iter()
+        .map(|&j| SubsetSum {
+            key: 0,
+            cost: costs.map_or(0, |c| c[j]),
+        })
         .collect();
-    let mut left: Vec<(u128, u32)> = Vec::with_capacity(1usize << h);
-    for mask in 0u32..(1u32 << h) {
-        let mut sums = vec![0i64; m];
-        let mut mm = mask;
-        let mut j = 0;
-        while mm != 0 {
-            if mm & 1 == 1 {
-                for (i, row) in aw.iter().enumerate() {
-                    sums[i] += row[j];
-                }
-            }
-            mm >>= 1;
-            j += 1;
+    let mut target_key = 0u128;
+    for (i, row) in rows.iter().enumerate() {
+        let (mut min, mut max) = (0, 0);
+        for (column, &j) in columns.iter_mut().zip(vars) {
+            let a = row[j];
+            min += a.min(0);
+            max += a.max(0);
+            column.key = column.key.wrapping_add((a as u128) << (16 * i));
         }
-        let key = pack_sums(&sums)?;
-        left.push((key, mask));
+        if max - min >= 65536 || !(min..=max).contains(&target[i]) {
+            return None;
+        }
+        target_key = target_key.wrapping_add((target[i] as u128) << (16 * i));
     }
-    // 全序排序（key 并列按 mask）：确定性二分命中。
-    left.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    for mask2 in 0u32..(1u32 << g2) {
-        let mut sums = vec![0i64; m];
-        let mut mm = mask2;
-        let mut j = h;
-        while mm != 0 {
-            if mm & 1 == 1 {
-                for (i, row) in aw.iter().enumerate() {
-                    sums[i] += row[j];
-                }
+    let half = vars.len() / 2;
+    let left = HalfSums::new(&columns[..half]);
+    let right = HalfSums::new(&columns[half..]);
+    let empty = u32::MAX;
+    // 左半只存掩码，同键时保留费用最低的一个。
+    let mut slots = vec![empty; 2 << half];
+    for mask in 0..1u32 << half {
+        if mask % 4096 == 0 && mitm_expired(deadline) {
+            return None;
+        }
+        let sum = left.get(mask);
+        let pos = left.slot(&slots, sum.key);
+        let old = slots[pos];
+        if old == empty || sum.cost < left.get(old).cost {
+            // 升序枚举，目标相等时保留较小掩码。
+            slots[pos] = mask;
+        }
+    }
+    let mut best = None;
+    let mut complete = costs.is_some();
+    for mask in 0..1u32 << (vars.len() - half) {
+        if mask % 4096 == 0 && mitm_expired(deadline) {
+            complete = false;
+            break;
+        }
+        let sum = right.get(mask);
+        let other = slots[left.slot(&slots, target_key.wrapping_sub(sum.key))];
+        if other != empty {
+            let assignment = (u64::from(mask) << half) | u64::from(other);
+            let candidate = (sum.cost + left.get(other).cost, assignment);
+            if best.is_none_or(|old| candidate < old) {
+                best = Some(candidate);
             }
-            mm >>= 1;
-            j += 1;
+            if costs.is_none() {
+                break;
+            }
         }
-        let mut tgt = vec![0i64; m];
-        for i in 0..m {
-            tgt[i] = target[i] - sums[i];
+    }
+    let (_, mask) = best?;
+    Some((
+        (0..vars.len()).map(|j| ((mask >> j) & 1) as u8).collect(),
+        complete,
+    ))
+}
+
+// 分成四组。每次只存左侧两个分组之和落在指定余数桶的组合，
+// 右侧取互补余数。每个完整匹配恰在一个桶内，桶号本身不参与等式判定。
+const RESIDUES: usize = 256;
+const WIDE_MITM_MAX: usize = 50;
+
+struct ResidueHalf {
+    sums: HalfSums,
+    high_masks: [Vec<u32>; RESIDUES],
+}
+
+impl ResidueHalf {
+    fn new(columns: &[SubsetSum]) -> Self {
+        let sums = HalfSums::new(columns);
+        let mut high_masks: [Vec<u32>; RESIDUES] = std::array::from_fn(|_| Vec::new());
+        for (mask, s) in sums.high.iter().enumerate() {
+            high_masks[s.key as u8 as usize].push(mask as u32);
         }
-        let Some(tk) = pack_sums(&tgt) else {
-            continue;
+        Self { sums, high_masks }
+    }
+
+    fn count(&self, residue: u8) -> usize {
+        self.sums
+            .low
+            .iter()
+            .map(|s| self.high_masks[residue.wrapping_sub(s.key as u8) as usize].len())
+            .sum()
+    }
+
+    fn visit(
+        &self,
+        residue: u8,
+        deadline: Option<Instant>,
+        mut f: impl FnMut(SubsetSum, u32),
+    ) -> bool {
+        let width = self.sums.low.len() as u32;
+        for (low_mask, &low) in self.sums.low.iter().enumerate() {
+            if low_mask % 16 == 0 && mitm_expired(deadline) {
+                return false;
+            }
+            for &hi in &self.high_masks[residue.wrapping_sub(low.key as u8) as usize] {
+                f(
+                    low.plus(self.sums.high[hi as usize]),
+                    hi * width + low_mask as u32,
+                );
+            }
+        }
+        true
+    }
+}
+
+// 若恰选 k 列，活动度必在最小 k 项与最大 k 项的和之间。每个原行和
+// 所有原行之和都可排除不可能的 k；每个保留的 k 至少要付最便宜的 k 笔费用。
+fn restrict_cardinalities(coeff: &mut [i64], target: i64, allowed: &mut [bool]) {
+    coeff.sort_unstable();
+    let (mut lo, mut hi) = (0, 0);
+    for (k, possible) in allowed.iter_mut().enumerate() {
+        if k > 0 {
+            lo += coeff[k - 1];
+            hi += coeff[coeff.len() - k];
+        }
+        *possible &= (lo..=hi).contains(&target);
+    }
+}
+
+/// 在完整二元模型的原尺度上匹配，只有查完所有余数桶才报告证优或不可行。
+pub(crate) fn bucketed_equalities(
+    problem: &Problem,
+    tol: &Tolerances,
+    deadline: Option<Instant>,
+    accept: &mut dyn FnMut(&[f64]),
+) -> crate::error::Result<Option<(crate::model::SolveStatus, Option<f64>)>> {
+    use crate::model::SolveStatus;
+    let n = problem.vars.len();
+    if !(MITM_WINDOW + 1..=WIDE_MITM_MAX).contains(&n)
+        || problem.constraints.is_empty()
+        || problem.constraints.len() > 8
+        || problem.constraints.iter().any(|r| r.op != RelOp::Eq)
+        || problem
+            .vars
+            .iter()
+            .any(|v| v.var_type != VarType::Binary || v.lb != 0. || v.ub != 1.)
+    {
+        return Ok(None);
+    }
+    let Some(costs) = exact_mitm_costs(problem) else {
+        return Ok(None);
+    };
+    let mut cols: Vec<_> = costs
+        .iter()
+        .map(|&cost| SubsetSum { key: 0, cost })
+        .collect();
+    let mut target = 0u128;
+    let mut allowed = vec![true; n + 1];
+    let mut combined = vec![0; n];
+    let mut total_rhs = 0;
+    for (i, row) in problem.constraints.iter().enumerate() {
+        // 每行都用整数，范围限制保证打包键无歧义，也让原模型浮点求和精确。
+        if row.rhs.fract() != 0. || row.rhs.abs() >= 65536. {
+            return Ok(None);
+        }
+        let mut lo = 0;
+        let mut hi = 0;
+        let mut coeff = vec![0; n];
+        for &(j, a) in &row.expr.terms {
+            if a.fract() != 0. || a.abs() >= 65536. {
+                return Ok(None);
+            }
+            let v = a as i64;
+            lo += v.min(0);
+            hi += v.max(0);
+            cols[j].key = cols[j].key.wrapping_add((v as u128) << (16 * i));
+            coeff[j] = v;
+            combined[j] += v;
+        }
+        let norm = (hi - lo) as f64;
+        if norm >= 65536.
+            || !(lo..=hi).contains(&(row.rhs as i64))
+            || !(10. * tol.feasibility + tol.integrality * norm < 1.)
+            || !(crate::solver::FINAL_VIOLATION_REL * (1. + row.rhs.abs() + norm) < 1.)
+        {
+            return Ok(None);
+        }
+        let rhs = row.rhs as i64;
+        restrict_cardinalities(&mut coeff, rhs, &mut allowed);
+        total_rhs += rhs;
+        target = target.wrapping_add((rhs as u128) << (16 * i));
+    }
+    restrict_cardinalities(&mut combined, total_rhs, &mut allowed);
+    let mut sorted = costs;
+    sorted.sort_unstable();
+    let mut sum = 0;
+    let floor = allowed
+        .iter()
+        .enumerate()
+        .filter_map(|(k, &possible)| {
+            if k > 0 {
+                sum += sorted[k - 1];
+            }
+            possible.then_some(sum)
+        })
+        .min();
+    let Some(floor) = floor else {
+        return Ok(Some((SolveStatus::Infeasible, None)));
+    };
+    let bound = problem.obj_offset
+        + if problem.sense == Sense::Minimize {
+            floor as f64
+        } else {
+            -floor as f64
         };
-        let pos = left.partition_point(|&(k, _)| k < tk);
-        if pos < left.len() && left[pos].0 == tk {
-            let mask1 = left[pos].1;
-            let mut xw = vec![0u8; w];
-            for j in 0..h {
-                xw[j] = ((mask1 >> j) & 1) as u8;
+    let mut objective = None;
+    let mut invalid = false;
+    let status = bucket_join(&cols, target, deadline, |mask| {
+        let point: Vec<_> = (0..n).map(|j| ((mask >> j) & 1) as f64).collect();
+        if problem
+            .constraints
+            .iter()
+            .any(|r| r.expr.eval(&point) != r.rhs)
+        {
+            invalid = true;
+            return;
+        }
+        objective = Some(problem.obj_offset + problem.obj.eval(&point));
+        accept(&point);
+    });
+    if invalid {
+        return Err(crate::error::MilpError::Numerical(
+            "分桶匹配解未通过原等式核验".into(),
+        ));
+    }
+    Ok(status.map(|status| {
+        (
+            status,
+            match status {
+                SolveStatus::Optimal => objective,
+                SolveStatus::LimitReached => Some(bound),
+                _ => None,
+            },
+        )
+    }))
+}
+
+fn bucket_join(
+    cols: &[SubsetSum],
+    target: u128,
+    deadline: Option<Instant>,
+    mut accept: impl FnMut(u64),
+) -> Option<crate::model::SolveStatus> {
+    use crate::model::SolveStatus;
+    if mitm_expired(deadline) {
+        return Some(SolveStatus::LimitReached);
+    }
+    let half = cols.len() / 2;
+    let left = ResidueHalf::new(&cols[..half]);
+    let right = ResidueHalf::new(&cols[half..]);
+    let largest = (0..RESIDUES).map(|b| left.count(b as u8)).max()?;
+    // 极端集中的余数仍遵守内存上限，交回已有窗口搜索。表只存左半掩码。
+    if largest > 1 << 20 {
+        return None;
+    }
+    let mut slots = vec![u32::MAX; 2 * largest.next_power_of_two()];
+    let mut best = None;
+    for b in 0..RESIDUES {
+        if mitm_expired(deadline) {
+            return Some(SolveStatus::LimitReached);
+        }
+        slots.fill(u32::MAX);
+        if !left.visit(b as u8, deadline, |s, mask| {
+            let pos = left.sums.slot(&slots, s.key);
+            let old = slots[pos];
+            if old == u32::MAX || (s.cost, mask) < (left.sums.get(old).cost, old) {
+                slots[pos] = mask;
             }
-            for j in 0..g2 {
-                xw[h + j] = ((mask2 >> j) & 1) as u8;
+        }) {
+            return Some(SolveStatus::LimitReached);
+        }
+        let residue = (target as u8).wrapping_sub(b as u8);
+        if !right.visit(residue, deadline, |s, mask| {
+            let left_mask = slots[left.sums.slot(&slots, target.wrapping_sub(s.key))];
+            if left_mask == u32::MAX {
+                return;
             }
-            return Some(xw);
+            let cost = s.cost + left.sums.get(left_mask).cost;
+            let assignment = (u64::from(mask) << half) | u64::from(left_mask);
+            if best.is_none_or(|old| (cost, assignment) < old) {
+                best = Some((cost, assignment));
+                accept(assignment);
+            }
+        }) {
+            return Some(SolveStatus::LimitReached);
         }
     }
-    None
+    Some(if mitm_expired(deadline) {
+        SolveStatus::LimitReached
+    } else if best.is_some() {
+        SolveStatus::Optimal
+    } else {
+        SolveStatus::Infeasible
+    })
 }
 
-/// MITM 全变量精确求解（n ≤ 42）：整行矩阵 a·x = b 的 0/1 精确可行点。
-fn mitm_full(a_rows: &[Vec<i64>], b: &[i64], n: usize) -> Option<Vec<u8>> {
-    let vars: Vec<usize> = (0..n).collect();
-    mitm_match(a_rows, &vars, b).map(|xw| xw)
+/// 只在整数目标的每个部分和以及带常数的最终值都能用 f64 精确表示时证优。
+fn exact_mitm_costs(problem: &Problem) -> Option<Vec<i64>> {
+    const LIMIT: i64 = 1 << 53;
+    if !crate::model::objective_is_integral(problem) || problem.obj_offset.abs() >= LIMIT as f64 {
+        return None;
+    }
+    let mut magnitude = problem.obj_offset.abs() as i64;
+    let mut costs = vec![0; problem.vars.len()];
+    for &(j, value) in &problem.obj.terms {
+        let cost = value as i64;
+        magnitude += cost.abs();
+        if magnitude >= LIMIT {
+            return None;
+        }
+        costs[j] = if problem.sense == Sense::Maximize {
+            -cost
+        } else {
+            cost
+        };
+    }
+    Some(costs)
 }
 
-/// 子集和 MITM 可行性启发式（R5-retry；生产入口）。
-///
-/// # 类门控（全部满足才启动）
-/// 全变量 Binary、全约束 Eq、系数与右端为 |v| < 32000 的整数、行数 ≤ 8、
-/// n ≤ [`MITM_MAX_VARS`]。Le/Ge/连续列/大系数问题恒 None（零成本）。
-///
-/// # 机制（脱离 LP 信息源）
-/// - **n ≤ 42**：全变量半枚举（2×2^(n/2)，release ~0.1-0.3s）**精确**
-///   求解 A·x = b——planted 解必被找到（若存在）。
-/// - **n ≤ 84**：窗口半枚举——基点 x⁰ = round(lp_x)（调用方传根 LP 解），
-///   |窗口| ≤ 42 的随机子集（LCG 固定种子，确定性）上重解
-///   A_W·x_W = b − A_outside·x⁰_outside；窗口须覆盖 x⁰ 与可行点的全部
-///   差异位（汉明距离 d ≈ 15 时单窗命中概率 ~7%，`windows` 次重试）。
-///
-/// # 消融证据（离线原型，本仓算例）
-/// marketsplit-4x40：全变量 MITM 1.2s(debug) 找到 Σx=20 可行点（逐行
-/// 精确验证）；marketsplit-5x50：窗口 MITM 第 7 窗找到 Σx=25 可行点
-/// （~7.5s/debug/窗）。此前 200 万节点内零可行解（round/dive/泵均零产出
-/// ——LP 驱动机制锚定 LP 顶点邻域，原理上跨不过 planted 解的汉明距离）。
-///
-/// 只供应 incumbent（经 [`round_and_check`] 原始界复核），不影响正确性；
-/// 调用方在 dive 等廉价启发式全部 miss 后再调（本启发式是最后手段）。
+/// 在至多八条二元等式中寻找一个可行解。各行须能精确换算成小整数。
+/// 42 列以内检查完整模型，43 至 84 列从根 LP 的取整点出发，固定窗口外的列，
+/// 按固定种子重试至多 `windows` 个窗口。返回前用当前界和约束复核候选。
 pub fn subset_sum_mitm(
     problem: &Problem,
     bounds: &Bounds,
@@ -595,8 +987,26 @@ pub fn subset_sum_mitm(
     windows: usize,
     tol: &Tolerances,
 ) -> Option<Incumbent> {
+    subset_sum_search(problem, bounds, lp_x, windows, tol, false, None).map(|s| s.incumbent)
+}
+
+pub(crate) struct SubsetSolution {
+    pub incumbent: Incumbent,
+    pub proven: bool,
+}
+
+/// 全列枚举可在核准目标和等式格距后同时证优，局部窗口只供应可行解。
+pub(crate) fn subset_sum_search(
+    problem: &Problem,
+    bounds: &Bounds,
+    lp_x: &[f64],
+    windows: usize,
+    tol: &Tolerances,
+    prove: bool,
+    deadline: Option<Instant>,
+) -> Option<SubsetSolution> {
     let n = problem.vars.len();
-    if windows == 0 || n == 0 || n > MITM_MAX_VARS {
+    if windows == 0 || n == 0 || n > MITM_MAX_VARS || mitm_expired(deadline) {
         return None;
     }
     if !problem.vars.iter().all(|v| v.var_type == VarType::Binary) {
@@ -614,21 +1024,24 @@ pub fn subset_sum_mitm(
     // 乘法不改等式解集，f64 精确无舍入），非 2 的幂分母或有理不可表示仍拒。
     let mut a_rows: Vec<Vec<i64>> = vec![vec![0i64; n]; m];
     let mut b: Vec<i64> = Vec::with_capacity(m);
+    let mut certify =
+        prove
+            && n <= MITM_WINDOW
+            && bounds.lb.len() == n
+            && bounds.ub.len() == n
+            && problem.vars.iter().enumerate().all(|(j, v)| {
+                v.lb == 0.0 && v.ub == 1.0 && bounds.lb[j] == 0.0 && bounds.ub[j] == 1.0
+            })
+            && [tol.feasibility, tol.integrality, tol.zero]
+                .iter()
+                .all(|t| t.is_finite() && *t >= 0.0);
     for (i, c) in problem.constraints.iter().enumerate() {
         // 行内全部量（含 rhs）的最小整数化 2 的幂指数。
-        let mut p = 0u32;
-        let mut vals: Vec<f64> = Vec::with_capacity(c.expr.terms.len() + 1);
+        let mut power = pow2_denom(c.rhs)?;
         for &(_, a) in &c.expr.terms {
-            vals.push(a);
+            power = power.max(pow2_denom(a)?);
         }
-        vals.push(c.rhs);
-        for v in &vals {
-            match pow2_denom(*v) {
-                Some(q) => p = p.max(q),
-                None => return None, // 非 2 的幂分母（或越界）
-            }
-        }
-        let scale = 2f64.powi(p as i32);
+        let scale = 2f64.powi(power as i32);
         let rb = c.rhs * scale;
         if !rb.is_finite() || rb.fract() != 0.0 || rb.abs() >= 32000.0 {
             return None;
@@ -644,17 +1057,19 @@ pub fn subset_sum_mitm(
             }
             a_rows[i][j] = aj as i64;
         }
-    }
-    // 逐行 gcd 归一：R4 缩放把行乘上 2 的幂（实测 marketsplit 至 2^7），
-    // 半和直接爆 i16 打包 ⇒ 静默 None。行与右端同除 gcd（含 |b|）恢复
-    // 紧致原始行——等式 A·x = b 的解集不变（正因子除法）。
-    for i in 0..m {
+        // 同除公因数后每个非零残差至少为 g/scale。验收容差须严格小于该格距。
         let mut g = b[i].abs();
         for &a in &a_rows[i] {
             g = gcd_i64(g, a.abs());
             if g == 1 {
                 break;
             }
+        }
+        if certify {
+            let norm: f64 = c.expr.terms.iter().map(|&(_, a)| a.abs()).sum();
+            let allowance = 10.0 * tol.feasibility + tol.integrality * norm;
+            certify = allowance < g as f64 / scale
+                && c.expr.terms.iter().any(|&(_, a)| a.abs() > tol.zero);
         }
         if g > 1 {
             for a in &mut a_rows[i] {
@@ -671,22 +1086,37 @@ pub fn subset_sum_mitm(
             return None;
         }
     }
-    let found: Option<Vec<u8>> = if n <= 42 {
-        mitm_full(&a_rows, &b, n)
+    let (x01, proven) = if n <= MITM_WINDOW {
+        let vars: Vec<_> = (0..n).collect();
+        let costs = if certify {
+            exact_mitm_costs(problem)
+        } else {
+            None
+        };
+        mitm_match(&a_rows, &vars, &b, costs.as_deref(), deadline)?
     } else {
         // 窗口模式：基点 = round(lp_x)（需有限）。
         if lp_x.len() != n || lp_x.iter().any(|v| !v.is_finite()) {
             return None;
         }
-        let x0: Vec<u8> = (0..n).map(|j| lp_x[j].round().max(0.0).min(1.0) as u8).collect();
-        let wsize = 42usize.min(n);
+        let x0: Vec<u8> = (0..n)
+            .map(|j| lp_x[j].round().max(0.0).min(1.0) as u8)
+            .collect();
+        let wsize = MITM_WINDOW;
         let mut lcg: u64 = 0x9E37_79B9_7F4A_7C15;
         let mut result = None;
         for _ in 0..windows {
-            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            if mitm_expired(deadline) {
+                break;
+            }
+            lcg = lcg
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let mut idx: Vec<usize> = (0..n).collect();
             for k in (1..idx.len()).rev() {
-                lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                lcg = lcg
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let r = ((lcg >> 33) as usize) % (k + 1);
                 idx.swap(k, r);
             }
@@ -703,7 +1133,7 @@ pub fn subset_sum_mitm(
                 }
                 target[i] = b[i] - outside;
             }
-            if let Some(xw) = mitm_match(&a_rows, &idx, &target) {
+            if let Some((xw, _)) = mitm_match(&a_rows, &idx, &target, None, deadline) {
                 let mut x = x0.clone();
                 for (t, &j) in idx.iter().enumerate() {
                     x[j] = xw[t];
@@ -712,11 +1142,13 @@ pub fn subset_sum_mitm(
                 break;
             }
         }
-        result
+        (result?, false)
     };
-    let x01 = found?;
     let x: Vec<f64> = x01.into_iter().map(|v| v as f64).collect();
-    round_and_check(problem, bounds, &x, tol)
+    let incumbent = round_and_check(problem, bounds, &x, tol)?;
+    // 直接调用分支定界也能到这里。公开字段可写，证优前确认没有重复列号等非规范输入。
+    let proven = proven && problem.validate().is_ok() && !mitm_expired(deadline);
+    Some(SubsetSolution { incumbent, proven })
 }
 
 #[cfg(test)]
@@ -755,11 +1187,198 @@ mod tests {
                     );
                 }
                 // 确定性：同输入两次调用逐字节一致。
-                let inc2 = subset_sum_mitm(&p, &b, &sol.x, 8, &t).unwrap();
+                let inc2 = subset_sum_search(&p, &b, &sol.x, 8, &t, name == "marketsplit-5x50", None).unwrap();
+                assert!(!inc2.proven, "窗口或仅找可行解的调用都不能证优");
+                let inc2 = inc2.incumbent;
                 assert_eq!(inc.values, inc2.values);
                 assert_eq!(inc.objective, inc2.objective);
             }
         }
+    }
+
+    #[test]
+    fn subset_sum_join_matches_exhaustive_signed_rows_costs_and_ties() {
+        // 左半的掩码 3 和 4 在首行同为 2；同键要分别验证价格更优与价格持平。
+        let n = 9;
+        let vars: Vec<_> = (0..n).collect();
+        let row = vec![1, 1, 2, 0, -1, -1, 0, 2, -2];
+        let second = vec![0, 0, 0, -3, 0, -3, -2, 0, 5];
+        // 检查负行、最高 16 位进位、非连续窗口以及无解目标。
+        let rows = vec![
+            row.clone(),
+            second.clone(),
+            row.clone(),
+            second.clone(),
+            row.clone(),
+            second.clone(),
+            row.clone(),
+            second.clone(),
+        ];
+        let window = [0, 1, 2, 3, 4, 5, 7, 8];
+        for vars in [&vars[..], &window[..]] {
+            for costs in [
+                vec![0; n],
+                vec![1; n],
+                vec![-1; n],
+                vec![1, 1, -4, 3, -2, 0, 0, -1, 5],
+            ] {
+                for a in -3..=4 {
+                    for b in [-5, 0, 2, 4] {
+                        let target = [a, b, a, b, a, b, a, b];
+                        let expected = (0u32..1 << vars.len())
+                            .filter_map(|mask| {
+                                let chosen = || {
+                                    vars.iter()
+                                        .enumerate()
+                                        .filter(|(bit, _)| mask & (1 << bit) != 0)
+                                        .map(|(_, &j)| j)
+                                };
+                                (chosen().map(|j| row[j]).sum::<i64>() == a
+                                    && chosen().map(|j| second[j]).sum::<i64>() == b)
+                                    .then(|| (chosen().map(|j| costs[j]).sum::<i64>(), mask))
+                            })
+                            .min()
+                            .map(|(_, mask)| mask);
+                        let actual = mitm_match(&rows, vars, &target, Some(&costs), None).map(
+                            |(x, complete)| {
+                                assert!(complete);
+                                x.iter()
+                                    .enumerate()
+                                    .map(|(j, &v)| u32::from(v) << j)
+                                    .sum::<u32>()
+                            },
+                        );
+                        assert_eq!(actual, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn residue_buckets_match_direct_enumeration() {
+        use crate::model::SolveStatus;
+        for seed in 0..20i64 {
+            let cols: Vec<_> = (0..12i64)
+                .map(|j| {
+                    let a = (3 * j + seed) % 9 - 4;
+                    let b = (j * j + seed) % 7 - 3;
+                    SubsetSum {
+                        key: (a as u128).wrapping_add((b as u128) << 112),
+                        cost: (seed * j) % 11 - 5,
+                    }
+                })
+                .collect();
+            let target = if seed % 5 == 0 {
+                100u128
+            } else {
+                (seed - 8) as u128
+            };
+            let mut expected = None;
+            for mask in 0..1u64 << cols.len() {
+                let sum = cols
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| mask & (1 << j) != 0)
+                    .fold(SubsetSum::default(), |s, (_, &c)| s.plus(c));
+                if sum.key == target && expected.is_none_or(|old| (sum.cost, mask) < old) {
+                    expected = Some((sum.cost, mask));
+                }
+            }
+            let mut last = None;
+            let status = bucket_join(&cols, target, None, |mask| last = Some(mask));
+            assert_eq!(last, expected.map(|(_, mask)| mask));
+            assert_eq!(
+                status,
+                Some(if expected.is_some() {
+                    SolveStatus::Optimal
+                } else {
+                    SolveStatus::Infeasible
+                })
+            );
+            assert_eq!(
+                bucket_join(&cols, target, Some(Instant::now()), |_| panic!(
+                    "到期后不应发出候选"
+                )),
+                Some(SolveStatus::LimitReached)
+            );
+        }
+    }
+
+    #[test]
+    fn cardinality_proof_needs_every_original_row_and_its_integer_grid() {
+        use crate::model::SolveStatus;
+        let mut p = Problem::new("矛盾的选取数", Sense::Maximize);
+        for j in 0..43 {
+            p.add_var(&format!("v{j}"), VarType::Binary).unwrap();
+        }
+        let ones: Vec<_> = (0..43).map(|j| (j, 1.0)).collect();
+        p.set_objective(vec![(0, -2.0), (1, 7.0)], -2.0).unwrap();
+        for rhs in [2.0, 3.0] {
+            p.add_constraint(None, ones.clone(), RelOp::Eq, rhs)
+                .unwrap();
+        }
+        let check = |p: &Problem, tol: Tolerances| {
+            bucketed_equalities(p, &tol, None, &mut |_| panic!("矛盾模型不应有解")).unwrap()
+        };
+        assert_eq!(check(&p, tol()), Some((SolveStatus::Infeasible, None)));
+        assert!(check(
+            &p,
+            Tolerances {
+                integrality: 0.1,
+                ..tol()
+            }
+        )
+        .is_none());
+        p.constraints[1].rhs = 2.5;
+        assert!(check(&p, tol()).is_none());
+    }
+
+    #[test]
+    fn subset_sum_proof_requires_free_bounds_distinct_grid_and_exact_objective() {
+        let mut p = Problem::new("折半证明门槛", Sense::Maximize);
+        for j in 0..3 {
+            p.add_var(&format!("x{j}"), VarType::Binary).unwrap();
+        }
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0), (2, 2.0)], RelOp::Eq, 2.0)
+            .unwrap();
+        p.set_objective(vec![(0, -3.0), (1, 1.0), (2, 5.0)], -7.0)
+            .unwrap();
+        let mut bounds = Bounds::from_problem(&p);
+        let search =
+            |p: &Problem, b: &Bounds| subset_sum_search(p, b, &[], 1, &tol(), true, None).unwrap();
+        let result = search(&p, &bounds);
+        assert!(result.proven);
+        assert_eq!(result.incumbent.objective, -2.0);
+        p.sense = Sense::Minimize;
+        let result = search(&p, &bounds);
+        assert!(result.proven);
+        assert_eq!(result.incumbent.objective, -9.0);
+
+        assert!(
+            subset_sum_search(&p, &bounds, &[], 1, &tol(), true, Some(Instant::now())).is_none()
+        );
+        bounds.lb[0] = 1.0;
+        assert!(!search(&p, &bounds).proven);
+        bounds.lb[0] = 0.0;
+        p.vars[1].lb = 1.0;
+        assert!(!search(&p, &bounds).proven);
+        p.vars[1].lb = 0.0;
+        p.obj.terms.push((0, -1.0));
+        assert!(!search(&p, &bounds).proven);
+        p.obj.terms.pop();
+        p.obj_offset = 0.5;
+        assert!(!search(&p, &bounds).proven);
+        p.obj_offset = ((1_i64 << 53) - 2) as f64;
+        assert!(!search(&p, &bounds).proven);
+        p.obj_offset = 0.0;
+        let scale = 2.0_f64.powi(-40);
+        let row = &mut p.constraints[0];
+        row.rhs *= scale;
+        for (_, a) in &mut row.expr.terms {
+            *a *= scale;
+        }
+        assert!(!search(&p, &bounds).proven);
     }
 
     /// knapsack LP 解的取整复核：max 9a+5b+3c s.t. 7a+4b+3c ≤ 8（0-1）。
@@ -967,6 +1586,220 @@ mod tests {
         let inc = dive(&q, &mut s2, &bnds2, &sol2.x, 0, &t).expect("整数解应直接返回");
         assert!((inc.objective - 3.0).abs() < 1e-9);
         assert_eq!(inc.values, vec![3.0]);
+    }
+
+    /// 使用真实 LP 引擎与剩余调用数核对重试和递归，避免以迭代为零误判未调用。
+    #[test]
+    fn work_budget_counts_dive_retry_and_checks_candidate() {
+        let mut p = Problem::new("预算反向重试", Sense::Minimize);
+        let x = p.add_var("x", VarType::Integer).unwrap();
+        p.set_var_bounds(x, 0.0, 5.0).unwrap();
+        p.set_objective(vec![(x, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, vec![(x, 1.0)], RelOp::Ge, 2.2).unwrap();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for calls in [0, 1, 2] {
+            let mut engine = Simplex::new(&p, t).unwrap();
+            let root = engine.solve(&b);
+            let before = engine.iterations();
+            let mut budget = HeuristicWorkBudget { remaining_work: 100, lp_calls: calls };
+            let inc = dive_with_work_budget(&p, &mut engine, &b, &root.x, 3, &t, Some(&mut budget));
+            assert_eq!(budget.lp_calls, 0);
+            assert_eq!(budget.remaining_work, 100u64.saturating_sub(engine.iterations() - before));
+            if calls < 2 {
+                assert!(inc.is_none(), "最后已知点取整为2违反原约束，不得返回");
+            } else {
+                assert_eq!(inc.unwrap().values, vec![3.0]);
+            }
+        }
+    }
+
+    #[test]
+    fn work_budget_zero_iterations_never_resolves_and_validates_root() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        let mut engine = Simplex::new(&p, t).unwrap();
+        let root = engine.solve(&b);
+        let before = engine.iterations();
+        let mut budget = HeuristicWorkBudget { remaining_work: 0, lp_calls: 10 };
+        assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut budget)).is_none());
+        assert!(sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).is_none());
+        assert_eq!(budget.lp_calls, 10);
+        assert_eq!(engine.iterations(), before);
+        // 零预算仍允许经过原模型校验的取整解，而非伪造“未找到”。
+        let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &[1.0, 1.2], None, &t, Some(&mut budget)).unwrap();
+        assert_eq!(inc.values, vec![1.0, 1.0]);
+        assert_eq!(budget.lp_calls, 10);
+    }
+
+    #[test]
+    fn work_budget_is_shared_by_nested_nodes_and_separate_heuristics() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        let mut engine = Simplex::new(&p, t).unwrap();
+        let root = engine.solve(&b);
+        let mut budget = HeuristicWorkBudget { remaining_work: 100, lp_calls: 2 };
+        let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut budget)).unwrap();
+        assert_eq!(inc.values, vec![1.0, 1.0]);
+        assert_eq!(budget.lp_calls, 0, "根及下行节点分别记账，上行不再调用");
+        let before = engine.iterations();
+        assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut budget)).is_none());
+        assert_eq!(engine.iterations(), before);
+    }
+
+    #[test]
+    #[cfg(not(feature = "root_heuristic_work_limit"))]
+    fn work_budget_positive_iterations_stop_next_call() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let mut engine = Simplex::new(&p, tol()).unwrap();
+        let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 10 };
+        let mut budget = Some(&mut work);
+        let before = engine.iterations();
+        let sol = resolve_with_work_budget(&mut engine, &b, &mut budget).unwrap();
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert!(engine.iterations() > before, "冷引擎确实消费正迭代数");
+        assert_eq!(budget.as_ref().unwrap().remaining_work, 0);
+        assert_eq!(budget.as_ref().unwrap().lp_calls, 9);
+        let after = engine.iterations();
+        assert!(resolve_with_work_budget(&mut engine, &b, &mut budget).is_none());
+        assert_eq!(engine.iterations(), after);
+        assert_eq!(budget.as_ref().unwrap().lp_calls, 9);
+    }
+
+    #[test]
+    fn work_budget_none_preserves_legacy_results_and_iterations() {
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for nested in [false, true] {
+            let mut old = Simplex::new(&p, t).unwrap();
+            let root = old.solve(&b);
+            let mut optional = old.clone();
+            let (a, z) = if nested {
+                (sub_mip(&p, &mut old, &b, &root.x, None, &t),
+                 sub_mip_with_work_budget(&p, &mut optional, &b, &root.x, None, &t, None))
+            } else {
+                (dive(&p, &mut old, &b, &root.x, 10, &t),
+                 dive_with_work_budget(&p, &mut optional, &b, &root.x, 10, &t, None))
+            };
+            assert_eq!(a.as_ref().map(|i| (&i.values, i.objective)), z.as_ref().map(|i| (&i.values, i.objective)));
+            assert_eq!(old.iterations(), optional.iterations());
+            assert_eq!(old.basis_columns(), optional.basis_columns());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_box_scope_snapshot_and_none_path() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut engine = new_engine(&p, t, kind).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+            engine.set_time_deadline(Some(deadline));
+            engine.set_iter_limit_hint(Some(1234));
+            let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 10 };
+            let limited = resolve_with_work_budget(&mut engine, &b, &mut Some(&mut work)).unwrap();
+            assert_eq!(limited.status, LpStatus::IterationLimit);
+            assert!(limited.objective.is_nan());
+            assert_eq!(work.remaining_work, 0);
+            assert_eq!(work.lp_calls, 9);
+            let mut snapshot = engine.snapshot();
+            for candidate in [&mut engine, &mut snapshot] {
+                assert_eq!(candidate.time_deadline(), Some(deadline));
+                let recovered = candidate.resolve(&b);
+                assert_eq!(recovered.status, LpStatus::Optimal);
+                assert_eq!(recovered.objective, 6.0);
+                assert_eq!(candidate.time_deadline(), Some(deadline));
+            }
+            let root = engine.resolve(&b);
+            let mut ordinary = engine.snapshot();
+            let mut optional = engine.snapshot();
+            let a = dive(&p, &mut ordinary, &b, &root.x, 10, &t);
+            let z = dive_with_work_budget(&p, &mut optional, &b, &root.x, 10, &t, None);
+            assert_eq!(a.as_ref().map(|v| (v.objective, &v.values)), z.as_ref().map(|v| (v.objective, &v.values)));
+            assert_eq!(ordinary.iterations(), optional.iterations());
+            assert_eq!(ordinary.basis_columns(), optional.basis_columns());
+            assert_eq!(ordinary.time_deadline(), optional.time_deadline());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_nested_nodes_share_balance_and_root_restore_is_outside() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let p = sub_mip_problem();
+        let b = Bounds::from_problem(&p);
+        let t = tol();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut engine = new_engine(&p, t, kind).unwrap();
+            assert_eq!(engine.solve(&b).status, LpStatus::Optimal);
+            engine.add_row(&[(1, 1.0)], RelOp::Le, 1.75).unwrap();
+            let root = engine.resolve(&b);
+            assert_eq!(root.objective, 6.0);
+            let rows = engine.num_rows();
+            let before = engine.iterations();
+            let mut work = HeuristicWorkBudget { remaining_work: 1, lp_calls: 5 };
+            let inc = sub_mip_with_work_budget(&p, &mut engine, &b, &root.x, None, &t, Some(&mut work));
+            assert!(inc.is_none(), "中断子节点的未证最优点不能被当作已验候选");
+            assert_eq!(work.remaining_work, 0);
+            assert_eq!(work.lp_calls, 3, "根邻域零步调用及第一个子节点分别计费");
+            assert_eq!(engine.iterations() - before, 1);
+            let calls = work.lp_calls;
+            assert!(dive_with_work_budget(&p, &mut engine, &b, &root.x, 10, &t, Some(&mut work)).is_none());
+            assert_eq!(work.lp_calls, calls);
+            let restored = engine.resolve(&b);
+            assert_eq!(restored.status, LpStatus::Optimal);
+            assert_eq!(restored.objective, root.objective);
+            assert_eq!(engine.num_rows(), rows, "恢复原根界时保留已提交割");
+            assert_eq!(work.remaining_work, 0, "根恢复不借用或充值启发式余额");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "root_heuristic_work_limit")]
+    fn work_limit_primal_flips_and_zero_budget_do_not_forge_proofs() {
+        use crate::simplex_sparse::{new_engine, LpEngineKind};
+        let mut flips = Problem::new("纯界翻转", Sense::Maximize);
+        for name in ["x", "y"] {
+            let j = flips.add_var(name, VarType::Continuous).unwrap();
+            flips.set_var_bounds(j, 0.0, 1.0).unwrap();
+        }
+        flips.set_objective(vec![(0, 1.0), (1, 1.0)], 0.0).unwrap();
+        let mut unbounded = Problem::new("真实无界", Sense::Maximize);
+        let x = unbounded.add_var("x", VarType::Continuous).unwrap();
+        unbounded.set_objective(vec![(x, 1.0)], 0.0).unwrap();
+        let mut infeasible = Problem::new("需Phase1证明不可行", Sense::Minimize);
+        let x = infeasible.add_var("x", VarType::Continuous).unwrap();
+        infeasible.set_var_bounds(x, 0.0, 1.0).unwrap();
+        infeasible.add_constraint(None, vec![(x, 1.0)], RelOp::Ge, 2.0).unwrap();
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let bounds = Bounds::from_problem(&flips);
+            let mut engine = new_engine(&flips, tol(), kind).unwrap();
+            let mut remaining = 1;
+            let stopped = engine.resolve_with_work_limit(&bounds, &mut remaining);
+            assert_eq!(stopped.status, LpStatus::IterationLimit);
+            assert_eq!(remaining, 0);
+            assert_eq!(engine.iterations(), 1);
+            assert_eq!(stopped.x, vec![1.0, 0.0]);
+            assert_eq!(engine.resolve(&bounds).objective, 2.0);
+            for (p, expected) in [(&unbounded, LpStatus::Unbounded), (&infeasible, LpStatus::Infeasible)] {
+                let bounds = Bounds::from_problem(p);
+                let mut engine = new_engine(p, tol(), kind).unwrap();
+                let mut remaining = 0;
+                let stopped = engine.resolve_with_work_limit(&bounds, &mut remaining);
+                assert_eq!(stopped.status, LpStatus::IterationLimit);
+                assert!(stopped.objective.is_nan());
+                assert_eq!(engine.iterations(), 0);
+                let mut remaining = 10;
+                assert_eq!(engine.resolve_with_work_limit(&bounds, &mut remaining).status, expected);
+            }
+        }
     }
 
     // —— 根节点 sub-MIP 启发式（方向 1）——

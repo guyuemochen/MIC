@@ -1,0 +1,19 @@
+摘录说明：下文从本任务留存的工具输出转录。最初的 /tmp/mic-work-limit-targeted.log 已被后续同名测试覆盖；本文件不是原始完整日志。
+命令：cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --lib work_limit -- --nocapture > /tmp/mic-work-limit-targeted.log 2>&1
+工作目录：/tmp/mic-heuristic-work-limit
+退出码：101
+源码：当时尚未提交的开发中状态；没有保存该状态的精确内容哈希，不能绑定最终通过的 0a41dde 源码。
+
+   Compiling milp v0.1.0 (/private/tmp/mic-heuristic-work-limit/milp)
+error[E0560]: struct `heuristics::HeuristicWorkBudget` has no field named `iterations`
+   --> src/parallel_bb.rs:993:13
+    |
+993 |             iterations: simplex.iterations().saturating_mul(4).max(1000),
+    |             ^^^^^^^^^^ `heuristics::HeuristicWorkBudget` does not have this field
+    |
+    = note: available fields are: `remaining_work`
+
+For more information about this error, try `rustc --explain E0560`.
+error: could not compile `milp` (lib test) due to 1 previous error
+
+原因与处理：并行根启发式镜像漏改预算字段；同步为 remaining_work，并按新旧特性分别使用 remaining_work_steps / remaining_iterations 诊断键。未改变预算系数或数学算法。

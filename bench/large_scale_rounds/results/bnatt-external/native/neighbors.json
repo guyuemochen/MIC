@@ -1,0 +1,74 @@
+{
+  "collection_url": "https://miplib.zib.de/tag_collection.html",
+  "collection_html_sha256": "59e9b6719e5fb76486723b163010dee903383bb2a57ca4d505221ef452f76909",
+  "collection_rows": 1065,
+  "bnatt_group": [
+    "bnatt400",
+    "bnatt500"
+  ],
+  "neighbors_source": "https://miplib.zib.de/instance_details_bnatt400.html",
+  "neighbors_html_sha256": "92732610ab6833547827f3537496814addd8ec2340b03b22f2c1eb3ec2d678c8",
+  "official_neighbor_names": [
+    "bnatt500",
+    "s1234",
+    "neos-5178119-nalagi",
+    "supportcase3",
+    "circ10-3"
+  ],
+  "outside_group": [
+    {
+      "name": "s1234",
+      "source_url": "https://miplib.zib.de/WebData/instances/s1234.mps.gz",
+      "mps_sha256": "5b4075a0fdaf6e9556f2f867e772c7a3b035dac983bb76809525855cd3251fce",
+      "variables": 2945,
+      "binary": 2945,
+      "rows": 8418,
+      "milp_sha256": "da1edbbb244069c9ca8c8ac4ef879f206d36ce412b745d9d6601f5b63a61bf18",
+      "conversion": "ok",
+      "detector_result": {
+        "eligible": false
+      }
+    },
+    {
+      "name": "neos-5178119-nalagi",
+      "source_url": "https://miplib.zib.de/WebData/instances/neos-5178119-nalagi.mps.gz",
+      "mps_sha256": "12f0110ef64f0647d3787203b69171e3749b4adf22b57326a17e6636126b0bbc",
+      "variables": 4167,
+      "binary": 4068,
+      "rows": 6921,
+      "conversion": "unsupported",
+      "reason": "当前转换器拒绝目标常数、负下界或自由变量，不能静默改变模型",
+      "detector_result": null,
+      "fails_required_all_binary": true,
+      "continuous_columns": 99,
+      "highs_offset": 0,
+      "negative_infinite_lower_bounds": 99
+    },
+    {
+      "name": "supportcase3",
+      "source_url": "https://miplib.zib.de/WebData/instances/supportcase3.mps.gz",
+      "mps_sha256": "6d6eeb305b11b4ac86be7f0f5469d67d0cf690e57daa4b9ad527af6f344f8714",
+      "variables": 4191,
+      "binary": 4191,
+      "rows": 12702,
+      "milp_sha256": "934baa2617ff75bcab9f0010c393fd5f4306ddfa957a903df783ab7f887266ee",
+      "conversion": "ok",
+      "detector_result": {
+        "eligible": false
+      }
+    },
+    {
+      "name": "circ10-3",
+      "source_url": "https://miplib.zib.de/WebData/instances/circ10-3.mps.gz",
+      "mps_sha256": "829c8a6b13656a88a682ea96baf0d91d0282261e17bf27fb8a320558b33d0d35",
+      "variables": 2700,
+      "binary": 2700,
+      "rows": 42620,
+      "milp_sha256": "e146a5f47e27ec29d1978336cd118b5508b2c5ed0d81a310291c6b96652d7860",
+      "conversion": "ok",
+      "detector_result": {
+        "eligible": false
+      }
+    }
+  ]
+}

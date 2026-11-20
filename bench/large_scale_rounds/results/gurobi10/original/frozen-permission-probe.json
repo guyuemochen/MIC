@@ -1,0 +1,42 @@
+{
+  "2": {
+    "version": "10.0.3",
+    "status": "optimal",
+    "raw_status": "OPTIMAL",
+    "error_code": null,
+    "objective": 3.75,
+    "bound": 3.75,
+    "parameters": {
+      "OutputFlag": 0,
+      "Threads": 1,
+      "TimeLimit": 1.0,
+      "NodeLimit": 1.0,
+      "MIPGap": 0.0,
+      "MIPGapAbs": 0.0,
+      "IntFeasTol": 1e-06,
+      "DualReductions": 1,
+      "FeasibilityTol": 1e-06,
+      "OptimalityTol": 1e-06
+    }
+  },
+  "2001": {
+    "version": "10.0.3",
+    "status": "optimal",
+    "raw_status": "OPTIMAL",
+    "error_code": null,
+    "objective": 3.75,
+    "bound": 3.75,
+    "parameters": {
+      "OutputFlag": 0,
+      "Threads": 1,
+      "TimeLimit": 1.0,
+      "NodeLimit": 1.0,
+      "MIPGap": 0.0,
+      "MIPGapAbs": 0.0,
+      "IntFeasTol": 1e-06,
+      "DualReductions": 1,
+      "FeasibilityTol": 1e-06,
+      "OptimalityTol": 1e-06
+    }
+  }
+}

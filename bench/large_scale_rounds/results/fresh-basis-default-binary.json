@@ -1,0 +1,20 @@
+{
+  "source_commit": "4be76f7e85d104c6a3e531fea9b62fb9d8e73e8c",
+  "milp_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+  "command": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--release",
+    "--example",
+    "round_probe"
+  ],
+  "binary": "/tmp/mic-recovery-binaries/round_probe_fresh_baseline",
+  "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+  "features": [],
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ]
+}

@@ -478,9 +478,10 @@ impl Pseudocosts {
 
 /// 策略级自动降级参数（默认 0.5 / 0.25 / 0.01）。
 ///
-/// 语义：仅当同时满足 ①`--heuristic-mode auto`（自适应启用）与 ②给了时间
-/// 预算（用户表达了速度优先的需求）时才评估——无预算时 auto 仍保证证明
-/// 最优（契约不变）。预算消耗达 `start_frac` 之后，若 incumbent 已连续
+/// 语义：仅当同时满足 ①自适应启用、②给了时间预算、③本策略未禁用时才
+/// 评估。CLI 默认保留原行为；`--early-stop off` 或 [`Self::disabled`] 仅
+/// 关闭策略提前终止，不关闭自适应启发式，也不改变硬上限或显式 mipgap。
+/// 无预算时不做策略提前终止。预算消耗达 `start_frac` 之后，若 incumbent 已连续
 /// `plateau_frac`×预算 无改进、且期间对偶界的相对改进不足
 /// `bound_progress_rel`（双停滞：解侧与证明侧都不再前进），判定继续证明
 /// 最优的边际收益过低，提前终止并返回当前最好解（终态诚实标注
@@ -488,11 +489,30 @@ impl Pseudocosts {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DegradePolicy {
     /// 预算消耗比例达到该值后才允许降级（先给精确搜索公平机会）。
+    /// 正无穷表示永不开始；调用方用 [`Self::disabled`] 明确表达禁用。
     pub start_frac: f64,
     /// incumbent 无改进窗口占预算的比例。
     pub plateau_frac: f64,
     /// 窗口内对偶界相对改进阈值（朝 incumbent 方向的改进低于该比例视为停滞）。
     pub bound_progress_rel: f64,
+}
+
+impl DegradePolicy {
+    /// 禁用停滞提前终止，保留其它搜索策略及所有限额。
+    ///
+    /// 启动比例为正无穷表示不存在有限启动时点；明确检查此语义，避免
+    /// 极端进度值碰巧满足比较。沿用现有字段布局，已有结构体字面量无需修改。
+    pub fn disabled() -> Self {
+        Self {
+            start_frac: f64::INFINITY,
+            ..Self::default()
+        }
+    }
+
+    /// 是否允许评估停滞提前终止；不决定自适应启发式是否运行。
+    pub fn is_enabled(&self) -> bool {
+        self.start_frac != f64::INFINITY
+    }
 }
 
 impl Default for DegradePolicy {
@@ -551,10 +571,13 @@ impl AutoDegrade {
         self.cfg
     }
 
-    /// 资格预检（无状态，可静态调用）：预算存在（有限且 > 0）且已消耗
+    /// 资格预检（无状态，可静态调用）：策略未禁用、预算存在（有限且 > 0）且已消耗
     /// ≥ `start_frac`×预算。调用方先经此过滤再做 O(前沿) 的界聚合，避免
     /// 逐节点无谓开销。
     pub fn eligible(cfg: DegradePolicy, elapsed_secs: f64, budget_secs: Option<f64>) -> bool {
+        if !cfg.is_enabled() {
+            return false;
+        }
         match budget_secs {
             Some(b) if b.is_finite() && b > 0.0 => elapsed_secs >= cfg.start_frac * b,
             _ => false,
@@ -562,7 +585,7 @@ impl AutoDegrade {
     }
 
     /// 判定是否降级（调用方先用 [`AutoDegrade::eligible`] 过滤）：
-    /// 1. 资格不满足（无预算 / 未到 start_frac）⇒ false；
+    /// 1. 资格不满足（已禁用 / 无预算 / 未到 start_frac）⇒ false；
     /// 2. 无 incumbent 或 incumbent 改进尚新（< plateau_frac×预算）⇒ false；
     /// 3. 界缺失或非有限 ⇒ false（防御；聚合层已滤非有限）；
     /// 4. 首个合格快照只建立窗口基准 ⇒ false；
@@ -1163,6 +1186,30 @@ mod tests {
         assert!(AutoDegrade::eligible(DegradePolicy::default(), 50.0, Some(100.0)));
         assert!(!AutoDegrade::eligible(DegradePolicy::default(), 49.9, Some(100.0)));
         assert!(!AutoDegrade::eligible(DegradePolicy::default(), 60.0, None));
+    }
+
+    /// 禁用是明确策略，不是等一个很大的时间；两种目标方向和极端进度均不触发。
+    #[test]
+    fn disabled_degrade_policy_never_becomes_eligible() {
+        let policy = DegradePolicy::disabled();
+        assert!(!policy.is_enabled());
+        assert!(DegradePolicy::default().is_enabled());
+        for sense in [Sense::Maximize, Sense::Minimize] {
+            let mut disabled = AutoDegrade::new(policy);
+            let mut normal = AutoDegrade::new(DegradePolicy::default());
+            let mut snap = degrade_snap(sense, Some(20.0));
+            assert!(!normal.decide(&snap));
+            assert!(normal.decide(&snap), "同一双停滞证据在旧策略下仍触发");
+            for elapsed in [0.0, 60.0, f64::MAX, f64::INFINITY] {
+                snap.elapsed_secs = elapsed;
+                for budget in [None, Some(0.0), Some(100.0), Some(f64::MAX)] {
+                    snap.budget_secs = budget;
+                    assert!(!AutoDegrade::eligible(policy, elapsed, budget));
+                    assert!(!disabled.decide(&snap));
+                    assert!(!disabled.decide(&snap), "不能第二次建立窗口后重新启用");
+                }
+            }
+        }
     }
 
     /// 双停滞（界不动）⇒ 触发；界有实质进展 ⇒ 不触发且基准被刷新。

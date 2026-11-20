@@ -1,0 +1,24 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-nonfinite-directions/milp)
+    Finished `release` profile [optimized] target(s) in 2.59s
+     Running tests/acceptance.rs (milp/target/release/deps/acceptance-ee7321e44a386a82)
+
+running 1 test
+test acceptance_setcover_100x150_unlocked_optimal ... FAILED
+
+failures:
+
+---- acceptance_setcover_100x150_unlocked_optimal stdout ----
+
+thread 'acceptance_setcover_100x150_unlocked_optimal' (452456) panicked at tests/acceptance.rs:968:5:
+assertion `left == right` failed: 回滚语义：已提交割保留（S9 重钉）
+  left: 77
+ right: 74
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    acceptance_setcover_100x150_unlocked_optimal
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.26s
+
+error: test failed, to rerun pass `--test acceptance`

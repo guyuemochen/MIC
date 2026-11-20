@@ -2275,6 +2275,52 @@ pub fn cut_loop<E: LpEngine>(
         .map(|(applied, status, _)| (applied, status))
 }
 
+// 手工有效割仅用于小批纪律测试，线程局部且由测试守卫清理。
+#[cfg(test)]
+std::thread_local! {
+    static TEST_ROOT_FAILURE: std::cell::RefCell<Option<(usize, LpStatus)>> = const { std::cell::RefCell::new(None) };
+    static TEST_ROOT_BATCHES: std::cell::RefCell<Option<Vec<Vec<Cut>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 用报告解复查本轮未施加候选的违反度。报告解可能已夹回变量界，
+/// 只用于选割。调用方已按原规则清洁、保序和截断候选。
+#[cfg(feature = "root_cut_recheck")]
+fn recheck_pending_cuts(
+    batch: &mut Vec<Cut>,
+    applied_prefix: usize,
+    x: &[f64],
+    n: usize,
+    min_violation: f64,
+    mut on_skip: impl FnMut(usize),
+) -> usize {
+    if x.len() != n || x.iter().any(|value| !value.is_finite()) {
+        return 0;
+    }
+    let before = batch.len();
+    let mut position = 0;
+    batch.retain(|cut| {
+        let index = position;
+        position += 1;
+        if index < applied_prefix {
+            return true;
+        }
+        let mut lhs = 0.0;
+        for &(j, coefficient) in &cut.terms {
+            let Some(&value) = x.get(j) else {
+                return true;
+            };
+            lhs += coefficient * value;
+        }
+        let violation = lhs - cut.rhs;
+        let skip = lhs.is_finite() && violation.is_finite() && violation < min_violation;
+        if skip {
+            on_skip(index);
+        }
+        !skip
+    });
+    before - batch.len()
+}
+
 /// 与 [`cut_loop`] 完全相同的割循环，额外把施加的割按施加顺序原样返回
 /// （terms/rhs 即 add_row 时传入的原尺度值）。行为与 cut_loop 逐字节一致。
 ///
@@ -2296,13 +2342,16 @@ pub fn cut_loop<E: LpEngine>(
 /// 模块文档），再截断 `max_cuts_per_round`——ledger/recorded 记账的即
 /// 过闸后的行。x̄ 经 [`rebuild_x_bar`] 重建（每轮一次，割批共用）。
 ///
-/// 【S14-第一步：小批增量施加纪律】每轮过闸割批（割集合与施加序确定且
-/// 与既往一致）按 [`CUT_APPLY_CHUNK`]（10，取值依据见该常量文档）切分为
+/// 【S14-第一步：小批增量施加纪律】每轮从过闸割的原顺序开始，按
+/// [`CUT_APPLY_CHUNK`]（10，取值依据见该常量文档）分成
 /// 连续小批，逐批 `add_row` 记账 + 预算内 resolve——**收敛一批提交一批**；
 /// 某小批 resolve 触发迭代上限只回退该小批（旧行为弃整轮 ≤40 条），回滚
 /// 后的 committed 集仍是『已 resolve 收敛过的前缀』（与既有整轮回滚语义
 /// 同构，详见函数体内注释）。全部割行照走 `add_row` + [`CutRecord`]
 /// 记账（施加序 = 记账序 = recorded 序），worker 按序重放契约不变。
+/// 默认开启的 `root_cut_recheck` 在小批返回 Optimal 后借用这次报告解，
+/// 保序跳过有限违反量低于原阈值的剩余候选，下一小批取剩余前 10 条。
+/// 报告解不可用或单条违反量非有限时保留该候选。复查只影响选割。
 pub fn cut_loop_recorded<E: LpEngine>(
     s: &mut E,
     bounds: &Bounds,
@@ -2318,7 +2367,20 @@ pub fn cut_loop_recorded<E: LpEngine>(
     // lifting 全程预算：根割循环一次配给，跨轮共享（耗尽即全程关闭提升）。
     let mut lift_budget = LiftBudget::new();
     // 防御性同步：确保表格与 bounds 一致且为 Optimal。
-    let mut status = s.resolve(bounds).status;
+    #[cfg(feature = "proof_profile")]
+    let mut profile_bound: Option<f64>;
+    #[cfg(feature = "proof_profile")]
+    let profile_initial_iterations = s.iterations();
+    let mut status = {
+        let result = s.resolve(bounds);
+        #[cfg(feature = "proof_profile")]
+        {
+            crate::proof_profile::lp_failure("cut_entry",&result,s);
+            profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
+            crate::proof_profile::lp("cut_entry",&result,s.iterations().saturating_sub(profile_initial_iterations),None,0);
+        }
+        result.status
+    };
     if status != LpStatus::Optimal {
         return Ok((0, status, recorded));
     }
@@ -2382,13 +2444,29 @@ pub fn cut_loop_recorded<E: LpEngine>(
         //（截断额度只花在过闸存活者上）。被闸丢弃的割不进入 add_row/
         // ledger/recorded——ledger 记账与 worker 按序重放始终与实际施加行
         // 逐字节一致。
+        #[cfg(test)]
+        TEST_ROOT_BATCHES.with(|batches| {
+            if let Some(batches) = batches.borrow().as_ref() {
+                batch = batches.get(_round).cloned().unwrap_or_default();
+            }
+        });
+        #[cfg(feature = "proof_profile")]
+        let profile_generated = batch.len();
         batch = batch
             .into_iter()
             .filter_map(|cut| sanitize_cut(cut, bounds, x_bar.as_deref(), opts))
             .collect();
+        #[cfg(feature = "proof_profile")]
+        let profile_sanitized = batch.len();
         if batch.len() > opts.max_cuts_per_round {
             batch.truncate(opts.max_cuts_per_round);
         }
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::record("cut_round",vec![
+            ("round",(_round as u64).into()),("entry_bound",crate::proof_profile::optional(profile_bound)),
+            ("generated",profile_generated.into()),("sanitize_survived",profile_sanitized.into()),
+            ("truncated",profile_sanitized.saturating_sub(batch.len()).into()),("planned",batch.len().into()),
+        ]);
         if batch.is_empty() {
             break;
         }
@@ -2400,22 +2478,35 @@ pub fn cut_loop_recorded<E: LpEngine>(
         // ——整数不可行的合法证明路径）；IterationLimit ⇒ **只回退本小批**
         // ——回滚后的 committed 集（ledger/recorded/applied）仍是『已 resolve
         // 收敛过的前缀』，与既有整轮回滚语义**同构**（粒度从轮细化为小批：
-        // 旧行为超限时弃整轮 ≤40 条，新行为只弃最后 ≤8 条，此前小批的根界
+        // 旧行为超限时弃整轮 ≤40 条，新行为只弃最后 ≤10 条，此前小批的根界
         // 收紧得以保留）；TimeLimit/Unbounded ⇒ 不回滚、如实传播（W2 纪律，
         // 与旧行为一致）。小批失败即终止整个割循环（不再尝试后续小批：
         // 失败表明增量割已使 resolve 超收紧预算，后续小批大概率同样超限，
         // 且每次回滚需冷重建 + 全量重放）。小批候选来自本轮同一 x̄ 的一次
-        // 分离（后续小批不随前批 resolve 重新分离——本轮割集固定是
-        // 『割集合不变』约束的要求；后续小批在新表格上可能不再被违反，
-        // 但有效性不受影响，量级受 max_cuts_per_round 约束）。
+        // 分离。开启复查时从原余池保序筛选，关闭时保持原施加序列。
+        #[cfg(all(feature = "root_cut_recheck", feature = "proof_profile"))]
+        let mut candidate_ordinals: Vec<usize> = (0..batch.len()).collect();
         let mut chunk_start = 0usize;
         while chunk_start < batch.len() {
             let chunk_end = (chunk_start + CUT_APPLY_CHUNK).min(batch.len());
             let applied_before = applied;
             let ledger_before = ledger.len();
             let recorded_before = recorded.len();
-            for cut in &batch[chunk_start..chunk_end] {
+            for (_offset, cut) in batch[chunk_start..chunk_end].iter().enumerate() {
                 let index = s.add_row(&cut.terms, RelOp::Le, cut.rhs)?;
+                #[cfg(feature = "proof_profile")]
+                {
+                    let position = chunk_start + _offset;
+                    #[cfg(feature = "root_cut_recheck")]
+                    let ordinal = candidate_ordinals[position];
+                    #[cfg(not(feature = "root_cut_recheck"))]
+                    let ordinal = position;
+                    crate::proof_profile::record("cut_chunk_candidate", vec![
+                        ("round", _round.into()),
+                        ("pool_position", position.into()),
+                        ("ordinal", ordinal.into()),
+                    ]);
+                }
                 ledger.push(CutRecord {
                     terms: cut.terms.clone(),
                     rhs: cut.rhs,
@@ -2437,7 +2528,50 @@ pub fn cut_loop_recorded<E: LpEngine>(
             s.set_iter_limit_hint(Some(
                 3_000u64.max(12u64.saturating_mul((m_now + n_now) as u64)),
             ));
-            status = s.resolve(bounds).status;
+            #[cfg(feature = "proof_profile")]
+            let profile_chunk_iterations = s.iterations();
+            #[cfg(feature = "proof_profile")]
+            let profile_chunk_start = std::time::Instant::now();
+            #[cfg(feature = "root_cut_recheck")]
+            let recheck_x;
+            status = {
+                let result = s.resolve(bounds);
+                #[cfg(test)]
+                let result = TEST_ROOT_FAILURE.with(|slot| {
+                    let mut result = result;
+                    let mut fault = slot.borrow_mut();
+                    if let Some((remaining, injected)) = fault.as_mut() {
+                        if *remaining == 0 {
+                            result.status = *injected;
+                            result.objective = f64::NAN;
+                            *fault = None;
+                        } else {
+                            *remaining -= 1;
+                        }
+                    }
+                    result
+                });
+                #[cfg(all(test, feature = "proof_profile"))]
+                let result = crate::proof_profile::test_cut_result(result,1);
+                #[cfg(feature = "proof_profile")]
+                {
+                    let profile_seconds = profile_chunk_start.elapsed().as_secs_f64();
+                    crate::proof_profile::lp_failure("cut_chunk",&result,s);
+                    profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
+                    crate::proof_profile::record("cut_chunk",vec![
+                        ("round",(_round as u64).into()),("chunk_start",chunk_start.into()),("attempted",(chunk_end-chunk_start).into()),
+                        ("applied_before",applied_before.into()),("status",crate::proof_profile::status(result.status).into()),("seconds",profile_seconds.into()),
+                        ("bound",crate::proof_profile::bound(&result)),("iterations",s.iterations().saturating_sub(profile_chunk_iterations).into()),
+                        ("committed_optimal",(result.status==LpStatus::Optimal).into()),("rolled_back",(result.status==LpStatus::IterationLimit).into()),
+                    ]);
+                }
+                #[cfg(feature = "root_cut_recheck")]
+                {
+                    recheck_x = (result.status == LpStatus::Optimal && chunk_end < batch.len())
+                        .then_some(result.x);
+                }
+                result.status
+            };
             s.set_iter_limit_hint(None);
             if status == LpStatus::Infeasible {
                 // 整数不可行问题的有效割可合法切空 LP 松弛区域：割只保证不切
@@ -2470,13 +2604,69 @@ pub fn cut_loop_recorded<E: LpEngine>(
                 for rec in ledger.iter() {
                     rebuilt.add_row(&rec.terms, RelOp::Le, rec.rhs)?;
                 }
-                let st = rebuilt.resolve(bounds).status;
+                #[cfg(feature = "proof_profile")]
+                let profile_rebuild_iterations = rebuilt.iterations();
+                #[cfg(feature = "proof_profile")]
+                let profile_rebuild_start = std::time::Instant::now();
+                let st = {
+                    let result = rebuilt.resolve(bounds);
+                    #[cfg(all(test, feature = "proof_profile"))]
+                    let result = crate::proof_profile::test_cut_result(result,2);
+                    #[cfg(feature = "proof_profile")]
+                    {
+                        let profile_seconds = profile_rebuild_start.elapsed().as_secs_f64();
+                        crate::proof_profile::lp_failure("cut_rollback",&result,&rebuilt);
+                        crate::proof_profile::record("cut_rollback",vec![
+                            ("round",(_round as u64).into()),("discarded",(chunk_end-chunk_start).into()),
+                            ("retained_cuts",applied.into()),("status",crate::proof_profile::status(result.status).into()),("seconds",profile_seconds.into()),
+                            ("bound",crate::proof_profile::bound(&result)),("iterations",rebuilt.iterations().saturating_sub(profile_rebuild_iterations).into()),
+                        ]);
+                    }
+                    result.status
+                };
                 *s = rebuilt;
                 status = st;
                 break 'rounds;
             }
             if status != LpStatus::Optimal {
                 break 'rounds; // Unbounded/TimeLimit：如实返回终态
+            }
+            #[cfg(feature = "root_cut_recheck")]
+            if let Some(recheck_x) = recheck_x {
+                // 本轮候选生成、清洁和截断只做一次；按新报告点稳定筛余池。
+                // 空余池只结束本轮，下一轮仍由原流程重新分离。
+                #[cfg(feature = "proof_profile")]
+                let pending_before = batch.len() - chunk_end;
+                #[cfg(not(feature = "proof_profile"))]
+                recheck_pending_cuts(&mut batch, chunk_end, &recheck_x,
+                    problem.vars.len(), opts.min_violation, |_| {});
+                #[cfg(feature = "proof_profile")]
+                let skipped = {
+                    let mut keep = vec![true; batch.len()];
+                    let skipped = recheck_pending_cuts(&mut batch, chunk_end, &recheck_x,
+                        problem.vars.len(), opts.min_violation, |i| keep[i] = false);
+                    // 原序号来自本轮清洁和截断之后的候选池，位置随筛选压紧。
+                    for (i, &ordinal) in candidate_ordinals.iter().enumerate().skip(chunk_end) {
+                        crate::proof_profile::record("cut_recheck_candidate", vec![
+                            ("round", _round.into()), ("ordinal", ordinal.into()),
+                            ("pool_position", i.into()),
+                            ("retained", keep[i].into()),
+                        ]);
+                    }
+                    let mut position = 0;
+                    candidate_ordinals.retain(|_| {
+                        let retained = keep[position];
+                        position += 1;
+                        retained
+                    });
+                    skipped
+                };
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::record("cut_recheck", vec![
+                    ("round", _round.into()), ("chunk_start", chunk_start.into()),
+                    ("pending_before", pending_before.into()), ("skipped", skipped.into()),
+                    ("pending_after", (batch.len() - chunk_end).into()),
+                ]);
             }
             chunk_start = chunk_end;
         }
@@ -2489,6 +2679,483 @@ mod tests {
     use super::*;
     use crate::simplex::Simplex;
     use crate::model::{Constraint, LinearExpr, Sense, Tolerances, VarType, Variable};
+
+    #[cfg(feature = "root_cut_recheck")]
+    fn recheck_cut(j: usize, coefficient: f64, rhs: f64) -> Cut {
+        Cut {
+            terms: vec![(j, coefficient)],
+            op: RelOp::Le,
+            rhs,
+        }
+    }
+
+    #[cfg(feature = "root_cut_recheck")]
+    #[test]
+    fn root_recheck_preserves_prefix_order_bits_and_threshold_tie() {
+        let original = vec![
+            recheck_cut(0, 1.0, 0.0),
+            recheck_cut(0, 2.0, 0.0),
+            recheck_cut(1, 1.0, -0.0),
+            recheck_cut(0, 3.0, 0.0),
+            recheck_cut(1, 2.0, 0.0),
+        ];
+        let mut batch = original.clone();
+        assert_eq!(
+            recheck_pending_cuts(&mut batch, 1, &[0.0, 0.5], 2, 0.5, |_| {}),
+            2
+        );
+        for (cut, index) in batch.iter().zip([0, 2, 4]) {
+            assert_eq!(cut.op, original[index].op);
+            assert_eq!(cut.rhs.to_bits(), original[index].rhs.to_bits());
+            assert_eq!(
+                cut.terms
+                    .iter()
+                    .map(|&(j, c)| (j, c.to_bits()))
+                    .collect::<Vec<_>>(),
+                original[index]
+                    .terms
+                    .iter()
+                    .map(|&(j, c)| (j, c.to_bits()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(batch.len(), 3);
+    }
+
+    #[cfg(feature = "root_cut_recheck")]
+    #[test]
+    fn root_recheck_unknown_inputs_keep_candidates() {
+        for point in [vec![], vec![0.0, 0.0], vec![f64::NAN], vec![f64::INFINITY]] {
+            let mut batch = vec![recheck_cut(0, 1.0, 1.0)];
+            assert_eq!(
+                recheck_pending_cuts(&mut batch, 0, &point, 1, 0.1, |_| {}),
+                0
+            );
+            assert_eq!(batch.len(), 1);
+        }
+        for (threshold, skipped) in [(-2.0, 0), (-1.0, 0), (0.0, 1), (f64::NAN, 0)] {
+            let mut batch = vec![recheck_cut(0, 1.0, 1.0)];
+            assert_eq!(
+                recheck_pending_cuts(&mut batch, 0, &[0.0], 1, threshold, |_| {}),
+                skipped
+            );
+        }
+        let mut batch = vec![
+            recheck_cut(0, f64::MAX, 0.0),
+            recheck_cut(0, -f64::MAX / 2.0, f64::MAX),
+            recheck_cut(1, 1.0, 1.0),
+            recheck_cut(0, f64::NAN, 1.0),
+        ];
+        assert_eq!(
+            recheck_pending_cuts(&mut batch, 0, &[2.0], 1, 0.1, |_| {}),
+            0
+        );
+        assert_eq!(batch.len(), 4);
+    }
+
+    struct RootBatchGuard;
+    impl RootBatchGuard {
+        fn install(batches: Vec<Vec<Cut>>) -> Self {
+            TEST_ROOT_BATCHES.with(|slot| {
+                assert!(slot.borrow().is_none());
+                *slot.borrow_mut() = Some(batches);
+            });
+            Self
+        }
+    }
+    impl Drop for RootBatchGuard {
+        fn drop(&mut self) {
+            TEST_ROOT_BATCHES.with(|slot| *slot.borrow_mut() = None);
+            TEST_ROOT_FAILURE.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+
+    // 唯一整数可行点是(0,0)，所以这些重复的x/y≤0都是有效割。
+    // 注入候选后仍运行实际清洁、截断、小批求解、记账和重放。
+    fn root_recheck_fixture<E: LpEngine>(
+        make: impl Fn(&Problem, Tolerances) -> Result<E>,
+        minimize: bool,
+        next_round: bool,
+        failure: Option<(usize, LpStatus)>,
+    ) {
+        let mut problem = Problem::new(
+            "余池复核",
+            if minimize {
+                Sense::Minimize
+            } else {
+                Sense::Maximize
+            },
+        );
+        for j in 0..2 {
+            problem.vars.push(Variable {
+                name: format!("x{j}"),
+                var_type: VarType::Binary,
+                lb: 0.0,
+                ub: 1.0,
+            });
+            problem.constraints.push(Constraint {
+                name: None,
+                expr: LinearExpr {
+                    terms: vec![(j, 2.0)],
+                },
+                op: RelOp::Le,
+                rhs: 1.0,
+            });
+        }
+        problem.obj = LinearExpr {
+            terms: vec![
+                (0, if minimize { -1.0 } else { 1.0 }),
+                (1, if minimize { -1.0 } else { 1.0 }),
+            ],
+        };
+        let cut = |j, c, rhs| Cut {
+            terms: vec![(j, c)],
+            op: RelOp::Le,
+            rhs,
+        };
+        let mut batch = vec![cut(0, 1.0, 0.0); 10];
+        if next_round {
+            batch.extend(vec![cut(0, 3.0, 0.0); 3]);
+        } else {
+            batch.extend([
+                cut(0, 3.0, 0.0),
+                cut(1, 2.0, -0.0),
+                cut(0, 4.0, 0.0),
+                cut(1, 1.0, 0.0),
+            ]);
+        }
+        let max_cuts_per_round = batch.len();
+        // 截断外仍有效的候选不得因余池被筛短而补入。
+        batch.push(cut(1, 7.0, 0.0));
+        let batches = if next_round {
+            vec![batch, vec![cut(1, 1.0, 0.0)]]
+        } else {
+            vec![batch]
+        };
+        let _guard = RootBatchGuard::install(batches);
+        TEST_ROOT_FAILURE.with(|slot| *slot.borrow_mut() = failure);
+        let tol = Tolerances::default();
+        let bounds = Bounds::from_problem(&problem);
+        let mut engine = make(&problem, tol).unwrap();
+        let initial = engine.solve(&bounds);
+        assert_eq!(initial.status, LpStatus::Optimal);
+        assert_eq!(initial.x, vec![0.5, 0.5]);
+        let rows_before = engine.num_rows();
+        let iterations_before = engine.iterations();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        engine.set_time_deadline(Some(deadline));
+        let options = CutOptions {
+            max_rounds: if next_round { 2 } else { 1 },
+            max_cuts_per_round,
+            ..CutOptions::default()
+        };
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::reset(1);
+        let (applied, status, recorded) = cut_loop_recorded(
+            &mut engine,
+            &bounds,
+            &problem,
+            &[0, 1],
+            options,
+            &tol,
+            || make(&problem, tol),
+        )
+        .unwrap();
+        #[cfg(all(feature = "proof_profile", feature = "root_cut_recheck"))]
+        {
+            use crate::proof_profile::Value;
+            let trace = crate::proof_profile::take();
+            let ordinal = |event: &crate::proof_profile::Event| {
+                event
+                    .fields
+                    .iter()
+                    .find_map(|(name, value)| {
+                        if *name == "ordinal" {
+                            if let Value::Int(i) = value {
+                                Some(*i)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap()
+            };
+            let first_failed = failure.is_some_and(|(chunk, _)| chunk == 0);
+            let expected_rechecks = if first_failed { 0 } else { 1 };
+            assert_eq!(
+                trace
+                    .events
+                    .iter()
+                    .filter(|e| e.kind == "cut_recheck")
+                    .count(),
+                expected_rechecks
+            );
+            if !next_round {
+                let applied_ordinals: Vec<_> = trace
+                    .events
+                    .iter()
+                    .filter(|e| e.kind == "cut_chunk_candidate")
+                    .map(ordinal)
+                    .collect();
+                let mut expected: Vec<_> = (0..10).collect();
+                if !first_failed {
+                    expected.extend([11, 13]);
+                }
+                assert_eq!(applied_ordinals, expected);
+                let skipped: Vec<_> = trace
+                    .events
+                    .iter()
+                    .filter(|e| e.kind == "cut_recheck_candidate")
+                    .filter(|e| {
+                        e.fields.iter().any(|(name, value)| {
+                            *name == "retained" && matches!(value, Value::Bool(false))
+                        })
+                    })
+                    .map(ordinal)
+                    .collect();
+                assert_eq!(skipped, if first_failed { vec![] } else { vec![10, 12] });
+            }
+        }
+        #[cfg(all(feature = "proof_profile", not(feature = "root_cut_recheck")))]
+        {
+            let _ = crate::proof_profile::take();
+        }
+
+        assert_eq!(engine.time_deadline(), Some(deadline));
+        assert!(recorded.iter().all(|cut| cut.terms[0].1 != 7.0));
+        if let Some((failed_chunk, injected)) = failure {
+            let retained = if injected == LpStatus::IterationLimit {
+                failed_chunk * 10
+            } else if failed_chunk == 0 {
+                10
+            } else if cfg!(feature = "root_cut_recheck") {
+                12
+            } else {
+                14
+            };
+            assert_eq!(applied, retained as u64);
+            assert_eq!(recorded.len(), retained);
+            assert_eq!(engine.num_rows(), rows_before + retained);
+            assert_eq!(
+                status,
+                if injected == LpStatus::IterationLimit {
+                    LpStatus::Optimal
+                } else {
+                    injected
+                }
+            );
+            // 注入只覆盖调用返回状态，真实LP仍可独立重解；迭代上限只保留成功前缀。
+            let result = engine.resolve(&bounds);
+            assert_eq!(result.status, LpStatus::Optimal);
+            let expected_value = if retained == 0 {
+                1.0
+            } else if retained == 10 {
+                0.5
+            } else {
+                0.0
+            };
+            assert_eq!(
+                result.objective,
+                if minimize {
+                    -expected_value
+                } else {
+                    expected_value
+                }
+            );
+            return;
+        }
+        let expected = if cfg!(feature = "root_cut_recheck") {
+            if next_round {
+                11
+            } else {
+                12
+            }
+        } else {
+            14
+        };
+        assert_eq!(status, LpStatus::Optimal);
+        assert_eq!(applied, expected);
+        assert_eq!(recorded.len(), expected as usize);
+        assert_eq!(engine.num_rows(), rows_before + expected as usize);
+        assert!(engine.iterations() >= iterations_before);
+        assert!(recorded[..10].iter().all(|c| c.terms == vec![(0, 1.0)]));
+        if cfg!(feature = "root_cut_recheck") {
+            assert!(recorded[10..].iter().all(|c| c.terms[0].0 == 1));
+            if !next_round {
+                assert_eq!(recorded[10].rhs.to_bits(), (-0.0f64).to_bits());
+            }
+        }
+        let solved = engine.resolve(&bounds);
+        assert_eq!(solved.status, LpStatus::Optimal);
+        assert_eq!(solved.x, vec![0.0, 0.0]);
+        assert_eq!(solved.objective, 0.0);
+        let mut replay = make(&problem, tol).unwrap();
+        for c in &recorded {
+            replay.add_row(&c.terms, c.op, c.rhs).unwrap();
+        }
+        let replayed = replay.resolve(&bounds);
+        assert_eq!(replayed.status, LpStatus::Optimal);
+        assert_eq!(replayed.x, solved.x);
+        assert_eq!(replayed.objective, solved.objective);
+        assert_eq!(replay.num_rows(), engine.num_rows());
+    }
+
+    #[test]
+    fn root_recheck_dense_and_sparse_batch_replay() {
+        for minimize in [false, true] {
+            for next_round in [false, true] {
+                root_recheck_fixture(Simplex::new, minimize, next_round, None);
+                root_recheck_fixture(
+                    crate::simplex_sparse::SparseSimplex::new,
+                    minimize,
+                    next_round,
+                    None,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_recheck_failure_before_and_after_filter_keeps_original_accounting() {
+        for failed_chunk in [0, 1] {
+            for status in [
+                LpStatus::IterationLimit,
+                LpStatus::TimeLimit,
+                LpStatus::Unbounded,
+                LpStatus::Infeasible,
+            ] {
+                root_recheck_fixture(Simplex::new, false, false, Some((failed_chunk, status)));
+                root_recheck_fixture(
+                    crate::simplex_sparse::SparseSimplex::new,
+                    false,
+                    false,
+                    Some((failed_chunk, status)),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_recheck_real_expired_deadline_keeps_zero_cuts() {
+        fn check<E: LpEngine>(make: impl Fn(&Problem, Tolerances) -> Result<E>) {
+            let mut problem = Problem::new("已到期限", Sense::Maximize);
+            problem.vars.push(Variable {
+                name: "x".into(),
+                var_type: VarType::Binary,
+                lb: 0.0,
+                ub: 1.0,
+            });
+            problem.obj = LinearExpr {
+                terms: vec![(0, 1.0)],
+            };
+            problem.constraints.push(Constraint {
+                name: None,
+                expr: LinearExpr {
+                    terms: vec![(0, 2.0)],
+                },
+                op: RelOp::Le,
+                rhs: 1.0,
+            });
+            let bounds = Bounds::from_problem(&problem);
+            let tol = Tolerances::default();
+            let mut engine = make(&problem, tol).unwrap();
+            assert_eq!(engine.solve(&bounds).status, LpStatus::Optimal);
+            let deadline = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            engine.set_time_deadline(Some(deadline));
+            let rows = engine.num_rows();
+            let iterations = engine.iterations();
+            let (applied, status, recorded) = cut_loop_recorded(
+                &mut engine,
+                &bounds,
+                &problem,
+                &[0],
+                CutOptions::default(),
+                &tol,
+                || make(&problem, tol),
+            )
+            .unwrap();
+            assert_eq!(status, LpStatus::TimeLimit);
+            assert_eq!(applied, 0);
+            assert!(recorded.is_empty());
+            assert_eq!(engine.num_rows(), rows);
+            assert_eq!(engine.iterations(), iterations);
+            assert_eq!(engine.time_deadline(), Some(deadline));
+        }
+        check(Simplex::new);
+        check(crate::simplex_sparse::SparseSimplex::new);
+    }
+
+    #[test]
+    fn root_recheck_recorded_rows_match_mknap_worker_replay() {
+        use crate::branch_bound::{
+            branch_and_bound_controlled, BbOptions, BinaryPropagationMode, SearchControl,
+        };
+        use crate::model::SolveStatus;
+
+        let path = format!(
+            "{}/../bench/instances/mknap-3x100.milp",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let problem = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        let bounds = Bounds::from_problem(&problem);
+        let tol = Tolerances::default();
+        let mut engine = Simplex::new(&problem, tol).unwrap();
+        assert_eq!(engine.solve(&bounds).status, LpStatus::Optimal);
+        let rows_before = engine.num_rows();
+        let (applied, status, recorded) = cut_loop_recorded(
+            &mut engine,
+            &bounds,
+            &problem,
+            &problem.integer_vars(),
+            CutOptions::default(),
+            &tol,
+            || Simplex::new(&problem, tol),
+        )
+        .unwrap();
+        assert_eq!(status, LpStatus::Optimal);
+        assert_eq!(
+            applied,
+            if cfg!(feature = "root_cut_recheck") {
+                43
+            } else {
+                58
+            }
+        );
+        assert_eq!(recorded.len(), applied as usize);
+        assert_eq!(engine.num_rows() - rows_before, recorded.len());
+        let result = engine.resolve(&bounds);
+        assert_eq!(result.status, LpStatus::Optimal);
+        let mut replay = Simplex::new(&problem, tol).unwrap();
+        for cut in &recorded {
+            replay.add_row(&cut.terms, cut.op, cut.rhs).unwrap();
+        }
+        let replayed = replay.resolve(&bounds);
+        assert_eq!(replayed.status, LpStatus::Optimal);
+        assert!((replayed.objective - result.objective).abs() < 1e-7);
+        assert_eq!(replay.num_rows(), engine.num_rows());
+
+        let out = branch_and_bound_controlled(
+            &problem,
+            &BbOptions {
+                local_cuts: false,
+                binary_row_propagation: BinaryPropagationMode::Off,
+                ..BbOptions::default()
+            },
+            &SearchControl {
+                threads: 2,
+                ..SearchControl::default()
+            },
+            tol,
+            None,
+        )
+        .unwrap();
+        assert!(out.stats.nodes > 1, "工作线程应处理根节点之后的搜索");
+        assert_eq!(out.stats.cuts, applied);
+        assert_eq!(out.status, SolveStatus::Optimal);
+        assert_eq!(out.best_objective, Some(2331.0));
+    }
 
     // ===================== 聚合 MIR（R2-retry）=====================
 

@@ -1,0 +1,58 @@
+{
+  "source": "/private/tmp/mic-r12.Cb7d5t4J/source",
+  "source_commit": "5f228683858c8dac9bba15a775f76bd641bf93f1",
+  "source_tree": "c6846f32888cc3b3b0c0307dbe8f075056569c4e",
+  "repository_tree": "1adb54c7305ecb80723ccbc2265b0e91c5c667ca",
+  "default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ],
+  "builds": {
+    "base": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_base",
+      "features": [],
+      "binary_sha256": "8a1d3136025be85dab27f1c0f6d8d868be475c706686a62e90a6a30a3c87a22f",
+      "effective_features": [
+        "binary_coefficient_strengthening",
+        "sparse_row_products"
+      ],
+      "build_log": "timing-base.log",
+      "build_log_sha256": "2353f27d4934807371062c241234acbab052aeab75c7e6df8ecdf87114996d19"
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r12.Cb7d5t4J/binaries/round_probe_timing_candidate",
+      "features": [
+        "root_cut_recheck"
+      ],
+      "binary_sha256": "8793828f775d43510b577967011a982a16520d016e6b33c0031fbe9c1760785b",
+      "effective_features": [
+        "binary_coefficient_strengthening",
+        "root_cut_recheck",
+        "sparse_row_products"
+      ],
+      "build_log": "timing-candidate.log",
+      "build_log_sha256": "43b215a4e0d5de4268ad10c88288d2b1cb0ae28ad125ebea9fc98d210ee1bfd4"
+    }
+  },
+  "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)\nrelease: 1.97.0\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: aarch64-apple-darwin\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.7.1 (sys:0.4.88+curl-8.20.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Mac OS 27.2.1 [64-bit]",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "python": "3.13.14 (main, Jun 10 2026, 12:24:04) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "refs_sha256": {
+    "external-baseline.jsonl": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292",
+    "miplib2017-baseline.jsonl": "d084c6b5a972d27686ddee7d5efa698c8eb5879a56b84ae39c26808c75d545b6",
+    "miplib2017-sources.json": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+    "public-sources.json": "66ba320c393be0692ad9145eca8de97a85b21b101314db02eb475f23afb67d8a"
+  },
+  "tools_sha256": {
+    "run_feature_trial.py": "33b34df6638b39c3e31ad083231871d4ebfefb93c165795d04935bc20a0ea31e",
+    "compare.py": "0bf001d5baf3113f5d1e750392ffc59f2a1860a369623682bc2a5dc69aaaecdd",
+    "run_root_work.py": "1a11a45988e74cfeaa315a89075f61c29529b7c13850adc2aefbf9e08fe98d62",
+    "run_row_products.py": "297087b55e65e6c57cf8a189587765864ffbb7a2e7ee1a3c46bd66e4e802efa7",
+    "run_proof_diagnostics.py": "1360249121e1bf6590ce8c7607d900623998bc6d67221a7ea82ecafffe030454",
+    "check_results.py": "2d4719bb875c0a106ef441e008b243867d0d02577a9eec40cd18bcf8ef091413",
+    "summarize_feature_trial.py": "f316ab3b1a07744873c758f67a3ba380f578eff1561f7235146248fa8da92e63",
+    "gate_feature_trial.py": "632bc02b4635be6b86ae260bc7973e1199770afbb81648118d43bd18b13ee877"
+  },
+  "manifest_sha256": "15c64e8b5138fe9d53fbd84749872b374df071ef8f4ecb61cd48d3a001920f31"
+}

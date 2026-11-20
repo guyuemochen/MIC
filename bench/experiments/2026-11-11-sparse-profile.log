@@ -1,0 +1,18 @@
+lp-sparse-4000x800
+status=Optimal objective=5893.7057566182575 iterations=2659 wall_secs=3.254284 reuse_columns=false
+refactor_calls=43 refactor_secs=0.136954
+pricing_calls=2660 pricing_secs=1.405956
+basis_solve_calls=7979 basis_solve_secs=0.376383
+basis_update_calls=5318 basis_update_secs=1.317964
+lp-wide-1000x2000
+status=Optimal objective=112.6002675915855 iterations=732 wall_secs=2.344385 reuse_columns=false
+refactor_calls=13 refactor_secs=0.072867
+pricing_calls=733 pricing_secs=1.015926
+basis_solve_calls=2198 basis_solve_secs=0.489093
+basis_update_calls=1464 basis_update_secs=0.745741
+setcover-300x600
+status=Optimal objective=131.46305476903697 iterations=10331 wall_secs=1.675902 reuse_columns=false
+refactor_calls=163 refactor_secs=0.697731
+pricing_calls=10333 pricing_secs=0.117373
+basis_solve_calls=20665 basis_solve_secs=0.829313
+basis_update_calls=20662 basis_update_secs=0.009462

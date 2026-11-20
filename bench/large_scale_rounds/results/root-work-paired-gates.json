@@ -1,0 +1,1558 @@
+{
+  "source_commit": "3c70943e865bc1f3488d3fcc6b5d5adb4b4dcf47",
+  "rules": "bench/large_scale_rounds/README.md 第七轮事前门槛",
+  "eligible_models": {
+    "mknap-5x300": {
+      "base_median_secs": 4.4518559589999995,
+      "candidate_median_secs": 4.465978042,
+      "candidate_over_base": 1.0031721787789316
+    },
+    "setcover-300x600": {
+      "base_median_secs": 13.9361,
+      "candidate_median_secs": 12.0860085,
+      "candidate_over_base": 0.867244673904464
+    },
+    "lp-sparse-4000x800": {
+      "base_median_secs": 0.968929042,
+      "candidate_median_secs": 0.9689455,
+      "candidate_over_base": 1.0000169857639587
+    },
+    "p0033": {
+      "base_median_secs": 0.137156,
+      "candidate_median_secs": 0.134669,
+      "candidate_over_base": 0.9818673627110736
+    },
+    "enigma": {
+      "base_median_secs": 7.770360708,
+      "candidate_median_secs": 7.796170541,
+      "candidate_over_base": 1.0033215746308184
+    },
+    "stein27": {
+      "base_median_secs": 3.348048166,
+      "candidate_median_secs": 3.043540833,
+      "candidate_over_base": 0.9090492974108545
+    },
+    "air03": {
+      "base_median_secs": 1.3389070840000001,
+      "candidate_median_secs": 1.170717125,
+      "candidate_over_base": 0.8743826505887692
+    }
+  },
+  "geometric_candidate_over_base": 0.9466438859755287,
+  "new_stable_proof_models": [],
+  "paired_proof_losses": 0,
+  "rss_failures": 0,
+  "max_common_optimal_median_ratio": 1.0033215746308184,
+  "gates": {
+    "correctness": true,
+    "no_paired_proof_loss": true,
+    "rss": true,
+    "individual_median_ratio": true,
+    "at_least_three_eligible": true,
+    "performance": false
+  },
+  "promote_default": false,
+  "decision": "保持两项默认关闭",
+  "pairs": [
+    {
+      "instance": "knapsack-5000",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1917,
+        "peak_rss_bytes": 6111232,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1522,
+        "peak_rss_bytes": 6127616,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "mknap-5x300",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991451,
+        "peak_rss_bytes": 4734976,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991337,
+        "peak_rss_bytes": 4587520,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "setcover-300x600",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 114512,
+        "peak_rss_bytes": 17268736,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 104181,
+        "peak_rss_bytes": 17268736,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lp-sparse-4000x800",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 53248000,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 49233920,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 106496000,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0033",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 28216,
+        "peak_rss_bytes": 3145728,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 27688,
+        "peak_rss_bytes": 3276800,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0201",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5640,
+        "lp_iterations": 961065,
+        "peak_rss_bytes": 10485760,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5640,
+        "lp_iterations": 962566,
+        "peak_rss_bytes": 10633216,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "enigma",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798429,
+        "peak_rss_bytes": 3473408,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798166,
+        "peak_rss_bytes": 3473408,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "stein27",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4385,
+        "lp_iterations": 76773,
+        "peak_rss_bytes": 9289728,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4403,
+        "lp_iterations": 70165,
+        "peak_rss_bytes": 9109504,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0282",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 314567.0,
+        "bound": 189762.35417210025,
+        "nodes": 7170,
+        "lp_iterations": 433598,
+        "peak_rss_bytes": 13942784,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 334715.0,
+        "bound": 189762.35417210084,
+        "nodes": 15309,
+        "lp_iterations": 460851,
+        "peak_rss_bytes": 13664256,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0548",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 24505.0,
+        "bound": 5552.81912166968,
+        "nodes": 22230,
+        "lp_iterations": 2547484,
+        "peak_rss_bytes": 13303808,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 5552.81912166968,
+        "nodes": 21818,
+        "lp_iterations": 3252910,
+        "peak_rss_bytes": 14204928,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lseu",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2223931,
+        "peak_rss_bytes": 4358144,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2222406,
+        "peak_rss_bytes": 4423680,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "air03",
+      "rep": 0,
+      "base": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5752,
+        "peak_rss_bytes": 31588352,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5083,
+        "peak_rss_bytes": 32718848,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "bnatt500",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23592960,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23855104,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "seymour",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 87236,
+        "peak_rss_bytes": 51773440,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 86677,
+        "peak_rss_bytes": 59326464,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 103546880,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos17",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 0.3532864135864137,
+        "bound": 0.0006814985014985127,
+        "nodes": 1,
+        "lp_iterations": 243659,
+        "peak_rss_bytes": 21987328,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 0.3590017282717281,
+        "bound": 0.0006814985014985127,
+        "nodes": 441,
+        "lp_iterations": 305010,
+        "peak_rss_bytes": 23003136,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos-4954672-berkel",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 2872,
+        "lp_iterations": 356619,
+        "peak_rss_bytes": 18595840,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 7498,
+        "lp_iterations": 368529,
+        "peak_rss_bytes": 16580608,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "gen-ip054",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 23604,
+        "lp_iterations": 2288728,
+        "peak_rss_bytes": 3915776,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 24239,
+        "lp_iterations": 2293006,
+        "peak_rss_bytes": 3981312,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "icir97_tension",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 104,
+        "lp_iterations": 423357,
+        "peak_rss_bytes": 19267584,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 220,
+        "lp_iterations": 440037,
+        "peak_rss_bytes": 19333120,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-100-23",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 181189,
+        "peak_rss_bytes": 26968064,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217542,
+        "nodes": 18,
+        "lp_iterations": 168843,
+        "peak_rss_bytes": 34308096,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-25-23",
+      "rep": 0,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 181455,
+        "peak_rss_bytes": 25673728,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217538,
+        "nodes": 22,
+        "lp_iterations": 172849,
+        "peak_rss_bytes": 39108608,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "knapsack-5000",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1917,
+        "peak_rss_bytes": 6127616,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1522,
+        "peak_rss_bytes": 6111232,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "mknap-5x300",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991451,
+        "peak_rss_bytes": 4653056,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991337,
+        "peak_rss_bytes": 4636672,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "setcover-300x600",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 114512,
+        "peak_rss_bytes": 17203200,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 104181,
+        "peak_rss_bytes": 17203200,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lp-sparse-4000x800",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 53264384,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 49233920,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 106528768,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0033",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 28216,
+        "peak_rss_bytes": 3145728,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 27688,
+        "peak_rss_bytes": 3211264,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0201",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5632,
+        "lp_iterations": 957449,
+        "peak_rss_bytes": 10698752,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5632,
+        "lp_iterations": 954095,
+        "peak_rss_bytes": 10616832,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "enigma",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798429,
+        "peak_rss_bytes": 3424256,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798166,
+        "peak_rss_bytes": 3506176,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "stein27",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4385,
+        "lp_iterations": 76773,
+        "peak_rss_bytes": 9240576,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4403,
+        "lp_iterations": 70165,
+        "peak_rss_bytes": 9453568,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0282",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 314567.0,
+        "bound": 189762.35417210025,
+        "nodes": 7133,
+        "lp_iterations": 432380,
+        "peak_rss_bytes": 14417920,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 334715.0,
+        "bound": 189762.35417210084,
+        "nodes": 15146,
+        "lp_iterations": 452518,
+        "peak_rss_bytes": 14548992,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0548",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 24505.0,
+        "bound": 5552.81912166968,
+        "nodes": 22187,
+        "lp_iterations": 2541913,
+        "peak_rss_bytes": 13123584,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 5552.81912166968,
+        "nodes": 21734,
+        "lp_iterations": 3241689,
+        "peak_rss_bytes": 14188544,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lseu",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2223931,
+        "peak_rss_bytes": 4177920,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2222406,
+        "peak_rss_bytes": 4440064,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "air03",
+      "rep": 1,
+      "base": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5752,
+        "peak_rss_bytes": 31686656,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5083,
+        "peak_rss_bytes": 31981568,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "bnatt500",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23560192,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23642112,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "seymour",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 87811,
+        "peak_rss_bytes": 51068928,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 87253,
+        "peak_rss_bytes": 55951360,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 102137856,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos17",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 0.3532864135864137,
+        "bound": 0.0006814985014985127,
+        "nodes": 1,
+        "lp_iterations": 261665,
+        "peak_rss_bytes": 21905408,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 0.3590017282717281,
+        "bound": 0.0006814985014985127,
+        "nodes": 446,
+        "lp_iterations": 308321,
+        "peak_rss_bytes": 23019520,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos-4954672-berkel",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 2765,
+        "lp_iterations": 350991,
+        "peak_rss_bytes": 18202624,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 7552,
+        "lp_iterations": 373575,
+        "peak_rss_bytes": 16859136,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "gen-ip054",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 23523,
+        "lp_iterations": 2281094,
+        "peak_rss_bytes": 3932160,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 23733,
+        "lp_iterations": 2247695,
+        "peak_rss_bytes": 3981312,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "icir97_tension",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 105,
+        "lp_iterations": 426246,
+        "peak_rss_bytes": 18923520,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 221,
+        "lp_iterations": 440865,
+        "peak_rss_bytes": 19202048,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-100-23",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 182789,
+        "peak_rss_bytes": 26411008,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217542,
+        "nodes": 17,
+        "lp_iterations": 167548,
+        "peak_rss_bytes": 34193408,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-25-23",
+      "rep": 1,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 183736,
+        "peak_rss_bytes": 25886720,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217538,
+        "nodes": 22,
+        "lp_iterations": 173169,
+        "peak_rss_bytes": 39550976,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "knapsack-5000",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1917,
+        "peak_rss_bytes": 6111232,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 88526.0,
+        "bound": 88526.0,
+        "nodes": 187,
+        "lp_iterations": 1522,
+        "peak_rss_bytes": 5980160,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "mknap-5x300",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991451,
+        "peak_rss_bytes": 4734976,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 4762.0,
+        "bound": 4762.0,
+        "nodes": 127369,
+        "lp_iterations": 1991337,
+        "peak_rss_bytes": 4603904,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "setcover-300x600",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 114512,
+        "peak_rss_bytes": 17235968,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 144.0,
+        "bound": 144.0,
+        "nodes": 577,
+        "lp_iterations": 104181,
+        "peak_rss_bytes": 16941056,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lp-sparse-4000x800",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 53248000,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "nodes": 1,
+        "lp_iterations": 2659,
+        "peak_rss_bytes": 49233920,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 106496000,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0033",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 28216,
+        "peak_rss_bytes": 3178496,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 3089.0,
+        "bound": 3089.0,
+        "nodes": 970,
+        "lp_iterations": 27688,
+        "peak_rss_bytes": 3260416,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0201",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5640,
+        "lp_iterations": 959849,
+        "peak_rss_bytes": 10682368,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 8460.0,
+        "bound": 7176.264323023764,
+        "nodes": 5640,
+        "lp_iterations": 963142,
+        "peak_rss_bytes": 10633216,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "enigma",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798429,
+        "peak_rss_bytes": 3473408,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 160973,
+        "lp_iterations": 1798166,
+        "peak_rss_bytes": 3457024,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "stein27",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4385,
+        "lp_iterations": 76773,
+        "peak_rss_bytes": 9289728,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 4403,
+        "lp_iterations": 70165,
+        "peak_rss_bytes": 9224192,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0282",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 314567.0,
+        "bound": 189762.35417210025,
+        "nodes": 7133,
+        "lp_iterations": 432380,
+        "peak_rss_bytes": 14270464,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 334715.0,
+        "bound": 189762.35417210084,
+        "nodes": 15292,
+        "lp_iterations": 460026,
+        "peak_rss_bytes": 13680640,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "p0548",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 24505.0,
+        "bound": 5552.81912166968,
+        "nodes": 22102,
+        "lp_iterations": 2532256,
+        "peak_rss_bytes": 13254656,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 5552.81912166968,
+        "nodes": 21613,
+        "lp_iterations": 3223788,
+        "peak_rss_bytes": 14204928,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "lseu",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2223931,
+        "peak_rss_bytes": 4194304,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 1120.0,
+        "bound": 1086.4654869964006,
+        "nodes": 55934,
+        "lp_iterations": 2222694,
+        "peak_rss_bytes": 4440064,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "air03",
+      "rep": 2,
+      "base": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5752,
+        "peak_rss_bytes": 31588352,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "optimal",
+        "objective": 340160.0,
+        "bound": 340160.0,
+        "nodes": 1,
+        "lp_iterations": 5083,
+        "peak_rss_bytes": 32276480,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "bnatt500",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23560192,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "nodes": 1,
+        "lp_iterations": 2688,
+        "peak_rss_bytes": 23740416,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "seymour",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 87172,
+        "peak_rss_bytes": 51150848,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 449.0,
+        "bound": 403.8464741251932,
+        "nodes": 1,
+        "lp_iterations": 86869,
+        "peak_rss_bytes": 57245696,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 102301696,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos17",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 0.3532864135864137,
+        "bound": 0.0006814985014985127,
+        "nodes": 1,
+        "lp_iterations": 263864,
+        "peak_rss_bytes": 21954560,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 0.3590017282717281,
+        "bound": 0.0006814985014985127,
+        "nodes": 451,
+        "lp_iterations": 311504,
+        "peak_rss_bytes": 23019520,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "neos-4954672-berkel",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 2839,
+        "lp_iterations": 354946,
+        "peak_rss_bytes": 18087936,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 5929602.0,
+        "bound": 1289166.8638632847,
+        "nodes": 7594,
+        "lp_iterations": 377147,
+        "peak_rss_bytes": 16777216,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "gen-ip054",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 23634,
+        "lp_iterations": 2290472,
+        "peak_rss_bytes": 3981312,
+        "has_incumbent": true
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": 6923.8644663469995,
+        "bound": 6767.562882327659,
+        "nodes": 24127,
+        "lp_iterations": 2283494,
+        "peak_rss_bytes": 4014080,
+        "has_incumbent": true
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "icir97_tension",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 105,
+        "lp_iterations": 426374,
+        "peak_rss_bytes": 19431424,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 6304.637047163364,
+        "nodes": 217,
+        "lp_iterations": 432316,
+        "peak_rss_bytes": 19431424,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-100-23",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 180485,
+        "peak_rss_bytes": 26312704,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217542,
+        "nodes": 17,
+        "lp_iterations": 167548,
+        "peak_rss_bytes": 33816576,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "drayage-25-23",
+      "rep": 2,
+      "base": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217546,
+        "nodes": 1,
+        "lp_iterations": 182799,
+        "peak_rss_bytes": 25362432,
+        "has_incumbent": false
+      },
+      "candidate": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 11714.141979217538,
+        "nodes": 22,
+        "lp_iterations": 171761,
+        "peak_rss_bytes": 39256064,
+        "has_incumbent": false
+      },
+      "proof_lost": false,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    }
+  ]
+}

@@ -9,7 +9,7 @@
 //! (b) Unbounded：根节点 → 整树终止返回 [`SolveStatus::Unbounded`]；非根节点
 //!     （父有界时理论不发生，数值异常时可能出现）⇒ 立即整树终止返回
 //!     `Err(MilpError::Numerical)`，不得静默继续；
-//! (c) IterationLimit ⇒ 剪枝并置 limit_hit 标记；
+//! (c) IterationLimit ⇒ 暂停该子树、保留旧界并置 limit_hit，继续其它子树；
 //! (d) LP bound 不优于 incumbent 的有效剪枝界（[`effective_prune_bound`]：
 //!     整数目标门控 [`crate::model::objective_is_integral`] 时取整数 cutoff
 //!     与普通容差的更激进者——Max: max(inc+1−ε, inc+prune_abs+prune_rel·|inc|)、
@@ -48,6 +48,9 @@
 //!   界修改的回放记录）。每个 `Pending` 记录应用前 trail 应回退到的长度
 //!   `unwind_to`，保证兄弟节点在父节点界状态上施加自己的分支界；回退严格
 //!   按 trail 逆序恢复旧值。
+//! - 可选 HybridBestBound 每64节点选最好界，其余深搜；Pending保存分块共享的
+//!   完整父域快照，跨子树恢复全部边界并清空trail。仅单线程、local_cuts=false，
+//!   默认DFS不分配快照。限额触发时未处理节点仍保留在前沿界计算内。
 //! - 进展保证：子节点分支界相对当前界严格收缩且新区间非空时才压栈
 //!   （[`tighten_child`]）。非分数 x̄ 的两个分支界中至多一侧无收缩，伪整数
 //!   回退分支因此在最坏情形下也单调收缩，节点上限兜底。
@@ -60,17 +63,18 @@
 //!   ≤ inc−1）。此时 (d) 的有效剪枝界取整数 cutoff（inc+1−ε，ε=1e-6·(1+|inc|)
 //!   工程余量，见 [`effective_prune_bound`] 契约）与用户容差
 //!   prune_abs/prune_rel 的更激进者；同一门控下主循环弹出陈旧前沿
-//!   （父节点 LP 目标 est 已不优于有效剪枝界）直接跳过——不 resolve、
+//!   （子树有效界 est 已不优于有效剪枝界）直接跳过——不 resolve、
 //!   不计 nodes、不耗 node_limit（并行侧同口径：池弹出后、reserve 之前）。
-//!   非整数目标（连续变量入目标 / 分数系数 / 分数 offset）机制性零影响。
+//!   非整数目标不使用整数 cutoff；顺序证据复用仅对实际加强的子界按普通
+//!   容差弹出剪枝，无加强证据时保持原路径。
 //!
 //! # 受控扩展（默认全关 ⇒ 与原实现逐字节一致）
 //! [`branch_and_bound_controlled`] 经 [`SearchControl`]（threads / mipgap /
 //! adaptive_heuristics / log_period_secs）与 [`SearchHooks`]（进度回调）注入
 //! 新能力，既有 [`branch_and_bound`] 签名与行为完全不变：
-//! - 顺序路径（threads ≤ 1）全部改动门控：`Pending.est`（压栈时父节点 LP
-//!   目标）仅在整数目标门控下参与陈旧前沿弹出剪枝（见实现说明），否则为
-//!   纯数据不参与决策；首行进度在根阶段结束的汇合点发射（含纯 LP
+//! - 顺序路径（threads ≤ 1）全部改动门控：`Pending.est` 缺省继承父 LP
+//!   目标，证据复用试验可收紧为已证子界；整数目标或子界实际加强时参与
+//!   前沿弹出剪枝（见实现说明）。首行进度在根阶段结束的汇合点发射（含纯 LP
 //!   捷径与根终局，先发射再返回）；主循环每轮顶部（pop 之前）仅在栈非空时
 //!   ①发射周期行（bound = est 聚合，gap 经 [`crate::search_ctrl::gap_percent`]
 //!   clamp ≥ 0）与 ②做 mipgap 判定（达标即粘滞跳出并记触发时刻证据）；
@@ -82,6 +86,7 @@
 //!   （根终局直返；NodeLimit/TimeLimit/Gap ⇒ LimitReached，Gap 附
 //!   `gap_terminated = true` 与证据 bound；无 stop ⇒ incumbent?Optimal:Infeasible）。
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use crate::cuts::{self, CutOptions};
@@ -114,18 +119,45 @@ pub enum BranchRule {
     /// pseudo×probes=8 最优（−25% 证最优墙钟）。故默认走类自适应
     /// （[`BbOptions::branch_rule_auto`] + [`detect_pseudocost_favorable`]）：
     /// 背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数 2..=64，P3 收紧
-    /// 单行回落）⇒ Pseudocost + probes=8，其余 ⇒ MostFractional；
+    /// 单行回落）及带付费启用项和共享替代项的二元覆盖模型 ⇒ Pseudocost + probes=8；
     /// marketsplit（等式行）不命中类，探测白烧路径不进默认。
     /// 可靠性冷启动见 [`BbOptions::pc_reliability_probes`]。
     Pseudocost,
 }
 
-/// 节点选择规则（首版仅 DFS；best-bound 需按节点存基或冷重启，代价大）。
+/// 节点选择规则：默认DFS；混合候选用完整父域快照支持跨子树恢复。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRule {
     /// 深度优先 + 界栈热启动 + 回溯恢复旧界。
     DepthFirst,
+    /// 试验：每64个节点选最好界，其余深搜；仅单线程且关闭局部割。
+    HybridBestBound,
 }
+
+/// 二元静态行传播模式；自动模式只按最外层请求线程数解析一次。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BinaryPropagationMode {
+    /// 完全关闭，不构造传播数据库。
+    Off,
+    /// 显式开启；不支持多线程请求。
+    On,
+    /// 单线程开启，多线程关闭（包括并行入口的顺序小树探测）。
+    #[default]
+    Auto,
+}
+
+impl BinaryPropagationMode {
+    pub(crate) fn resolve(self, threads: usize) -> Self {
+        match self {
+            Self::Auto if threads == 1 => Self::On,
+            Self::Auto => Self::Off,
+            explicit => explicit,
+        }
+    }
+}
+
+pub use crate::binary_propagation::PropagationStats;
+use crate::binary_propagation::{BinaryPropagation, Outcome as PropagationOutcome, PreservedBinaryRows};
 
 /// 分支定界参数。
 #[derive(Debug, Clone, Copy)]
@@ -164,10 +196,14 @@ pub struct BbOptions {
     /// 节点/迭代计、绝不按墙钟（确定性；深度 > 8 的节点不探测；根节点
     /// 按探测日程全量冷启动，见 [`probe_reliability`]）。
     pub pc_reliability_probes: usize,
-    /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
-    /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
-    /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
-    ///（CLI `--mitm=off` 供消融）。
+    /// 试验：复用当前节点强分支中最终选中变量的已证不可行方向与子节点界。
+    /// 默认 false；仅顺序路径。证据不跨节点/局部割作用域缓存，不复用 LP 解或基。
+    pub reuse_probe_evidence: bool,
+    /// 精确二元静态行传播。默认 Auto，仅用户请求单线程时开启，不读取割。
+    pub binary_row_propagation: BinaryPropagationMode,
+    /// 二元等式折半枚举的窗口重试预算。根节点廉价启发式均未找到解时启用。
+    /// 42 列以内枚举全模型，顺序搜索在目标和行残差可精确区分时可直接证优。
+    /// 43 至 84 列仅在局部窗口找可行解。默认 8，0 表示关闭（CLI `--mitm=off`）。
     pub mitm_windows: usize,
     /// 全局 DFS 工作栈（R6-retry，轴3；仅并行 threads ≥ 2 生效）：true ⇒
     /// 子代直接压全局栈顶、worker 恒从栈顶弹——全局探索序对齐顺序 DFS，
@@ -207,7 +243,7 @@ pub struct BbOptions {
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
-    /// 2..=64，P3 收紧单行回落）⇒ Pseudocost + `pc_reliability_probes ≥ 8`，
+    /// 2..=64）或带付费启用项和共享替代项的覆盖模型 ⇒ Pseudocost + `pc_reliability_probes ≥ 8`，
     /// 否则 MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
     /// 优先）。默认 true。
     pub branch_rule_auto: bool,
@@ -242,6 +278,8 @@ impl Default for BbOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            reuse_probe_evidence: false,
+            binary_row_propagation: BinaryPropagationMode::Auto,
             mitm_windows: 8,
             global_work_stack: false,
             work_stack_auto: true,
@@ -281,7 +319,8 @@ pub struct SearchControl {
     /// `adaptive_heuristics = true` 且给了时间预算（`BbOptions::time_limit_ms
     /// != 0`）时评估；触发时与 mipgap 同径提前终止（LimitReached +
     /// gap_terminated），另附 `auto_degraded = true` 标记。默认
-    /// [`DegradePolicy::default`]。
+    /// [`DegradePolicy::default`]；[`DegradePolicy::disabled`] 可单独关闭
+    /// 策略提前终止，保留自适应启发式及其它限额。
     pub degrade: DegradePolicy,
 }
 
@@ -311,7 +350,8 @@ pub struct SearchHooks {
 /// 分支定界统计。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BbStats {
-    /// 处理节点数（每次 resolve 计 1）。
+    /// 处理节点数。通用分支每次 LP resolve 计 1，时间窗路线的精确覆盖
+    /// 搜索每次处理状态也计 1。
     pub nodes: u64,
     /// 累计单纯形迭代数。
     pub lp_iterations: u64,
@@ -329,6 +369,8 @@ pub struct BbStats {
     /// 树内再应用累计新固定的整数变量数（S13-A；不含根阶段 [`Self::rc_fixed`]。
     /// 列一旦固定即 lb=ub，后续轮次天然跳过 ⇒ 计数不重）。纯记账。
     pub rc_refixed: u64,
+    /// 二元静态行传播统计；不计入 LP 节点数。
+    pub propagation: PropagationStats,
 }
 
 /// 分支定界结果。
@@ -344,7 +386,7 @@ pub struct BbResult {
     pub stats: BbStats,
     /// 求解结束时的对偶界（原始 sense + obj_offset 口径）。gap 终止 =
     /// 触发时刻证据 db（粘滞快照，不依赖后续栈态）；截断（上限触发）= 剩余
-    /// 待处理子树的 est 聚合（栈空时可 None）；完备且有 incumbent =
+    /// 待处理与 LP 未完成子树的旧 est 聚合（执行栈空也不能漏掉后者）；完备且有 incumbent =
     /// best_objective；Infeasible/Unbounded = None。
     pub bound: Option<f64>,
     /// 是否因达到 mipgap 阈值提前终止（true 时 status 必为 LimitReached，
@@ -386,7 +428,7 @@ pub fn detect_pseudocost_favorable(problem: &Problem) -> bool {
 }
 
 /// 求解入口解析类自适应默认（R3 分支规则）：`branch_rule_auto = true` 时按
-/// [`detect_pseudocost_favorable`] 翻转有效规则（命中 ⇒ Pseudocost 且
+/// 多维背包或具有共享替代项的二元覆盖结构翻转有效规则（命中 ⇒ Pseudocost 且
 /// `pc_reliability_probes ≥ 8`；未命中 ⇒ MostFractional），返回解析后的
 /// 具体选项（`branch_rule_auto` 置 false，幂等）；显式指定
 /// （`branch_rule_auto = false`）原样透传——覆盖优先。
@@ -401,7 +443,7 @@ fn resolve_branch_rule_defaults(problem: &Problem, opts: &BbOptions) -> BbOption
     }
     let mut resolved = *opts;
     resolved.branch_rule_auto = false;
-    if detect_pseudocost_favorable(problem) {
+    if detect_pseudocost_favorable(problem) || crate::block_cover::prefers_pseudocost(problem) {
         resolved.branch_rule = BranchRule::Pseudocost;
         resolved.pc_reliability_probes = resolved.pc_reliability_probes.max(8);
     } else {
@@ -450,10 +492,52 @@ pub fn branch_and_bound_controlled(
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
 ) -> Result<BbResult> {
+    branch_and_bound_with_preserved(problem, opts, ctrl, tol, hooks, PreservedBinaryRows::default(), None, SearchPrelude::default())
+}
+
+/// 单线程搜索接受新解时收到工作尺度向量。
+pub(crate) type WorkIncumbentObserver<'a> = Option<&'a dyn Fn(&[f64])>;
+
+/// 结构化求解回退时，继续沿用同一次求解的预算和工作量。
+#[derive(Default)]
+pub(crate) struct SearchPrelude {
+    pub(crate) start: Option<Instant>,
+    pub(crate) nodes: u64,
+    pub(crate) lp_iterations: u64,
+    pub(crate) incumbent: Option<Incumbent>,
+}
+
+/// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
+pub(crate) fn branch_and_bound_with_preserved(
+    problem: &Problem,
+    opts: &BbOptions,
+    ctrl: &SearchControl,
+    tol: Tolerances,
+    hooks: Option<&SearchHooks>,
+    preserved: PreservedBinaryRows,
+    incumbent_observer: WorkIncumbentObserver<'_>,
+    prelude: SearchPrelude,
+) -> Result<BbResult> {
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
     // W1 按类选栈的解析在 parallel_entry（纯并行概念，t1 不读该字段）。
-    let opts = &resolve_branch_rule_defaults(problem, opts);
+    if opts.binary_row_propagation == BinaryPropagationMode::On && ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("二元静态行传播试验仅支持单线程".to_string()));
+    }
+    if opts.reuse_probe_evidence && ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("强分支证据复用试验仅支持单线程".to_string()));
+    }
+    if opts.node_rule == NodeRule::HybridBestBound && (opts.local_cuts || ctrl.threads != 1) {
+        return Err(MilpError::InvalidModel("混合节点策略仅支持单线程且 local_cuts=false".to_string()));
+    }
+    let mut resolved_opts = resolve_branch_rule_defaults(problem, opts);
+    // 必须早于并行分派：小树探测会临时把ctrl.threads改为1，不能重新开启Auto。
+    resolved_opts.binary_row_propagation = opts.binary_row_propagation.resolve(ctrl.threads);
+    let opts = &resolved_opts;
+    if !preserved.is_empty() && (ctrl.threads != 1 || opts.binary_row_propagation != BinaryPropagationMode::On) {
+        return Err(MilpError::Internal("旧认证行只能移交本次单线程传播求解".into()));
+    }
+    // 工作模型从这里起只读；逐位见证留到首次建库核验，根部闭合无需再扫描。
     if ctrl.threads >= 2 {
         // S3/F5 防御：revised 引擎仅接线顺序路径（并行 worker 直接构造稠密
         // Simplex）；对直接 API 调用者显式报错而非静默回 tableau（静默忽略
@@ -474,7 +558,7 @@ pub fn branch_and_bound_controlled(
         }
         return parallel_entry(problem, opts, ctrl, tol, hooks);
     }
-    sequential_bb(problem, opts, ctrl, tol, hooks)
+    sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer, prelude)
 }
 
 /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
@@ -485,13 +569,17 @@ fn sequential_bb(
     ctrl: &SearchControl,
     tol: Tolerances,
     hooks: Option<&SearchHooks>,
+    mut preserved: PreservedBinaryRows,
+    incumbent_observer: WorkIncumbentObserver<'_>,
+    prelude: SearchPrelude,
 ) -> Result<BbResult> {
-    let start = Instant::now();
+    debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
+    let start = prelude.start.unwrap_or_else(Instant::now);
     let int_vars = problem.integer_vars();
     let sense = problem.sense;
     // 整数目标门控（cutoff 剪枝 + est 弹出剪枝共用；纯问题属性，算一次）。
     let obj_integral = objective_is_integral(problem);
-    let mut stats = BbStats::default();
+    let mut stats = BbStats { nodes: prelude.nodes, ..BbStats::default() };
     // —— W3 确定性模式：budget = 纯预算制——time_limit 换算为节点预算，
     // 决策通道的进度量单位从墙钟秒改为节点数（progress_units 注入），节点
     // 边界截断改查节点预算；决策路径零墙钟读点（展示通道——进度行时刻/
@@ -510,7 +598,7 @@ fn sequential_bb(
     };
     // 割丢弃回退（根割 IterationLimit 重建 Simplex）前累计的 LP 迭代数：
     // finish 以 base + 当前 Simplex 迭代数记账，重建不丢根 LP + 割循环迭代。
-    let mut base_lp_iterations: u64 = 0;
+    let mut base_lp_iterations = prelude.lp_iterations;
     let mut simplex = new_engine(problem, tol, opts.lp_engine)?;
     // W2 内部墙钟时限：0（不限）= None ⇒ 零墙钟读点（条件读钟）；重建
     // Simplex（预割轮 / R8 回滚）同款重注入。W3：budget 模式不注入（决策
@@ -523,7 +611,7 @@ fn sequential_bb(
     simplex.set_time_deadline(time_deadline);
     let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
-    let mut incumbent: Option<(f64, Vec<f64>)> = None;
+    let mut incumbent = prelude.incumbent.map(|inc| (inc.objective, inc.values));
     // —— 受控扩展状态（默认全关 ⇒ 零行为变化）——
     // 上行进度行的发射时刻（秒）；仅钩子启用时被写入。
     let mut last_log: Option<f64> = None;
@@ -537,8 +625,24 @@ fn sequential_bb(
         .then(|| AdaptiveState::new(HeuristicConfig::default(), ctrl.degrade));
 
     // —— 根 LP（计 1 节点）——
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::record("context", vec![
+        ("work_variables", problem.vars.len().into()), ("work_rows", problem.constraints.len().into()),
+        ("effective_engine", match crate::simplex_sparse::effective_engine(problem,opts.lp_engine) {
+            LpEngineKind::Revised=>"revised", _=>"tableau" }.into()),
+        ("resolved_branch", match opts.branch_rule {BranchRule::MostFractional=>"most_fractional",BranchRule::Pseudocost=>"pseudocost"}.into()),
+        ("root_cuts_enabled",opts.root_cuts.into()),
+    ]);
+    #[cfg(feature = "proof_profile")]
+    let profile_root_start = Instant::now();
     let mut sol = simplex.solve(&bounds);
-    stats.nodes = 1;
+    #[cfg(test)]
+    test_root_lp_interrupt::apply("initial", &mut sol);
+    stats.nodes += 1;
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp("root_lp", &sol, simplex.iterations(), Some(profile_root_start.elapsed().as_secs_f64()), 0);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp_failure("root_lp",&sol,&*simplex);
 
     // 纯 LP 捷径：无整数变量 ⇒ 单次 LP 直接按其状态返回。
     if int_vars.is_empty() {
@@ -553,6 +657,9 @@ fn sequential_bb(
         };
         let lp_obj = sol.objective;
         let incumbent = if sol.status == LpStatus::Optimal {
+            if let Some(observe) = incumbent_observer {
+                observe(&sol.x);
+            }
             Some((sol.objective, sol.x))
         } else {
             None
@@ -606,14 +713,20 @@ fn sequential_bb(
         } else {
             None
         };
+        let earlier_objective = incumbent.as_ref().map(|(o, _)| *o);
+        if status != SolveStatus::LimitReached {
+            incumbent = None;
+        } else if let Some(inc) = extracted {
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+        }
         // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
         if let Some(h) = hooks {
-            emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+            let progress_objective = earlier_objective.and(incumbent.as_ref().map(|(o, _)| *o));
+            emit_progress(h, &start, stats.nodes, progress_objective, None, sense);
         }
-        let extracted_pair = extracted.map(|inc| (inc.objective, inc.values));
         return Ok(finish(
             status,
-            extracted_pair,
+            incumbent,
             &mut stats,
             &simplex,
             start,
@@ -624,6 +737,73 @@ fn sequential_bb(
         ));
     }
 
+    let mut proven_root_bound = None;
+    remember_root_bound(sense, &mut proven_root_bound, &sol);
+
+    // 总预算只扣启发式LP工作，跨预割/割后共享，不随根重建或快照归零。
+    #[cfg(feature = "root_heuristic_work_budget")]
+    let mut root_work_budget = heuristics::HeuristicWorkBudget {
+        remaining_work: simplex.iterations().saturating_mul(4).max(1000),
+        lp_calls: 1000,
+    };
+    #[cfg(feature = "root_heuristic_work_budget")]
+    let mut root_work_budget = Some(&mut root_work_budget);
+    #[cfg(not(feature = "root_heuristic_work_budget"))]
+    let mut root_work_budget: Option<&mut heuristics::HeuristicWorkBudget> = None;
+
+    // 两处根启发式共用同一出口。完整左右匹配给出的最优值独立于根 LP；
+    // 局部窗口或中断只交付复核过的可行点，随后仍由原搜索处理预算和界。
+    let root_subset_sum = |bounds: &Bounds,
+                           lp_x: &[f64],
+                           incumbent: &mut Option<(f64, Vec<f64>)>,
+                           stats: &mut BbStats,
+                           simplex: &dyn LpEngine,
+                           base_iters: u64| {
+        if incumbent.is_some() || opts.mitm_windows == 0 {
+            return None;
+        }
+        let found = heuristics::subset_sum_search(
+            problem,
+            bounds,
+            lp_x,
+            opts.mitm_windows,
+            &tol,
+            true,
+            time_deadline,
+        )?;
+        let objective = found.incumbent.objective;
+        maybe_update(sense, incumbent, found.incumbent, incumbent_observer);
+        if !found.proven {
+            return None;
+        }
+        if let Some(h) = hooks {
+            emit_progress(
+                h,
+                &start,
+                stats.nodes,
+                Some(objective),
+                Some(objective),
+                sense,
+            );
+        }
+        let status = if time_deadline.is_some_and(|end| Instant::now() >= end) {
+            SolveStatus::LimitReached
+        } else {
+            SolveStatus::Optimal
+        };
+        Some(finish(
+            status,
+            incumbent.take(),
+            stats,
+            simplex,
+            start,
+            base_iters,
+            Some(objective),
+            false,
+            false,
+        ))
+    };
+
     // —— 根预割启发式（仅 root_cuts 开启时额外执行一轮）——
     // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更紧
     // 但取整/潜水质量下降——max 背包类：纯 LP 贪心顶点仅容量断点一个分数
@@ -633,36 +813,34 @@ fn sequential_bb(
     // 不读 incumbent，割序不受影响。关割路径顶点唯一（割前 ≡ 割后），
     // `root_cuts=false` 时不执行 ⇒ 行为逐字节不变。
     if opts.root_cuts && opts.heuristics {
+        // 快照在启发式改界前取得：基、非基贴界、定价历史与绝对deadline一并保留。
+        #[cfg(feature = "root_snapshot_restore")]
+        let root_snapshot = simplex.snapshot();
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        if let Some(inc) = heuristics::dive(
+        if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             opts.dive_max_fixes,
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        // 子集和 MITM（R5-retry）：全 Eq + 全 Binary 类的最后手段——
-        // round/dive（及一切 LP 驱动机制）在该类零产出（marketsplit 大规格
-        // 200 万节点零可行）；MITM 脱离 LP 信息源精确/窗口求解。仅当廉价
-        // 启发式全部 miss（incumbent 为空）才启动，非该类恒零成本跳过。
-        if opts.heuristics
-            && opts.mitm_windows > 0
-            && incumbent.is_none()
-        {
-            if let Some(inc) = heuristics::subset_sum_mitm(
-                problem,
-                &bounds,
-                &sol.x,
-                opts.mitm_windows,
-                &tol,
-            ) {
-                maybe_update(sense, &mut incumbent, inc);
-            }
+        if let Some(result) = root_subset_sum(
+            &bounds, &sol.x, &mut incumbent, &mut stats, &*simplex, base_lp_iterations,
+        ) {
+            return Ok(result);
+        }
+        #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+        if let Some(budget) = root_work_budget.as_deref() {
+            crate::proof_profile::record("root_heuristic_budget", vec![
+                (if cfg!(feature = "root_heuristic_work_limit") { "remaining_work_steps" } else { "remaining_iterations" }, budget.remaining_work.into()),
+                ("remaining_lp_calls", budget.lp_calls.into()),
+            ]);
         }
         // dive 扰动了 Simplex 内部基：割循环入口的防御性 resolve(bounds) 只
         // 恢复 Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
@@ -672,23 +850,47 @@ fn sequential_bb(
         // 与无预割路径逐字节一致的表格），使割循环恒在冷基上分离；incumbent
         // 已由 maybe_update 收取，不受重建影响。迭代记账先累计再重建
         // （与下方 PruneLimit 重建路径同款），不丢数。
-        base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
-        simplex = new_engine(problem, tol, opts.lp_engine)?;
-        simplex.set_time_deadline(time_deadline);
-        sol = simplex.solve(&bounds);
+        #[cfg(not(feature = "root_snapshot_restore"))]
+        {
+            base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
+            simplex = new_engine(problem, tol, opts.lp_engine)?;
+            simplex.set_time_deadline(time_deadline);
+            sol = simplex.solve(&bounds);
+        }
+        #[cfg(feature = "root_snapshot_restore")]
+        {
+            // 快照自带根LP迭代，只把启发式新增迭代记入外部累计，避免重复记账。
+            base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(root_snapshot.iterations()));
+            simplex = root_snapshot;
+            // 恢复快照不执行LP；原sol仍对应该最优基。超时仍必须诚实终止。
+            if time_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                sol.status = LpStatus::TimeLimit;
+                sol.objective = f64::NAN;
+            }
+        }
+        #[cfg(test)]
+        test_root_lp_interrupt::apply("restart", &mut sol);
+        remember_root_bound(sense, &mut proven_root_bound, &sol);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" }, &sol, simplex.iterations(), None, stats.cuts);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp_failure(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" },&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+            let bound = if status == SolveStatus::LimitReached {
+                bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+            } else { None };
             // 首行进度：根阶段终局汇合点（先发射再返回）。
             if let Some(h) = hooks {
-                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), bound, sense);
             }
             return Ok(finish(
                 status,
-                None,
+                if status == SolveStatus::LimitReached { incumbent } else { None },
                 &mut stats,
                 &simplex,
                 start,
                 base_lp_iterations,
-                None,
+                bound,
                 false,
                 false,
             ));
@@ -696,6 +898,8 @@ fn sequential_bb(
     }
 
     // —— 根割循环（可选；割行全局保留至树结束）——
+    #[cfg(feature = "proof_profile")]
+    let profile_cut_start = Instant::now();
     if opts.root_cuts {
         let (applied, st, _recorded) = cuts::cut_loop_recorded(
             &mut simplex,
@@ -714,13 +918,25 @@ fn sequential_bb(
             // 域 ⊇ 含割版本（有效割不切任何整数可行解）⇒ 回退后的完备搜索
             // 覆盖全部整数可行解，最坏等同于关割行为（不误终态、不误剪）。
             NodeAction::PruneLimit => {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::record("cut_outer_rollback_begin",vec![("discarded",applied.into()),("status",crate::proof_profile::status(st).into())]);
                 // 记账完整：重建前 Simplex 的累计迭代（根 LP + 割循环）不丢。
                 base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
                 stats.cuts = 0; // 割已随 Simplex 一起丢弃，如实清零
                 simplex = new_engine(problem, tol, opts.lp_engine)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
+                #[cfg(test)]
+                test_root_lp_interrupt::apply("restart", &mut sol);
+                remember_root_bound(sense, &mut proven_root_bound, &sol);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp("cut_outer_rollback", &sol, simplex.iterations(), None, stats.cuts);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp_failure("cut_outer_rollback",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
                     // 首行进度：根阶段终局汇合点（先发射再返回）。
                     if let Some(h) = hooks {
                         emit_progress(
@@ -728,18 +944,18 @@ fn sequential_bb(
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
@@ -748,51 +964,62 @@ fn sequential_bb(
             _ => {
                 stats.cuts = applied;
                 if let Some(status) = root_terminal(classify_node(st, true))? {
-                    // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
+                    // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
                     if let Some(h) = hooks {
                         emit_progress(
                             h,
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
                 }
                 // 取回割后的根 LP 解（记账性 resolve，不计节点）。
                 sol = simplex.resolve(&bounds);
+                #[cfg(test)]
+                test_root_lp_interrupt::apply("restore", &mut sol);
+                remember_root_bound(sense, &mut proven_root_bound, &sol);
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::lp_failure("root_cut_final_resolve",&sol,&*simplex);
                 if let Some(status) = root_terminal(classify_node(sol.status, true))? {
-                    // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+                    let bound = if status == SolveStatus::LimitReached {
+                        bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+                    } else { None };
+                    // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
                     if let Some(h) = hooks {
                         emit_progress(
                             h,
                             &start,
                             stats.nodes,
                             incumbent.as_ref().map(|(o, _)| *o),
-                            None,
+                            bound,
                             sense,
                         );
                     }
                     return Ok(finish(
                         status,
-                        None,
+                        if status == SolveStatus::LimitReached { incumbent } else { None },
                         &mut stats,
                         &simplex,
                         start,
                         base_lp_iterations,
-                        None,
+                        bound,
                         false,
                         false,
                     ));
@@ -801,20 +1028,25 @@ fn sequential_bb(
         }
     }
 
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp("root_after_cuts", &sol, base_lp_iterations.saturating_add(simplex.iterations()),
+        opts.root_cuts.then(||profile_cut_start.elapsed().as_secs_f64()), stats.cuts);
+
     // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
     if opts.heuristics {
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        if let Some(inc) = heuristics::dive(
+        if let Some(inc) = heuristics::dive_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             opts.dive_max_fixes,
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
         // —— 根节点 sub-MIP 启发式（方向 1，RENS 型受限子问题嵌套分支定界）——
         // 根 LP + 根割循环求解完成后运行：根 LP 解中已取整数值的整数变量按
@@ -825,43 +1057,53 @@ fn sequential_bb(
         // round_and_check 复核（逐行可行性 + 目标按 x 重算）后仅以严格更优
         // 经 maybe_update 入池；启发式绝不影响状态判定。置于 MITM 之前
         //（廉价 LP 驱动先于昂贵组合枚举，命中即免 MITM）。
-        if let Some(inc) = heuristics::sub_mip(
+        if let Some(inc) = heuristics::sub_mip_with_work_budget(
             problem,
             &mut simplex,
             &bounds,
             &sol.x,
             incumbent.as_ref().map(|(o, _)| *o),
             &tol,
+            root_work_budget.as_deref_mut(),
         ) {
-            maybe_update(sense, &mut incumbent, inc);
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        if opts.mitm_windows > 0 && incumbent.is_none() {
-            if let Some(inc) = heuristics::subset_sum_mitm(
-                problem,
-                &bounds,
-                &sol.x,
-                opts.mitm_windows,
-                &tol,
-            ) {
-                maybe_update(sense, &mut incumbent, inc);
-            }
+        if let Some(result) = root_subset_sum(
+            &bounds, &sol.x, &mut incumbent, &mut stats, &*simplex, base_lp_iterations,
+        ) {
+            return Ok(result);
+        }
+        #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
+        if let Some(budget) = root_work_budget.as_deref() {
+            crate::proof_profile::record("root_heuristic_budget", vec![
+                (if cfg!(feature = "root_heuristic_work_limit") { "remaining_work_steps" } else { "remaining_iterations" }, budget.remaining_work.into()),
+                ("remaining_lp_calls", budget.lp_calls.into()),
+            ]);
         }
         // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
         // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。
         sol = simplex.resolve(&bounds);
+        #[cfg(test)]
+        test_root_lp_interrupt::apply("restore", &mut sol);
+        remember_root_bound(sense, &mut proven_root_bound, &sol);
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::lp_failure("root_heuristic_restore",&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
-            // 首行进度：根阶段终局汇合点（先发射再返回；此时尚无前沿栈 ⇒ bound=none）。
+            let bound = if status == SolveStatus::LimitReached {
+                bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
+            } else { None };
+            // 首行进度：根阶段终局汇合点（先发射再返回；中断保留此前已证根界）。
             if let Some(h) = hooks {
-                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), None, sense);
+                emit_progress(h, &start, stats.nodes, incumbent.as_ref().map(|(o, _)| *o), bound, sense);
             }
             return Ok(finish(
                 status,
-                None,
+                if status == SolveStatus::LimitReached { incumbent } else { None },
                 &mut stats,
                 &simplex,
                 start,
                 base_lp_iterations,
-                None,
+                bound,
                 false,
                 false,
             ));
@@ -912,10 +1154,18 @@ fn sequential_bb(
         ))
     });
 
+    // 完整传播库仍延迟到首次孩子。旧行回退试验已在 presolve 认证少量改动行，
+    // 根部闭合会直接释放该载荷；不开启试验时维持旧有的完全延迟认证路径。
+    let mut propagation: Option<BinaryPropagation> = None;
+
     // —— DFS 主循环状态 ——
     let mut stack: Vec<Pending> = Vec::new();
     let mut trail: Vec<TrailEntry> = Vec::new();
     let mut limit_hit = false;
+    // LP 未解完的子树不重试，但仍属于证明前沿。只需保存方向极值：
+    // 各旧est都是对应子树的乐观界；与可执行栈及incumbent一起聚合才能
+    // 覆盖整棵树。即使后来incumbent支配此界，limit_hit仍保持粘滞。
+    let mut unresolved_bound = None;
     // 策略级自动降级触发标记（与 gap_hit 同径终止，报告侧另附原因）。
     let mut degraded = false;
     // 伪代价分支统计（仅 Pseudocost 规则读写；MostFractional 下为零开销
@@ -938,6 +1188,14 @@ fn sequential_bb(
     let local_cuts_on = opts.local_cuts && detect_pseudocost_favorable(problem);
 
     // 根节点按 (d)/(e)/(f) 判定（无界等已终局，此处的 Unbounded 恒为根语义）。
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::record("root_ready", vec![
+        ("inherited_lp_bound", crate::proof_profile::bound(&sol)),
+        ("incumbent", crate::proof_profile::optional(incumbent.as_ref().map(|(o,_)|*o))),
+        ("fractional_integer_count",int_vars.iter().filter(|&&j| (sol.x[j]-sol.x[j].round()).abs()>tol.integrality).count().into()),
+        ("root_rc_fixed",stats.rc_fixed.into()),
+        ("resolved_branch",match opts.branch_rule{BranchRule::MostFractional=>"most_fractional",BranchRule::Pseudocost=>"pseudocost"}.into()),
+    ]);
     let inc_before_root = incumbent.as_ref().map(|(o, _)| *o);
     branch_or_close(
         problem,
@@ -948,6 +1206,7 @@ fn sequential_bb(
         opts,
         obj_integral,
         &mut incumbent,
+        incumbent_observer,
         &mut stack,
         &mut trail,
         &mut simplex,
@@ -956,6 +1215,7 @@ fn sequential_bb(
         budget_progress_cap,
         &mut pc,
         adaptive.as_mut(),
+        None,
         0,
     );
     // S13-A：根节点判定产生的 incumbent 严格改进（如根 LP 恰整数、根
@@ -979,12 +1239,15 @@ fn sequential_bb(
     // incumbent（gap=0），杜绝 incumbent=X bound=none gap=inf 矛盾行）——
     if let Some(h) = hooks {
         let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-        let bound = frontier_bound(sense, &stack, inc_obj);
+        let bound = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
         emit_progress(h, &start, stats.nodes, inc_obj, bound, sense);
         last_log = Some(start.elapsed().as_secs_f64());
     }
 
     loop {
+        #[cfg(feature = "proof_profile")]
+        crate::proof_profile::frontier(sense,stats.nodes,false,incumbent.as_ref().map(|(o,_)|*o),
+            unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
         // —— 受控扩展（默认全关 ⇒ 与原实现逐字节一致）。①/② 仅在栈非空时
         // 参与：空栈轮次直接落到下方 pop 的自然 break（Optimal/Infeasible），
         // 杜绝 incumbent=X bound=none gap=inf 矛盾周期行——
@@ -994,7 +1257,7 @@ fn sequential_bb(
                 let now = start.elapsed().as_secs_f64();
                 if period > 0.0 && last_log.is_some_and(|t| now - t >= period) {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
                     emit_progress(h, &start, stats.nodes, inc_obj, db, sense);
                     last_log = Some(now);
                 }
@@ -1004,7 +1267,7 @@ fn sequential_bb(
             if let Some(p) = ctrl.mipgap_percent {
                 if p > 0.0 {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
                     if let (Some(inc), Some(db)) = (inc_obj, db) {
                         if let Some(g) = gap_percent(sense, inc, db) {
                             if g <= p {
@@ -1016,7 +1279,7 @@ fn sequential_bb(
                     }
                 }
             }
-            // ③ 策略级自动降级（仅 auto 模式且给了时间预算）：资格预检通过
+            // ③ 策略级自动降级（auto 模式、有时间预算且政策未禁用）：资格预检通过
             // 才聚合前沿界（避免逐节点 O(栈) 开销）；双停滞（incumbent 与界
             // 都不再前进）⇒ 与 ② 同径提前终止，证据口径一致。W3：budget
             // 模式的进度/预算/停滞锚点单位 = 节点数（progress_units 注入，
@@ -1024,7 +1287,8 @@ fn sequential_bb(
             if let (Some(state), Some(budget)) = (adaptive.as_mut(), budget_progress_cap) {
                 let now = progress_units(&start, stats.nodes, budget_mode);
                 if AutoDegrade::eligible(state.degrade.cfg(), now, Some(budget)) {
-                    let db = aggregate_bound(sense, stack.iter().map(|q| q.est));
+                    let db = frontier_bound(sense, &stack, unresolved_bound,
+                        incumbent.as_ref().map(|(obj, _)| *obj));
                     let snap = DegradeSnapshot {
                         sense,
                         elapsed_secs: now,
@@ -1043,9 +1307,21 @@ fn sequential_bb(
             }
         }
         // 栈空 ⇒ 搜索自然耗尽（先于上限判定，见模块实现说明）。
-        let Some(p) = stack.pop() else {
+        let selected = if opts.node_rule == NodeRule::HybridBestBound && stats.nodes % 64 == 0 {
+            stack.iter().enumerate().min_by(|(ia, a), (ib, b)| {
+                let order = match sense {
+                    Sense::Minimize => a.est.total_cmp(&b.est),
+                    Sense::Maximize => b.est.total_cmp(&a.est),
+                };
+                order.then(ia.cmp(ib))
+            }).map(|(i, _)| i)
+        } else { None };
+        let pending = selected.map(|i| stack.remove(i)).or_else(|| stack.pop());
+        let Some(p) = pending else {
             break;
         };
+        #[cfg(feature = "proof_profile")]
+        let profile_node = crate::proof_profile::node(p.depth,p.var,p.tighten_lb,p.est,p.parent_lp_objective,selected.is_some());
         // W6：退出局部割作用域——弹出的 Pending 属祖先层（unwind_to 更短）
         // ⇒ 其施加点在作用域栈顶的割全部出域，恢复快照（栈序 = 深度序）。
         while let Some(&(scope_trail, _, _)) = cut_scopes.last() {
@@ -1054,17 +1330,27 @@ fn sequential_bb(
                 base_lp_iterations =
                     base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(snap_iters));
                 simplex = snap;
+                #[cfg(test)]
+                binary_propagation_tests::note_local_scope_restore();
             } else {
                 break;
             }
         }
-        // est 弹出剪枝（仅整数目标启用，与 cutoff 同门控）：父节点 LP 目标
-        // est 已不优于 incumbent 的有效剪枝界 ⇒ 该子树不可能再出严格更优解，
+        // est 弹出剪枝（整数目标或探测子界实际加强）：子树有效界已不优于
+        // incumbent 的剪枝界 ⇒ 该子树不可能再出严格更优解，
         // 直接丢弃——不 unwind/tighten、不 resolve、不计 stats.nodes、不耗
         // node_limit（est 是子树最优值的方向性乐观界，判定与 (d) 同口径）。
-        if obj_integral {
+        // 非整数目标只消费真正加强的探测证据；无探测或界未加强时不引入
+        // 一般父界提前剪枝，使开关的测量收益只来自证据复用。
+        let tighter_probe_bound = opts.reuse_probe_evidence && match sense {
+            Sense::Maximize => p.est < p.parent_lp_objective,
+            Sense::Minimize => p.est > p.parent_lp_objective,
+        };
+        if obj_integral || tighter_probe_bound {
             if let Some((obj, _)) = incumbent.as_ref() {
-                if bound_no_better(sense, p.est, *obj, true, opts.prune_abs, opts.prune_rel) {
+                if bound_no_better(sense, p.est, *obj, obj_integral, opts.prune_abs, opts.prune_rel) {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"est_prune");
                     continue;
                 }
             }
@@ -1072,20 +1358,35 @@ fn sequential_bb(
         // 节点/时间上限：每次 resolve 前检查；0 = 不限。W3：budget 模式的
         // 时限语义 = 节点预算（确定性，零墙钟读点）；wall 模式照旧墙钟检查。
         if opts.node_limit != 0 && stats.nodes >= opts.node_limit {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"limit_requeued");
+            stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
         }
         if let Some(cap) = budget_node_cap {
             if stats.nodes >= cap {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::node_outcome(profile_node,"limit_requeued");
+                stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
                 limit_hit = true;
                 break;
             }
         } else if opts.time_limit_ms != 0 && time_exceeded(&start, opts.time_limit_ms) {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"limit_requeued");
+            stack.push(p); // 未处理节点仍属前沿，终止界不能遗漏。
             limit_hit = true;
             break;
         }
         // 回退到父路径界状态后施加本分支界；空界/无收缩 ⇒ (f) 剪枝（不 resolve）。
-        unwind(&mut trail, &mut bounds, p.unwind_to);
+        if let Some(parent_bounds) = p.parent_bounds.as_ref() {
+            // 恢复完整父域，不能用DFS的长度回退重建已经离开的祖先路径。
+            parent_bounds.restore(&mut bounds);
+            trail.clear();
+        } else {
+            unwind(&mut trail, &mut bounds, p.unwind_to);
+        }
         // —— S13-A：已入栈节点的界快照在展开时与全局固定取交 ——
         // **顺序必须是 tighten_child 之后**：unwind 恢复的是压栈时刻的基础界
         //（固定只存覆盖层、绝不在 unwind 可达的 trail 里），tighten 在与压栈
@@ -1100,21 +1401,69 @@ fn sequential_bb(
         // 都重施加覆盖层 ⇒ unwind 恢复旧值不丢固定（不漏）。与并行侧同口径
         //（PoolNode 快照在创建时已含分支界，弹出后仅做同一取交）。
         if !tighten_child(&mut bounds, &mut trail, p.var, p.tighten_lb, p.bound) {
+            #[cfg(feature = "proof_profile")]
+            crate::proof_profile::node_outcome(profile_node,"empty_or_unchanged_branch");
             continue;
         }
         if let Some(state) = rc_refix.as_ref() {
             if state.has_fixes() && !state.intersect(&mut bounds) {
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::node_outcome(profile_node,"rc_conflict");
                 continue;
             }
         }
+        if opts.binary_row_propagation == BinaryPropagationMode::On {
+            if propagation.is_none() {
+                propagation = Some(BinaryPropagation::with_preserved(problem, tol,
+                    std::mem::take(&mut preserved)).ok_or_else(||
+                        MilpError::Internal("旧认证行建库前核验失败".into()))?);
+            }
+            let state = propagation.as_mut().ok_or_else(||
+                MilpError::Internal("二元传播数据库未完成初始化".into()))?;
+            // RC 覆盖层不记 trail；即使本次取交未改界，也必须重播种全部日志。
+            // 深层父域已闭包，只有分支界与 RC 前提可能新增静态行推论。
+            let seeds = std::iter::once(p.var).chain(
+                rc_refix.as_ref().into_iter().flat_map(|rc| rc.log.iter().map(|e| e.var)),
+            );
+            let outcome = state.propagate(&mut bounds, p.depth == 1, seeds, time_deadline,
+                |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old }));
+            stats.propagation = state.stats;
+            match outcome {
+                PropagationOutcome::Conflict => {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"propagation_conflict");
+                    continue;
+                },
+                PropagationOutcome::Deadline => {
+                    #[cfg(feature = "proof_profile")]
+                    crate::proof_profile::node_outcome(profile_node,"propagation_deadline_requeued");
+                    // 中断不是不可行证明：当前子树仍在前沿，终态必须限额退出。
+                    stack.push(p);
+                    limit_hit = true;
+                    break;
+                }
+                PropagationOutcome::Complete => {}
+            }
+        }
+        #[cfg(feature = "proof_profile")]
+        let profile_iterations = simplex.iterations();
         let mut sol = simplex.resolve(&bounds);
+        #[cfg(test)]
+        test_node_lp_interrupt::apply(p.var, p.tighten_lb, p.depth, &mut sol);
+        #[cfg(feature = "proof_profile")]
+        {
+            let iterations = simplex.iterations().saturating_sub(profile_iterations);
+            crate::proof_profile::node_lp(profile_node,&sol,iterations);
+            crate::proof_profile::lp_failure("tree_lp",&sol,&*simplex);
+            crate::proof_profile::tree_lp(&sol,sense,p.est,p.depth,iterations);
+        }
         stats.nodes += 1;
-        // 伪代价观测：子节点 LP 目标相对父 est 的方向化增益 ÷ 方向分数
+        // 伪代价观测：子节点 LP 目标相对父 LP 目标的方向化增益 ÷ 方向分数
         // 距离（非 Optimal 子节点不记——不可行=无穷增益语义留空，保守）。
         if opts.branch_rule == BranchRule::Pseudocost && sol.status == LpStatus::Optimal {
             let gain = match sense {
-                Sense::Maximize => p.est - sol.objective,
-                Sense::Minimize => sol.objective - p.est,
+                Sense::Maximize => p.parent_lp_objective - sol.objective,
+                Sense::Minimize => sol.objective - p.parent_lp_objective,
             };
             if gain.is_finite() && gain > 0.0 && p.frac_dir > tol.integrality {
                 pc.record(p.var, p.tighten_lb, gain / p.frac_dir);
@@ -1125,13 +1474,15 @@ fn sequential_bb(
         match classify_node(sol.status, false) {
             NodeAction::Prune => continue,
             NodeAction::PruneLimit => {
+                remember_unresolved(sense, &mut unresolved_bound, p.est);
                 limit_hit = true;
                 continue;
             }
-            // W2：节点内墙钟超限 ⇒ 与 PruneLimit 同处置（剪枝 + limit_hit
+            // W2：节点内墙钟超限 ⇒ 与 PruneLimit 同处置（保留旧界 + limit_hit
             // 粘滞），下一轮顶部的节点/时间上限检查立即停树 ⇒ 诚实
             // LimitReached。
             NodeAction::TruncateTime => {
+                remember_unresolved(sense, &mut unresolved_bound, p.est);
                 limit_hit = true;
                 continue;
             }
@@ -1224,6 +1575,7 @@ fn sequential_bb(
             opts,
             obj_integral,
             &mut incumbent,
+            incumbent_observer,
             &mut stack,
             &mut trail,
             &mut simplex,
@@ -1232,6 +1584,7 @@ fn sequential_bb(
             budget_progress_cap,
             &mut pc,
             adaptive.as_mut(),
+            p.parent_bounds.as_deref(),
             p.depth,
         );
         // S13-A：本节点判定（(e) 记录或自适应 dive 命中）产生的 incumbent
@@ -1245,6 +1598,10 @@ fn sequential_bb(
         );
     }
 
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::frontier(sense,stats.nodes,true,incumbent.as_ref().map(|(o,_)|*o),
+        unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
+
     // —— 终态判定（与上限诚实性整合，禁止字面分裂）：gap 达标与上限触发
     // 一律 LimitReached（诚实：未证明最优），粘滞标记优先于完备判定——
     let status = if limit_hit || gap_hit {
@@ -1254,13 +1611,13 @@ fn sequential_bb(
     } else {
         SolveStatus::Infeasible
     };
-    // —— bound 口径：gap 终止 = 触发时刻证据 db；截断 = 剩余栈 est 聚合
-    //（可 None）；完备有 incumbent = best_objective；Infeasible = None——
+    // —— 截断界必须覆盖剩余栈与所有未解完LP子树；不能因执行栈空就丢界。
+    // incumbent也参与方向极值，避免已被它支配的旧子树界越过已知可行值。
     let best_objective = incumbent.as_ref().map(|(o, _)| *o);
     let bound = if gap_hit {
         gap_evidence
     } else if limit_hit {
-        aggregate_bound(sense, stack.iter().map(|q| q.est))
+        frontier_bound(sense, &stack, unresolved_bound, best_objective)
     } else if status == SolveStatus::Optimal {
         best_objective
     } else {
@@ -1288,10 +1645,10 @@ fn sequential_bb(
 enum NodeAction {
     /// (a) LP 不可行 ⇒ 剪枝回溯。
     Prune,
-    /// (c) 迭代上限 ⇒ 剪枝并置 limit_hit 标记。
+    /// (c) 迭代上限 ⇒ 保留子树旧界并置 limit_hit，继续其它子树。
     PruneLimit,
     /// (c') 内部墙钟超限（W2，[`LpStatus::TimeLimit`]）⇒ 诚实截断：树节点
-    /// 侧与 PruneLimit 同处置（剪枝 + limit_hit 粘滞，随后节点边界检查立即
+    /// 侧与 PruneLimit 同处置（保留旧界 + limit_hit 粘滞，随后节点边界检查立即
     /// 停树）；**根侧刻意与 PruneLimit 分离**——割循环据此走「直接
     /// LimitReached 终态」而非 R8 回滚（回滚重建+重放是又一次整段根 LP，
     /// 会把超限点再拖过 deadline，见 cuts.rs 回滚语义注）。
@@ -1914,20 +2271,72 @@ struct TrailEntry {
     old: f64,
 }
 
+/// 32列一块兼顾块指针开销与单列分支的复制量；不改变搜索或内存预算。
+const DOMAIN_BLOCK_COLUMNS: usize = 32;
+type DomainBlock = [[f64; 2]; DOMAIN_BLOCK_COLUMNS];
+
+/// 混合搜索的完整父域：共享未改动的块，不引用祖先快照，释放深度不随树深增长。
+///
+/// 捕获发生在压栈前，逐位比较实际边界，故包含不记入trail的RC覆盖层和所有其它修改。
+/// 块不可变；兄弟快照及跨子树恢复均不会相互污染。只在允许单线程的混合模式使用Rc。
+struct DomainSnapshot {
+    columns: usize,
+    blocks: Box<[Rc<DomainBlock>]>,
+}
+
+impl DomainSnapshot {
+    fn capture(bounds: &Bounds, previous: Option<&Self>) -> Self {
+        let columns = bounds.lb.len();
+        debug_assert_eq!(columns, bounds.ub.len());
+        let mut blocks = Vec::with_capacity(columns.div_ceil(DOMAIN_BLOCK_COLUMNS));
+        for begin in (0..columns).step_by(DOMAIN_BLOCK_COLUMNS) {
+            let end = (begin + DOMAIN_BLOCK_COLUMNS).min(columns);
+            let old = previous.filter(|p| p.columns == columns)
+                .map(|p| &p.blocks[begin / DOMAIN_BLOCK_COLUMNS]);
+            if let Some(old) = old.filter(|old| (begin..end).all(|j| {
+                old[j - begin][0].to_bits() == bounds.lb[j].to_bits()
+                    && old[j - begin][1].to_bits() == bounds.ub[j].to_bits()
+            })) {
+                blocks.push(Rc::clone(old));
+            } else {
+                let mut block = [[0.0; 2]; DOMAIN_BLOCK_COLUMNS];
+                for j in begin..end { block[j - begin] = [bounds.lb[j], bounds.ub[j]]; }
+                blocks.push(Rc::new(block));
+            }
+        }
+        Self { columns, blocks: blocks.into_boxed_slice() }
+    }
+
+    fn restore(&self, bounds: &mut Bounds) {
+        // 同一搜索中的列数不变，通常只复用现有缓冲，不再逐节点分配两条Vec。
+        bounds.lb.resize(self.columns, 0.0);
+        bounds.ub.resize(self.columns, 0.0);
+        for (i, block) in self.blocks.iter().enumerate() {
+            let begin = i * DOMAIN_BLOCK_COLUMNS;
+            let end = (begin + DOMAIN_BLOCK_COLUMNS).min(self.columns);
+            for j in begin..end {
+                bounds.lb[j] = block[j - begin][0];
+                bounds.ub[j] = block[j - begin][1];
+            }
+        }
+    }
+}
+
 /// 待应用的分支决策（stack 元素）。
 struct Pending {
+    /// 仅混合策略保存共享父域快照；兄弟节点共用，默认DFS不分配。
+    parent_bounds: Option<Rc<DomainSnapshot>>,
     var: usize,
     /// true = 上行分支（收紧 lb 至 ⌊x̄⌋+1）；false = 下行（收紧 ub 至 ⌊x̄⌋）。
     tighten_lb: bool,
     bound: f64,
     /// 应用本决策前 trail 应回到的长度（即父路径的 trail 状态）。
     unwind_to: usize,
-    /// 压栈时父节点 LP 目标（该子树最优值的上界估计）。整数目标门控开启时
-    /// 参与陈旧前沿弹出剪枝（est 不优于有效剪枝界 ⇒ 弹出即弃，见主循环）；
-    /// 否则为纯数据，仅供受控口径（对偶界聚合
-    /// [`crate::search_ctrl::aggregate_bound`] / gap 判定 / 进度行）读取；
-    /// 伪代价分支也用它记录子节点增益。
+    /// 该子树的有效 LP 界：缺省继承父目标，试验可收紧为当前父域中已证的
+    /// 强分支子界。它只供前沿定界/剪枝，不能冒充该节点已经完成 LP 求解。
     est: f64,
+    /// 伪代价观测的父 LP 目标，不能被更紧的子节点 est 替代。
+    parent_lp_objective: f64,
     /// 该方向距被违反界的分数距离（下行 = x_j−⌊x_j⌋；上行 = ⌈x_j⌉−x_j），
     /// 伪代价观测用。非伪代价规则下不读。
     frac_dir: f64,
@@ -1996,6 +2405,45 @@ const PC_PROBE_MAX_DEPTH: usize = 8;
 /// 全树统计可靠；上限防止大实例（数百分数变量）根探测白烧。
 const PC_ROOT_PROBE_MAX_CANDIDATES: usize = 64;
 
+/// 单个强分支方向的证明信息。只有求解器明确证到最优/不可行才有证据；
+/// 迭代/时间上限、非有限目标、无界等异常均为 Unknown，绝不据此剪枝。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ProbeProof {
+    Unknown,
+    Infeasible,
+    OptimalBound(f64),
+}
+
+impl ProbeProof {
+    fn from_solution(sol: &LpSolution) -> Self {
+        match sol.status {
+            LpStatus::Infeasible => Self::Infeasible,
+            LpStatus::Optimal if sol.objective.is_finite() => Self::OptimalBound(sol.objective),
+            _ => Self::Unknown,
+        }
+    }
+
+    /// None 只表示该方向已经证明不可行；无证据时保留父界，不跳过节点 LP。
+    fn child_bound(self, sense: Sense, parent_bound: f64) -> Option<f64> {
+        match self {
+            Self::Infeasible => None,
+            Self::Unknown => Some(parent_bound),
+            Self::OptimalBound(bound) => Some(match sense {
+                Sense::Maximize => parent_bound.min(bound),
+                Sense::Minimize => parent_bound.max(bound),
+            }),
+        }
+    }
+}
+
+/// 证据只属于本次调用的父域和局部割集合；由 branch_or_close 立即消费，
+/// 不写入跨节点缓存。未选中变量的证据丢弃，不擅自修改其它方向的域。
+pub(crate) struct ProbeCandidate {
+    var: usize,
+    down: ProbeProof,
+    up: ProbeProof,
+}
+
 /// P1-4 可靠性强分支冷启动：对 `n_obs < η` 的分数候选（按当前伪代价得分
 /// 降序、并列最小下标——先探测规则认为最值得分支的变量）做 down+up 双向
 /// 探测：收紧分支界 → resolve → 按主循环子节点同口径 `pc.record` → 恢复
@@ -2015,8 +2463,10 @@ const PC_ROOT_PROBE_MAX_CANDIDATES: usize = 64;
 /// 正确性论证：探测只读取候选子节点的 LP 目标并精确恢复原界——不剪枝、
 /// 不更新 incumbent、不写 trail（界修改直接改写并逐条恢复，trail 长度
 /// 不变）⇒ 本节点的 (d)/(e) 判定与分支决策仍在原 LP 解 `sol` 上进行，
-/// 两分支域划分完备性不受影响，搜索完整性不变。非 Optimal 探测结果不记
-/// （与主循环子节点被动观测同口径：不可行 = 无穷增益语义留空，保守）。
+/// 两分支域划分完备性不受影响。伪代价仍只记录 Optimal 的正增益；试验
+/// 开关额外返回当前父域内已证的子界/不可行性，只允许用于同次调用选中的
+/// 两个子分支。局部割在该父域全体整数解上有效，所以证据对子树有效，
+/// 但不得外推给父域之外的兄弟子树。开关关闭不分配证据存储。
 pub(crate) fn probe_reliability(
     sense: Sense,
     bounds: &mut Bounds,
@@ -2028,10 +2478,12 @@ pub(crate) fn probe_reliability(
     pc: &mut Pseudocosts,
     simplex: &mut dyn LpEngine,
     depth: usize,
-) {
+) -> Vec<ProbeCandidate> {
     if opts.pc_reliability_probes == 0 || depth > PC_PROBE_MAX_DEPTH {
-        return;
+        return Vec::new();
     }
+    #[cfg(feature = "proof_profile")]
+    let _profile_scope = crate::proof_profile::ProbeScope::new(depth);
     // 分数候选（与 Pseudocosts::select 同口径过滤）中的低观测者。
     let mut candidates: Vec<(usize, f64, f64)> = Vec::new(); // (var, LP 值, 得分)
     for &j in int_vars {
@@ -2062,6 +2514,7 @@ pub(crate) fn probe_reliability(
     } else {
         opts.pc_reliability_probes
     };
+    let mut evidence = Vec::new();
     for &(j, v, _) in &candidates {
         if budget < 2 {
             break; // 一个候选需 down+up 两次 resolve（方向对称成对探测）
@@ -2069,8 +2522,9 @@ pub(crate) fn probe_reliability(
         let floor = v.floor();
         let frac = v - floor;
         // down：ub → ⌊x⌋（frac_dir = f）；up：lb → ⌊x⌋+1（frac_dir = 1−f）。
-        budget -= probe_one(sense, bounds, simplex, j, false, floor, est, frac, pc, tol);
-        budget -= probe_one(
+        let (down_calls, down) = probe_one(sense, bounds, simplex, j, false, floor, est, frac, pc, tol);
+        budget -= down_calls;
+        let (up_calls, up) = probe_one(
             sense,
             bounds,
             simplex,
@@ -2082,12 +2536,17 @@ pub(crate) fn probe_reliability(
             pc,
             tol,
         );
+        budget -= up_calls;
+        if opts.reuse_probe_evidence {
+            evidence.push(ProbeCandidate { var: j, down, up });
+        }
     }
+    evidence
 }
 
 /// 单方向探测：收紧 → resolve →（Optimal 且严格正增益时）按方向记账 →
-/// 恢复原界。返回实际发生的 resolve 次数（0 = 分支界相对当前界无收缩/
-/// 区间空——与 [`tighten_child`] 同判定，跳过）。
+/// 恢复原界。返回实际发生的 resolve 次数与证明信息（0 = 分支界相对当前界
+/// 无收缩/区间空——与 [`tighten_child`] 同判定，保守返回 Unknown）。
 fn probe_one(
     sense: Sense,
     bounds: &mut Bounds,
@@ -2099,7 +2558,7 @@ fn probe_one(
     frac_dir: f64,
     pc: &mut Pseudocosts,
     tol: Tolerances,
-) -> usize {
+) -> (usize, ProbeProof) {
     // 与 tighten_child 同判定的可应用性（严格收缩且新区间非空）。
     let applicable = if tighten_lb {
         bound > bounds.lb[j] && bound <= bounds.ub[j]
@@ -2107,7 +2566,7 @@ fn probe_one(
         bound < bounds.ub[j] && bound >= bounds.lb[j]
     };
     if !applicable {
-        return 0;
+        return (0, ProbeProof::Unknown);
     }
     let old = if tighten_lb { bounds.lb[j] } else { bounds.ub[j] };
     if tighten_lb {
@@ -2115,7 +2574,13 @@ fn probe_one(
     } else {
         bounds.ub[j] = bound;
     }
+    #[cfg(feature = "proof_profile")]
+    let profile_start = (Instant::now(),simplex.iterations());
     let res = simplex.resolve(bounds);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::probe(&res,sense,est,simplex.iterations().saturating_sub(profile_start.1),profile_start.0.elapsed().as_secs_f64(),j);
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::lp_failure("strong_branch_probe",&res,simplex);
     if res.status == LpStatus::Optimal {
         // 与主循环子节点被动观测完全同口径的方向化增益 ÷ 分数距离。
         let gain = match sense {
@@ -2132,7 +2597,7 @@ fn probe_one(
     } else {
         bounds.ub[j] = old;
     }
-    1
+    (1, ProbeProof::from_solution(&res))
 }
 
 // ===========================================================================
@@ -2163,6 +2628,7 @@ fn branch_or_close(
     opts: &BbOptions,
     obj_integral: bool,
     incumbent: &mut Option<(f64, Vec<f64>)>,
+    incumbent_observer: WorkIncumbentObserver<'_>,
     stack: &mut Vec<Pending>,
     trail: &mut Vec<TrailEntry>,
     simplex: &mut dyn LpEngine,
@@ -2173,6 +2639,7 @@ fn branch_or_close(
     budget_progress_cap: Option<f64>,
     pc: &mut Pseudocosts,
     mut adaptive: Option<&mut AdaptiveState>,
+    parent_domain: Option<&DomainSnapshot>,
     depth: u32,
 ) {
     // (d)：LP bound 不优于 incumbent ⇒ 剪枝（按原始 sense 方向比较）。
@@ -2194,7 +2661,7 @@ fn branch_or_close(
     let mut improved = false;
     if integral {
         if let Some(inc) = heuristics::round_and_check(problem, bounds, &sol.x, &tol) {
-            improved = maybe_update(problem.sense, incumbent, inc);
+            improved = maybe_update(problem.sense, incumbent, inc, incumbent_observer);
             check_passed = true;
         }
     }
@@ -2227,7 +2694,7 @@ fn branch_or_close(
                 opts.dive_max_fixes,
                 &tol,
             ) {
-                Some(inc) => maybe_update(problem.sense, incumbent, inc),
+                Some(inc) => maybe_update(problem.sense, incumbent, inc, incumbent_observer),
                 None => false,
             };
             state.controller.record(hit);
@@ -2243,8 +2710,10 @@ fn branch_or_close(
     // P1-4 可靠性强分支冷启动（仅 Pseudocost 且预算 > 0 时有实际动作）：
     // 分支选择前对低观测候选做 down+up 双向探测，为本地伪代价统计供应
     // 可靠初值。探测只读 LP 界并精确恢复（见 probe_reliability 正确性
-    // 论证）——不剪枝、不记节点、不动 incumbent，搜索完整性不变。
-    if opts.branch_rule == BranchRule::Pseudocost {
+    // 论证）——不记节点、不动 incumbent；试验只复用同一父域内的证明。
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::clear_probed();
+    let evidence = if opts.branch_rule == BranchRule::Pseudocost {
         probe_reliability(
             problem.sense,
             bounds,
@@ -2255,9 +2724,11 @@ fn branch_or_close(
             opts,
             pc,
             simplex,
-            trail.len(),
-        );
-    }
+            depth as usize,
+        )
+    } else {
+        Vec::new()
+    };
     // 分支：按规则选变量（MostFractional / Pseudocost）；无可分支变量为
     // 内部不可达防御（不剪枝即丢弃节点）。
     let selected = match opts.branch_rule {
@@ -2267,6 +2738,8 @@ fn branch_or_close(
     let Some((var, val)) = selected else {
         return;
     };
+    #[cfg(feature = "proof_profile")]
+    crate::proof_profile::chosen(depth,var,pc.n_obs(var));
     let floor = val.floor();
     let frac = val - floor;
     let unwind_to = trail.len();
@@ -2278,32 +2751,48 @@ fn branch_or_close(
     // 域划分的完备性，DFS 全覆盖不变。
     let explore_up_first = pc.n_obs(var) > 0
         && pc.est_gain(var, true, 1.0 - frac) < pc.est_gain(var, false, frac);
-    // est = 压栈时父节点 LP 目标；frac_dir = 该方向距界的分数距离
-    // （伪代价观测用）。
-    let up = Pending {
+    // 只消费本次探测、最终分支变量的证据。它是在当前父域和当前局部割下
+    // 证明的，因此只属于这两个孩子；未选变量和后续兄弟节点不能借用。
+    let proof = evidence.iter().find(|entry| entry.var == var);
+    let up_bound = proof.map_or(ProbeProof::Unknown, |entry| entry.up)
+        .child_bound(problem.sense, sol.objective);
+    let down_bound = proof.map_or(ProbeProof::Unknown, |entry| entry.down)
+        .child_bound(problem.sense, sol.objective);
+    if up_bound.is_none() && down_bound.is_none() {
+        return; // 两侧均有不可行证明，当前整数子树关闭。
+    }
+    // est 仅保存有效界；即使探测已解 LP，也不复用其解/基或整数性结论。
+    // parent_lp_objective 始终保留真正父目标，伪代价不能拿收紧后的子界作基准。
+    let parent_bounds = (opts.node_rule == NodeRule::HybridBestBound)
+        .then(|| Rc::new(DomainSnapshot::capture(bounds, parent_domain)));
+    let up = up_bound.map(|est| Pending {
+        parent_bounds: parent_bounds.clone(),
         depth: depth + 1,
         var,
         tighten_lb: true,
         bound: floor + 1.0,
         unwind_to,
-        est: sol.objective,
+        est,
+        parent_lp_objective: sol.objective,
         frac_dir: 1.0 - frac,
-    };
-    let down = Pending {
+    });
+    let down = down_bound.map(|est| Pending {
+        parent_bounds,
         depth: depth + 1,
         var,
         tighten_lb: false,
         bound: floor,
         unwind_to,
-        est: sol.objective,
+        est,
+        parent_lp_objective: sol.objective,
         frac_dir: frac,
-    };
+    });
     if explore_up_first {
-        stack.push(down);
-        stack.push(up); // 后压 ⇒ 先弹出探索
+        stack.extend(down);
+        stack.extend(up); // 后压 ⇒ 先弹出探索
     } else {
-        stack.push(up); // 现序：上行先压（后弹出）、下行先探索
-        stack.push(down);
+        stack.extend(up); // 现序：上行先压（后弹出）、下行先探索
+        stack.extend(down);
     }
 }
 
@@ -2333,7 +2822,12 @@ impl AdaptiveState {
 
 /// 严格更优才替换 incumbent（按原始 sense 方向；目标与取值均为 WP3 取整后
 /// 口径，防报不可行值）。返回是否发生了替换（自适应控制器的 hit 语义）。
-fn maybe_update(sense: Sense, incumbent: &mut Option<(f64, Vec<f64>)>, inc: Incumbent) -> bool {
+fn maybe_update(
+    sense: Sense,
+    incumbent: &mut Option<(f64, Vec<f64>)>,
+    inc: Incumbent,
+    incumbent_observer: WorkIncumbentObserver<'_>,
+) -> bool {
     if !inc.objective.is_finite() {
         return false; // 防御：非有限目标不入 incumbent
     }
@@ -2345,6 +2839,9 @@ fn maybe_update(sense: Sense, incumbent: &mut Option<(f64, Vec<f64>)>, inc: Incu
         },
     };
     if better {
+        if let Some(observe) = incumbent_observer {
+            observe(&inc.values);
+        }
         *incumbent = Some((inc.objective, inc.values));
     }
     better
@@ -2391,7 +2888,7 @@ pub(crate) const BUDGET_NODES_PER_SEC: f64 = 6_000.0;
 /// W3：budget 模式下 `time_limit_ms` 的等价节点预算（确定性换算；
 /// `time_limit_ms = 0` = 不限 ⇒ None——降级与预算保护关闭，行为 ≡ 无时限）。
 /// ceil + max(1)：任何正时限至少允许 1 个节点（根）。
-fn budget_node_cap_of(opts: &BbOptions) -> u64 {
+pub(crate) fn budget_node_cap_of(opts: &BbOptions) -> u64 {
     debug_assert!(opts.time_limit_ms > 0);
     let secs = opts.time_limit_ms as f64 / 1000.0;
     ((secs * BUDGET_NODES_PER_SEC).ceil() as u64).max(1)
@@ -2444,16 +2941,331 @@ fn finish(
 // 受控口径的纯辅助（进度行与对偶界聚合；gap 统一走 search_ctrl::gap_percent）
 // ===========================================================================
 
-/// 首行进度的 bound 口径：栈非空 ⇒ 剩余聚合（每个开放子树的最优值不会优于
-/// 其压栈时的父节点 LP 目标 est）；栈空且已有 incumbent ⇒ 搜索事实上完备，
-/// bound = incumbent（gap=0）。
-fn frontier_bound(sense: Sense, stack: &[Pending], incumbent: Option<f64>) -> Option<f64> {
-    aggregate_bound(sense, stack.iter().map(|p| p.est)).or(incumbent)
+/// 全部未关闭子树的方向极值：待执行栈与未完成 LP 的旧界必须一起计入。
+/// incumbent 也参加聚合，避免已被可行解支配的子树界越过全局最优值。
+/// 两类子树均空且有 incumbent 时才退化为 incumbent（gap=0）。
+fn frontier_bound(
+    sense: Sense,
+    stack: &[Pending],
+    unresolved: Option<f64>,
+    incumbent: Option<f64>,
+) -> Option<f64> {
+    aggregate_bound(sense, stack.iter().map(|p| p.est).chain(unresolved).chain(incumbent))
+}
+
+/// 每次完整根松弛都覆盖所有整数可行解（含有效全局割），其最优值是全局界。
+/// 中断解与启发式固定域的解不得进入这里；多个证明取更强方向，输出时再用可行解截断。
+pub(crate) fn remember_root_bound(sense: Sense, saved: &mut Option<f64>, sol: &LpSolution) {
+    if sol.status != LpStatus::Optimal || !sol.objective.is_finite() { return; }
+    *saved = Some(match (*saved, sense) {
+        (Some(old), Sense::Minimize) => old.max(sol.objective),
+        (Some(old), Sense::Maximize) => old.min(sol.objective),
+        (None, _) => sol.objective,
+    });
+}
+
+/// 未完成子树只保留旧的已证界，不读取中断LP返回的目标。极值压缩不丢信息。
+pub(crate) fn remember_unresolved(sense: Sense, saved: &mut Option<f64>, bound: f64) {
+    *saved = aggregate_bound(sense, saved.iter().copied().chain(std::iter::once(bound)));
+}
+
+/// 已知可行解属于全局可行集；旧子树界被它支配时，全局界不能越过它。
+/// None表示缺乏界证据，不得仅凭一个可行解把None变成最优性证明。
+pub(crate) fn bound_with_incumbent(
+    sense: Sense,
+    bound: Option<f64>,
+    incumbent: Option<f64>,
+) -> Option<f64> {
+    bound.and_then(|bound| aggregate_bound(sense, std::iter::once(bound).chain(incumbent)))
+}
+
+/// 仅中断根阶段指定恢复点；线程局部配置不影响其他测试与生产路径。
+#[cfg(test)]
+pub(crate) mod test_root_lp_interrupt {
+    use super::{LpSolution, LpStatus};
+    std::thread_local! {
+        static SPEC: std::cell::Cell<Option<(&'static str, LpStatus)>> = const { std::cell::Cell::new(None) };
+    }
+    pub(crate) struct Guard(Option<(&'static str, LpStatus)>);
+    impl Guard {
+        pub(crate) fn install(stage: &'static str, status: LpStatus) -> Self {
+            Self(SPEC.with(|s| s.replace(Some((stage, status)))))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { SPEC.with(|s| s.set(self.0)); }
+    }
+    pub(crate) fn apply(stage: &str, sol: &mut LpSolution) {
+        SPEC.with(|s| {
+            if let Some((expected, status)) = s.get() {
+                if expected == stage {
+                    s.set(None);
+                    sol.status = status;
+                    sol.objective = f64::NAN;
+                    sol.x.clear();
+                    sol.duals.clear();
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod root_evidence_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+
+    #[cfg(feature = "root_snapshot_restore")]
+    #[test]
+    fn root_snapshot_matches_cold_basis_after_heuristic_mutation() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = unresolved_bound_tests::model(sense, false);
+            let bounds = Bounds::from_problem(&p);
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                let tol = Tolerances::default();
+                let mut lp = new_engine(&p, tol, engine).unwrap();
+                let deadline = Instant::now().checked_add(std::time::Duration::from_secs(3600));
+                lp.set_time_deadline(deadline);
+                let sol = lp.solve(&bounds);
+                assert_eq!(sol.status, LpStatus::Optimal);
+                let snapshot = lp.snapshot();
+                let root_iters = snapshot.iterations();
+                let _ = heuristics::dive(&p, &mut lp, &bounds, &sol.x, 20, &tol);
+                let all_iters = lp.iterations();
+                let heuristic_iters = all_iters.saturating_sub(root_iters);
+                lp = snapshot;
+                assert_eq!(heuristic_iters.saturating_add(lp.iterations()), all_iters);
+                assert_eq!(lp.time_deadline(), deadline);
+                let mut cold = new_engine(&p, tol, engine).unwrap();
+                let cold_sol = cold.solve(&bounds);
+                assert_eq!(sol.objective, cold_sol.objective);
+                assert_eq!(sol.x, cold_sol.x);
+                assert_eq!(lp.basis_columns(), cold.basis_columns());
+                assert_eq!(lp.structural_reduced_costs(), cold.structural_reduced_costs());
+                assert_eq!(lp.num_rows(), cold.num_rows());
+                for row in 0..lp.num_rows() {
+                    assert_eq!(lp.tableau_row_terms(row), cold.tableau_row_terms(row));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn root_bound_uses_only_finite_proofs_and_conservative_incumbent_clip() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut saved = None;
+            for (status, objective) in [(LpStatus::IterationLimit, 999.0), (LpStatus::Optimal, f64::NAN)] {
+                remember_root_bound(sense, &mut saved, &LpSolution { status, objective, x: vec![], duals: vec![] });
+                assert_eq!(saved, None);
+                assert_eq!(bound_with_incumbent(sense, saved, Some(5.0)), None);
+            }
+            for objective in [3.0, 7.0, 5.0] {
+                remember_root_bound(sense, &mut saved, &LpSolution { status: LpStatus::Optimal, objective, x: vec![], duals: vec![] });
+            }
+            assert_eq!(saved, Some(if sense == Sense::Minimize { 7.0 } else { 3.0 }));
+            assert_eq!(bound_with_incumbent(sense, saved, Some(5.0)), Some(5.0));
+        }
+    }
+
+    #[test]
+    fn root_recovery_limit_preserves_only_existing_evidence() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut p = Problem::new("根恢复保留证明", sense);
+            p.add_var("b", VarType::Binary).unwrap();
+            let sign = if sense == Sense::Minimize { -1.0 } else { 1.0 };
+            p.set_objective(vec![(0, sign)], 3.25).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            for (threads, engine) in [(1, LpEngineKind::Tableau), (1, LpEngineKind::Revised), (2, LpEngineKind::Tableau)] {
+                for stage in ["initial", "restart", "restore", "cut_restore"] {
+                    for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                        let opts = BbOptions { heuristics: stage != "cut_restore", work_stack_auto: false,
+                            root_cuts: matches!(stage, "restart" | "cut_restore"),
+                            ..unresolved_bound_tests::options(engine) };
+                        let ctrl = SearchControl { threads, ..SearchControl::default() };
+                        let _guard = test_root_lp_interrupt::Guard::install(if stage == "cut_restore" { "restore" } else { stage }, status);
+                        let result = branch_and_bound_controlled(&p, &opts, &ctrl, Tolerances::default(), None).unwrap();
+                        assert_eq!(result.status, SolveStatus::LimitReached, "{stage}, {threads}, {engine:?}");
+                        if stage == "initial" {
+                            assert_eq!(result.bound, None);
+                            assert_eq!(result.best_objective, None);
+                        } else {
+                            assert_eq!(result.bound, Some(3.25 + sign * 0.5));
+                            assert_eq!(result.best_objective, if stage == "cut_restore" { None } else { Some(3.25) });
+                            assert_eq!(result.best_values, if stage == "cut_restore" { None } else { Some(vec![0.0]) });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 测试只替换真实节点resolve的返回状态，不改LP内核。线程局部作用域避免
+/// 其它测试受到影响；并行测试在spawn时显式复制配置到各worker。
+#[cfg(test)]
+pub(crate) mod test_node_lp_interrupt {
+    use super::{LpSolution, LpStatus};
+    #[derive(Clone, Copy)]
+    pub(crate) struct Spec {
+        pub var: usize,
+        pub up: Option<bool>,
+        pub depth: u32,
+        pub status: LpStatus,
+        pub remaining: usize,
+    }
+    std::thread_local! {
+        static SPEC: std::cell::Cell<Option<Spec>> = const { std::cell::Cell::new(None) };
+    }
+    pub(crate) struct Guard(Option<Spec>);
+    impl Guard {
+        pub(crate) fn install(spec: Option<Spec>) -> Self {
+            Self(SPEC.with(|state| state.replace(spec)))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) { SPEC.with(|state| state.set(self.0)); }
+    }
+    pub(crate) fn capture() -> Option<Spec> { SPEC.with(|state| state.get()) }
+    pub(crate) fn apply(var: usize, up: bool, depth: u32, sol: &mut LpSolution) {
+        SPEC.with(|state| {
+            let Some(mut spec) = state.get() else { return; };
+            if spec.remaining == 0 || spec.var != var || spec.depth != depth
+                || spec.up.is_some_and(|expected| expected != up) { return; }
+            spec.remaining -= 1;
+            state.set(Some(spec));
+            sol.status = spec.status;
+            sol.objective = f64::NAN;
+            sol.x.clear();
+            sol.duals.clear();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod unresolved_bound_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+    use test_node_lp_interrupt::{Guard, Spec};
+
+    pub(crate) fn options(engine: LpEngineKind) -> BbOptions {
+        BbOptions {
+            binary_row_propagation: BinaryPropagationMode::Off,
+            branch_rule_auto: false, branch_rule: BranchRule::MostFractional,
+            root_cuts: false, local_cuts: false, root_rc_fixing: false, heuristics: false,
+            lp_engine: engine, ..BbOptions::default()
+        }
+    }
+
+    /// 根LP为b=z=1/2、y=w=0。整数b两侧成本分别10/20，z另加1。
+    /// 真最优11；中断成本10侧后，其余侧仍能给出21的可行解。
+    pub(crate) fn model(sense: Sense, reverse: bool) -> Problem {
+        let mut p = Problem::new("未完成子树仍需保界", sense);
+        p.add_var("b", VarType::Binary).unwrap();
+        p.add_var("z", VarType::Binary).unwrap();
+        p.add_var("y", VarType::Continuous).unwrap();
+        p.add_var("w", VarType::Continuous).unwrap();
+        p.set_var_bounds(2, 0.0, 30.0).unwrap();
+        p.set_var_bounds(3, 0.0, 1.0).unwrap();
+        let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+        p.set_objective(vec![(2, sign), (3, sign)], 0.25).unwrap();
+        let (left, right) = if reverse { (20.0, 10.0) } else { (10.0, 20.0) };
+        p.add_constraint(None, vec![(0, 2.0 * left), (2, 1.0)], RelOp::Ge, left).unwrap();
+        p.add_constraint(None, vec![(0, -2.0 * right), (2, 1.0)], RelOp::Ge, -right).unwrap();
+        p.add_constraint(None, vec![(1, 2.0), (3, 1.0)], RelOp::Ge, 1.0).unwrap();
+        p.add_constraint(None, vec![(1, -2.0), (3, 1.0)], RelOp::Ge, -1.0).unwrap();
+        p
+    }
+
+    pub(crate) fn interrupt(status: LpStatus, var: usize, depth: u32) -> Spec {
+        Spec { var, up: Some(false), depth, status, remaining: 1 }
+    }
+
+    pub(crate) fn assert_valid_bound(sense: Sense, bound: f64, optimum: f64) {
+        match sense {
+            Sense::Minimize => assert!(bound <= optimum + 1e-8, "下界{bound}越过真最优{optimum}"),
+            Sense::Maximize => assert!(bound >= optimum - 1e-8, "上界{bound}越过真最优{optimum}"),
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_only_child_keeps_bound_with_empty_execution_stack() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let mut p = Problem::new("唯一未完成孩子", sense);
+            p.add_var("b", VarType::Binary).unwrap();
+            p.set_objective(vec![(0, if sense == Sense::Minimize { -1.0 } else { 1.0 })], 0.25).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                    let opts = BbOptions { branch_rule: BranchRule::Pseudocost,
+                        reuse_probe_evidence: true, ..options(engine) };
+                    let result = {
+                        let _guard = Guard::install(Some(interrupt(status, 0, 1)));
+                        branch_and_bound(&p, &opts, Tolerances::default()).unwrap()
+                    };
+                    assert_eq!(result.status, SolveStatus::LimitReached);
+                    assert_eq!(result.best_objective, None);
+                    assert_eq!(result.stats.nodes, 2, "根探测排掉另一支，只展开一个孩子");
+                    assert_eq!(result.bound, Some(0.25), "空执行栈仍有未完成证明前沿");
+                    let restored = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+                    assert_eq!(restored.status, SolveStatus::Optimal, "测试注入离开作用域必须清除");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_continues_siblings_without_false_gap_or_progress_bound() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = model(sense, false);
+            let sign = if sense == Sense::Minimize { 1.0 } else { -1.0 };
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                for status in [LpStatus::IterationLimit, LpStatus::TimeLimit] {
+                    let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                    let captured = progress.clone();
+                    let hooks = SearchHooks { progress: std::sync::Arc::new(move |info| {
+                        captured.lock().unwrap().push(info.bound);
+                    }) };
+                    let ctrl = SearchControl { mipgap_percent: Some(6.0),
+                        log_period_secs: Some(f64::MIN_POSITIVE), ..SearchControl::default() };
+                    let result = {
+                        let _guard = Guard::install(Some(interrupt(status, 0, 1)));
+                        branch_and_bound_controlled(&p, &options(engine), &ctrl, Tolerances::default(), Some(&hooks)).unwrap()
+                    };
+                    assert_eq!(result.status, SolveStatus::LimitReached);
+                    assert!((result.best_objective.unwrap() - (0.25 + 21.0 * sign)).abs() < 1e-8,
+                        "保留继续探索兄弟以寻找可行解的行为");
+                    assert_eq!(result.bound, Some(0.25));
+                    assert!(!result.gap_terminated, "漏掉未完成根孩子会伪报约5%的gap");
+                    assert!(result.stats.nodes >= 5, "其余子树须继续探索到底");
+                    let events = progress.lock().unwrap();
+                    assert!(events.len() > 2);
+                    for bound in events.iter().flatten() { assert_valid_bound(sense, *bound, 0.25 + 11.0 * sign); }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_lp_dominated_bound_does_not_clear_limit_status() {
+        for sense in [Sense::Minimize, Sense::Maximize] {
+            let p = model(sense, true);
+            let optimum = 0.25 + if sense == Sense::Minimize { 11.0 } else { -11.0 };
+            for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                let result = {
+                    let _guard = Guard::install(Some(interrupt(LpStatus::IterationLimit, 1, 2)));
+                    branch_and_bound(&p, &options(engine), Tolerances::default()).unwrap()
+                };
+                assert_eq!(result.status, SolveStatus::LimitReached);
+                assert!((result.best_objective.unwrap() - optimum).abs() < 1e-8);
+                assert_eq!(result.bound, result.best_objective, "旧子树界被更好incumbent支配时不能越过它");
+            }
+        }
+    }
 }
 
 /// 组装并发射一行进度（字段口径与并行引擎一致；gap 由展示层经
 /// [`gap_percent`] 现算，缺任一侧或 inf 语义渲染为 inf）。
-fn emit_progress(
+pub(crate) fn emit_progress(
     hooks: &SearchHooks,
     start: &Instant,
     nodes: u64,
@@ -2516,7 +3328,7 @@ fn small_tree_gate_applies(problem: &Problem, opts: &BbOptions) -> bool {
 /// （[`small_tree_gate_applies`] 且顺序探测在 [`SMALL_TREE_PROBE_NODES`]
 /// 预算内出终态——Optimal/Infeasible/Unbounded，或 gap/降级/时限等与
 /// threads=1 同口径的诚实截断）⇒ 直接返回：**threads ≥ 2 的输出与
-/// threads=1 逐字节相同**（同一条确定性代码路径），免掉池协调/worker 冷
+/// 显式关闭传播的threads=1逐字节相同**（同一条确定性代码路径），免掉池协调/worker 冷
 /// 启动开销；预算耗尽（LimitReached 且 nodes ≥ 预算且非 gap/降级）⇒ 树
 /// 不小，丢弃探测、并行从零派发（既有行为 + 有界前缀浪费；进度行在门未
 /// 命中时会重复发射首行——probe 与并行各一次，--log-secs 用户可见，纯
@@ -2545,7 +3357,7 @@ fn parallel_entry(
         probe_opts.node_limit = SMALL_TREE_PROBE_NODES;
         let mut probe_ctrl = *ctrl;
         probe_ctrl.threads = 1;
-        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks)?;
+        let probe = sequential_bb(problem, &probe_opts, &probe_ctrl, tol, hooks, PreservedBinaryRows::default(), None, SearchPrelude::default())?;
         let budget_exhausted = probe.status == SolveStatus::LimitReached
             && !probe.gap_terminated
             && !probe.auto_degraded
@@ -2569,7 +3381,7 @@ fn parallel_entry(
 
 /// 并行终态 → [`BbResult`]（与顺序路径口径逐一对应）：
 /// - 根阶段终局（root_terminal）⇒ 直返（bound 引擎已按口径给出：纯 LP
-///   Optimal = Some(objective)，其余 None）；
+///   Optimal = Some(objective)，LimitReached 保留此前已证根界，其余 None）；
 /// - stop ∈ {NodeLimit, TimeLimit}（及其他截断类）⇒ LimitReached，bound =
 ///   引擎上报的剩余聚合（截断不可知时诚实 None）；
 /// - stop = Gap ⇒ LimitReached 且 gap_terminated = true，bound = 触发时刻
@@ -2639,6 +3451,99 @@ mod tests {
     /// 行数超限均回落。（P3 重钉：单行背包向量从命中改为排除——行数下限
     /// 1→2 收紧，单行类 Pseudocost 零收益纯付探测开销，见
     /// detect_pseudocost_favorable 文档注释的 A/B 数字；新增 2 行命中向量。）
+    #[test]
+    fn node_limit_keeps_unprocessed_frontier_bound() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for limit in [1, 2, 8, 64] {
+            let result = branch_and_bound(&p, &BbOptions { node_limit: limit, heuristics: false, local_cuts: false, ..BbOptions::default() }, tol()).unwrap();
+            assert_eq!(result.status, SolveStatus::LimitReached);
+            assert!(result.bound.unwrap() >= 2331.0 - 1e-7, "未处理节点的界必须包含真实最优值");
+        }
+    }
+
+    #[test]
+    fn hybrid_domain_snapshots_restore_all_bits_without_sibling_changes() {
+        // 尾块、非二元边界、无穷界和有符号零都必须按原位模式恢复。
+        let n = DOMAIN_BLOCK_COLUMNS * 3 + 5;
+        let mut original = Bounds {
+            lb: (0..n).map(|j| -(j as f64)).collect(),
+            ub: (0..n).map(|j| j as f64 + 0.5).collect(),
+        };
+        original.lb[0] = 0.0;
+        original.ub[n - 1] = f64::INFINITY;
+        let root = Rc::new(DomainSnapshot::capture(&original, None));
+        let sibling = Rc::clone(&root);
+        let unchanged = DomainSnapshot::capture(&original, Some(&root));
+        assert!(root.blocks.iter().zip(&unchanged.blocks).all(|(a, b)| Rc::ptr_eq(a, b)));
+        let mut changed = original.clone();
+        changed.lb[0] = -0.0;
+        // 同时模拟分支与不写trail的全局覆盖：不能只捕获本次分支列。
+        changed.lb[DOMAIN_BLOCK_COLUMNS + 2] = 0.25;
+        changed.ub[n - 1] = 123.0;
+        let child = DomainSnapshot::capture(&changed, Some(&root));
+        assert!(!Rc::ptr_eq(&root.blocks[0], &child.blocks[0]));
+        assert!(!Rc::ptr_eq(&root.blocks[1], &child.blocks[1]));
+        assert!(Rc::ptr_eq(&root.blocks[2], &child.blocks[2]));
+        assert!(!Rc::ptr_eq(&root.blocks[3], &child.blocks[3]));
+        let mut restored = Bounds { lb: Vec::new(), ub: Vec::new() };
+        for (snapshot, expected) in [(&child, &changed), (&*sibling, &original), (&unchanged, &original), (&child, &changed)] {
+            snapshot.restore(&mut restored);
+            assert_eq!(restored.lb.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.lb.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+            assert_eq!(restored.ub.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.ub.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        }
+        // 重放兄弟后再分支，比较基准来自兄弟自身而非最后访问的另一条路径。
+        let back = DomainSnapshot::capture(&original, Some(&child));
+        back.restore(&mut restored);
+        assert_eq!(restored.ub, original.ub);
+        assert_eq!(restored.lb[0].to_bits(), original.lb[0].to_bits());
+    }
+
+    #[test]
+    fn hybrid_domain_snapshots_do_not_retain_ancestor_chains() {
+        let mut bounds = Bounds { lb: vec![0.0; 65], ub: vec![f64::INFINITY; 65] };
+        let mut current = Rc::new(DomainSnapshot::capture(&bounds, None));
+        for step in 0..10_000 {
+            let ancestor = Rc::downgrade(&current);
+            bounds.lb[step % 65] = step as f64;
+            current = Rc::new(DomainSnapshot::capture(&bounds, Some(&current)));
+            assert!(ancestor.upgrade().is_none(), "共享块不应延长祖先快照的寿命");
+        }
+        drop(current); // 无递归父链，不因深搜索导致递归析构。
+    }
+
+    #[test]
+    fn hybrid_full_domains_preserve_optimum_and_limits() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        let opts = BbOptions { node_rule: NodeRule::HybridBestBound, local_cuts: false, ..BbOptions::default() };
+        let a = branch_and_bound(&p, &opts, tol()).unwrap();
+        let b = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(a.status, SolveStatus::Optimal);
+        assert_eq!(a.best_objective, Some(2331.0));
+        assert_eq!(a.best_objective, b.best_objective);
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert!(a.stats.nodes > 64, "覆盖周期最好界切换");
+        let limited = branch_and_bound(&p, &BbOptions { node_limit: 2, ..opts }, tol()).unwrap();
+        assert_eq!(limited.status, SolveStatus::LimitReached);
+        assert!(branch_and_bound(&p, &BbOptions { local_cuts: true, ..opts }, tol()).is_err());
+        let mut minimization = p.clone();
+        minimization.sense = Sense::Minimize;
+        for (_, coefficient) in &mut minimization.obj.terms { *coefficient = -*coefficient; }
+        let minimum = branch_and_bound(&minimization, &opts, tol()).unwrap();
+        assert_eq!(minimum.status, SolveStatus::Optimal);
+        assert_eq!(minimum.best_objective, Some(-2331.0));
+        let limited_min = branch_and_bound(&minimization, &BbOptions { node_limit: 64, ..opts }, tol()).unwrap();
+        assert_eq!(limited_min.status, SolveStatus::LimitReached);
+        assert!(limited_min.bound.unwrap() <= -2331.0 + 1e-7);
+        let sparse = branch_and_bound(&p, &BbOptions { lp_engine: LpEngineKind::Revised, ..opts }, tol()).unwrap();
+        assert_eq!(sparse.status, SolveStatus::Optimal);
+        assert_eq!(sparse.best_objective, Some(2331.0));
+
+
+    }
+
     #[test]
     fn detect_pseudocost_favorable_classification() {
         // 命中：2 Binary + 2 条正系数 Le 行（多维背包）。
@@ -2994,21 +3899,22 @@ mod tests {
         assert_eq!(budget.bound, wall.bound);
     }
 
-    /// （W6）树内局部割：mknap-3x100（多维背包类，类门控命中）默认开启 ⇒
-    /// 触发（cuts > 根割基线 58）、双跑全部行为字段逐字节确定、目标恒同
-    /// 已知最优 2331；`local_cuts = false` ⇒ 与关闭路径逐字节一致
-    /// （根割基线 S14-第一步重钉 57→58（小批增量施加，见测试内注释）；
-    /// 历史基线 57 cuts / 2,120 节点 = W6 前，回归钉）。
+    /// （W6）树内局部割：mknap-3x100 默认触发，双跑行为字段确定，最优目标
+    /// 为 2331。关闭局部割后，分别核对默认和 R12 根割路径的回归计数。
     #[test]
     fn local_cuts_fire_deterministically_and_toggle_restores() {
+        // 历史W6节点/割计数只测局部割；传播与真实割出域的组合另有专项覆盖。
+        let legacy = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..BbOptions::default() };
         let path = format!(
             "{}/../bench/instances/mknap-3x100.milp",
             env!("CARGO_MANIFEST_DIR")
         );
         let problem = crate::instance::load_instance(std::path::Path::new(&path))
             .unwrap_or_else(|e| panic!("算例加载失败：{e}"));
-        let on1 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
-        let on2 = branch_and_bound(&problem, &BbOptions::default(), tol()).unwrap();
+        // 独立根割循环同时核对计数、记录清单和实际行数。
+        let root_cut_count = if cfg!(feature = "root_cut_recheck") { 43 } else { 58 };
+        let on1 = branch_and_bound(&problem, &legacy, tol()).unwrap();
+        let on2 = branch_and_bound(&problem, &legacy, tol()).unwrap();
         assert_eq!(on1.status, SolveStatus::Optimal);
         assert_close(on1.best_objective.unwrap(), 2331.0);
         // 确定性：行为字段双跑逐字节。
@@ -3016,36 +3922,36 @@ mod tests {
         assert_eq!(on1.stats.lp_iterations, on2.stats.lp_iterations);
         assert_eq!(on1.stats.cuts, on2.stats.cuts);
         assert_eq!(on1.bound, on2.bound);
-        // 触发：局部割计入 cuts（根割基线 58 → 更高）。
+        // 启用局部割后，割数应超过对应的根割基线。
         assert!(
-            on1.stats.cuts > 58,
-            "局部割应触发（cuts = {}，根割基线 58）",
-            on1.stats.cuts
+            on1.stats.cuts > root_cut_count,
+            "局部割应触发（cuts = {}，根割基线 {}）",
+            on1.stats.cuts,
+            root_cut_count
         );
-        // 开关：关闭后无局部割（cuts = 根割基线 58）且目标恒同；对照
-        // adaptive-on 口径（探针/CLI 默认）与 pre-W6 基线 2,120 节点逐位
-        // 一致——证明 off 路径纯净。
+        // 关闭局部割后只剩根割，两种根割配置均须证得相同的最优目标。
         // 【S14-第一步重钉】根割基线 57 → 58：cut_loop_recorded 施加改小批
         // 增量纪律（每 10 条一批、收敛一批提交一批、超限只回退最后一批而非
         // 整轮，cuts.rs）后，mknap-3x100 根循环一轮的迭代超限回滚不再弃
-        // 整轮——该轮此前已收敛小批的割得以保留（+1，实测钉：off 双跑
-        // 58/58、节点 1719/1719 逐位一致、目标恒 2331）。
+        // 整轮——该轮此前已收敛小批的割得以保留。关闭 R12 时的历史
+        // 回归值仍为 58 条割、1719 个节点及最优目标 2331。
         let off = branch_and_bound(
             &problem,
             &BbOptions {
                 local_cuts: false,
-                ..BbOptions::default()
+                ..legacy
             },
             tol(),
         )
         .unwrap();
-        assert_eq!(off.stats.cuts, 58, "关闭后只剩根割");
+        assert_eq!(off.status, SolveStatus::Optimal);
+        assert_eq!(off.stats.cuts, root_cut_count, "关闭后只剩根割");
         assert_close(off.best_objective.unwrap(), 2331.0);
         let off_auto = branch_and_bound_controlled(
             &problem,
             &BbOptions {
                 local_cuts: false,
-                ..BbOptions::default()
+                ..legacy
             },
             &SearchControl {
                 adaptive_heuristics: true,
@@ -3055,7 +3961,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(off_auto.stats.cuts, 58); // S14-第一步重钉（57→58），见上
+        assert_eq!(off_auto.status, SolveStatus::Optimal);
+        assert_eq!(off_auto.stats.cuts, root_cut_count);
         // raw（无 presolve）+ adaptive-on 的 pre-W6 基线 = 2,106 节点 /
         // 24,072 迭代（HEAD 实测钉；探针口径的 2,120 是 presolve 重建后
         // 的问题——与本测试的 raw 路径无关）。
@@ -3076,15 +3983,51 @@ mod tests {
         // 17,258→20,160 迭代（实测钉，双跑逐位一致；目标恒 2331。树形对
         // 割集混沌敏感为既有观察（S13-B 遗留②同性质），净性能裁决按 S14
         // 任务书的算例配对 A/B 守门，本测试只钉确定性与目标恒同。））
-        assert_eq!(off_auto.stats.nodes, 1719, "S14-第一步小批施加后的 raw 基线");
-        assert_eq!(off_auto.stats.lp_iterations, 20160);
+        let (expected_nodes, expected_iterations) = if cfg!(feature = "root_cut_recheck") {
+            (2152, 20958)
+        } else {
+            (1719, 20160)
+        };
+        assert_eq!(off_auto.stats.nodes, expected_nodes, "对应根割选择的独立双跑基线");
+        // 快照试验只消除了重复的冷根LP工作，节点/割/目标基线仍保持上面的严格断言。
+        // 独立重解原根松弛给出应扣工作量，不能把观测到的总计差直接改成新基线。
+        #[cfg(feature = "root_snapshot_restore")]
+        let saved_root_iterations = {
+            let mut root = new_engine(&problem, tol(), legacy.lp_engine).unwrap();
+            assert_eq!(root.solve(&Bounds::from_problem(&problem)).status, LpStatus::Optimal);
+            assert_eq!(root.iterations(), 47, "该原始根LP的独立工作量");
+            root.iterations()
+        };
+        #[cfg(not(feature = "root_snapshot_restore"))]
+        let saved_root_iterations = 0;
+        assert_eq!(off_auto.stats.lp_iterations, expected_iterations - saved_root_iterations);
         assert_close(off_auto.best_objective.unwrap(), 2331.0);
+        #[cfg(feature = "root_cut_recheck")]
+        for (expected, adaptive) in [(&off, false), (&off_auto, true)] {
+            let mut repeated = branch_and_bound_controlled(
+                &problem,
+                &BbOptions { local_cuts: false, ..legacy },
+                &SearchControl { adaptive_heuristics: adaptive, ..SearchControl::default() },
+                tol(),
+                None,
+            )
+            .unwrap();
+            let mut expected = expected.clone();
+            assert_eq!(repeated.status, SolveStatus::Optimal);
+            assert_close(repeated.best_objective.unwrap(), 2331.0);
+            // 仅排除墙钟，完整结果包含解、界、全部行为计数和终止标志。
+            expected.stats.time_ms = 0;
+            repeated.stats.time_ms = 0;
+            assert_eq!(format!("{expected:?}"), format!("{repeated:?}"));
+        }
     }
 
     /// 关闭根割与根启发式的选项：隔离分支定界本体行为
     /// （整数节点复核 round_and_check 属跨模块联调路径，见相关用例）。
     fn plain_opts() -> BbOptions {
         BbOptions {
+            // 此组旧机制测试隔离LP分支/节点计数，显式关闭独立的行传播。
+            binary_row_propagation: BinaryPropagationMode::Off,
             root_cuts: false,
             heuristics: false,
             ..BbOptions::default()
@@ -3102,6 +4045,7 @@ mod tests {
     #[test]
     fn bb_options_default_contract() {
         let o = BbOptions::default();
+        assert_eq!(o.binary_row_propagation, BinaryPropagationMode::Auto);
         assert_eq!(o.branch_rule, BranchRule::MostFractional);
         assert_eq!(o.node_rule, NodeRule::DepthFirst);
         assert_eq!(o.node_limit, 2_000_000);
@@ -3201,9 +4145,10 @@ mod tests {
             172.0,
         )
         .unwrap();
+        // 本测试隔离旧小树调度等价性；Auto的外层线程差异另有专门用例。
         let t1 = branch_and_bound_controlled(
             &p,
-            &BbOptions::default(),
+            &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..BbOptions::default() },
             &SearchControl::default(),
             tol(),
             None,
@@ -3222,6 +4167,8 @@ mod tests {
             None,
         )
         .unwrap();
+        assert_eq!(t1.stats.propagation.calls, 0);
+        assert_eq!(t4.stats.propagation.calls, 0);
         assert_eq!(t4.status, t1.status);
         assert_eq!(t4.best_objective, t1.best_objective);
         assert_eq!(t4.best_values, t1.best_values, "取值逐字节（含并列破键序）");
@@ -3581,6 +4528,8 @@ mod tests {
         let p = rc_fix_fire_problem();
         // heuristics = false ⇒ 根阶段无 incumbent ⇒ rc_fixed = 0（选项开）。
         let opts = BbOptions {
+            // 隔离RC是否跳过根固定的旧节点计数，不让传播替代子节点LP。
+            binary_row_propagation: BinaryPropagationMode::Off,
             root_cuts: false,
             heuristics: false,
             root_rc_fixing: true,
@@ -4441,6 +5390,339 @@ mod tests {
         assert_eq!(pc2.n_obs(0), 0, "深度 9 > 8 ⇒ 不探测");
     }
 
+    fn probe_evidence_options(engine: LpEngineKind) -> BbOptions {
+        BbOptions {
+            branch_rule: BranchRule::Pseudocost,
+            branch_rule_auto: false,
+            reuse_probe_evidence: true,
+            root_cuts: false,
+            local_cuts: false,
+            root_rc_fixing: false,
+            heuristics: false,
+            lp_engine: engine,
+            ..BbOptions::default()
+        }
+    }
+
+    /// 用真实引擎经过完整分支入口，检查证据消费后的前沿，避免只测辅助函数。
+    fn probe_evidence_children(
+        p: &Problem,
+        bounds: &mut Bounds,
+        sol: &LpSolution,
+        engine: &mut dyn LpEngine,
+        opts: &BbOptions,
+    ) -> Vec<Pending> {
+        let mut stack = Vec::new();
+        let mut trail = Vec::new();
+        let mut incumbent = None;
+        let mut pc = Pseudocosts::new(p.vars.len());
+        branch_or_close(
+            p, &p.integer_vars(), bounds, sol, tol(), opts, objective_is_integral(p),
+            &mut incumbent, None, &mut stack, &mut trail, engine, 1, 0.0, None,
+            &mut pc, None, None, 0,
+        );
+        stack
+    }
+
+    #[test]
+    fn probe_evidence_child_bounds_keep_parent_observation_and_limit_semantics() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut p = Problem::new("探测子界", sense);
+                p.add_var("a", VarType::Binary).unwrap();
+                p.add_var("b", VarType::Binary).unwrap();
+                // 非整数常数同时覆盖关闭整数目标剪枝时的前沿定界。
+                p.set_objective(vec![(0, sign * 10.0), (1, sign * 7.0)], 0.25).unwrap();
+                p.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0).unwrap();
+                let opts = probe_evidence_options(kind);
+                let mut engine = new_engine(&p, tol(), kind).unwrap();
+                let mut bounds = Bounds::from_problem(&p);
+                let sol = engine.solve(&bounds);
+                assert_eq!(sol.status, LpStatus::Optimal);
+                assert_close(sol.objective, sign * 15.0 + 0.25);
+                let before = bounds.clone();
+                let pending = probe_evidence_children(&p, &mut bounds, &sol, &mut *engine, &opts);
+                assert_eq!(pending.len(), 2);
+                for node in &pending {
+                    assert_eq!(node.var, 0);
+                    assert_close(node.parent_lp_objective, sol.objective);
+                    let child_value = if node.tighten_lb { 44.0 / 3.0 } else { 7.0 };
+                    assert_close(node.est, sign * child_value + 0.25);
+                }
+                assert_eq!(bounds.lb, before.lb);
+                assert_eq!(bounds.ub, before.ub);
+                let limited = branch_and_bound(&p, &BbOptions { node_limit: 1, ..opts }, tol()).unwrap();
+                assert_eq!(limited.status, SolveStatus::LimitReached,
+                    "探测获得界不等于已经完成节点整数解与最优性判定");
+                assert!(limited.best_values.is_none());
+                assert_close(limited.bound.unwrap(), sign * (44.0 / 3.0) + 0.25);
+                let full = branch_and_bound(&p, &opts, tol()).unwrap();
+                assert_eq!(full.status, SolveStatus::Optimal);
+                assert_close(full.best_objective.unwrap(), sign * 10.0 + 0.25);
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_proved_infeasible_directions_close_without_extra_nodes() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let mut p = Problem::new("双向不可行证明", sense);
+                p.add_var("x", VarType::Integer).unwrap();
+                p.set_var_bounds(0, 0.0, 5.0).unwrap();
+                p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+                p.add_constraint(None, vec![(0, 1.0)], RelOp::Ge, 2.5).unwrap();
+                p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 2.6).unwrap();
+                let opts = probe_evidence_options(kind);
+                let off = branch_and_bound(&p, &BbOptions { reuse_probe_evidence: false, ..opts }, tol()).unwrap();
+                let on = branch_and_bound(&p, &opts, tol()).unwrap();
+                assert_eq!(off.status, SolveStatus::Infeasible);
+                assert_eq!(on.status, SolveStatus::Infeasible);
+                assert_eq!(off.stats.nodes, 3);
+                assert_eq!(on.stats.nodes, 1);
+                assert!(on.best_values.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_uses_selected_variable_instead_of_first_probe() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut p = Problem::new("选中变量与首探测不同", Sense::Maximize);
+            p.add_var("x", VarType::Binary).unwrap();
+            p.add_var("y", VarType::Binary).unwrap();
+            p.set_objective(vec![(0, 1.0), (1, 10.0)], 0.0).unwrap();
+            p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.5).unwrap();
+            p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+            let opts = probe_evidence_options(kind);
+            let mut engine = new_engine(&p, tol(), kind).unwrap();
+            let mut bounds = Bounds::from_problem(&p);
+            let sol = engine.solve(&bounds);
+            assert_eq!(sol.status, LpStatus::Optimal);
+            assert_close(sol.objective, 5.5);
+            // 两变量初始同分，先探测x；正增益更新后y得分更高，实际选y。
+            let mut pc = Pseudocosts::new(2);
+            let evidence = probe_reliability(p.sense, &mut bounds, &p.integer_vars(), &sol.x,
+                sol.objective, tol(), &opts, &mut pc, &mut *engine, 0);
+            assert_eq!(evidence[0].var, 0);
+            assert_eq!(pc.select(&p.integer_vars(), &sol.x, tol().integrality).unwrap().0, 1);
+            let nodes = probe_evidence_children(&p, &mut bounds, &sol, &mut *engine, &opts);
+            assert_eq!(nodes.len(), 1, "仅选中变量y的不可行上支被消去");
+            assert_eq!(nodes[0].var, 1);
+            assert!(!nodes[0].tighten_lb);
+            assert_close(nodes[0].est, 0.5);
+            assert_close(nodes[0].parent_lp_objective, 5.5);
+            assert_eq!(bounds.lb, vec![0.0, 0.0]);
+            assert_eq!(bounds.ub, vec![1.0, 1.0], "未选变量x的证据不能偷偷改变父域");
+        }
+    }
+
+    #[test]
+    fn probe_evidence_limits_and_nonfinite_results_never_close_a_direction() {
+        for status in [LpStatus::IterationLimit, LpStatus::TimeLimit, LpStatus::Unbounded] {
+            for objective in [f64::NAN, f64::INFINITY, -123.0, 123.0] {
+                let sol = LpSolution { status, objective, x: Vec::new(), duals: Vec::new() };
+                let proof = ProbeProof::from_solution(&sol);
+                assert_eq!(proof, ProbeProof::Unknown);
+                for sense in [Sense::Maximize, Sense::Minimize] {
+                    assert_eq!(proof.child_bound(sense, 17.0), Some(17.0));
+                }
+            }
+        }
+        for objective in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let sol = LpSolution { status: LpStatus::Optimal, objective, x: Vec::new(), duals: Vec::new() };
+            assert_eq!(ProbeProof::from_solution(&sol), ProbeProof::Unknown);
+        }
+    }
+
+    #[test]
+    fn probe_evidence_local_cut_does_not_leak_after_restoring_sibling_domain() {
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut p = Problem::new("局部割证据作用域", sense);
+                p.add_var("a", VarType::Binary).unwrap();
+                p.add_var("y", VarType::Integer).unwrap();
+                p.add_var("z", VarType::Integer).unwrap();
+                p.set_var_bounds(1, 0.0, 3.0).unwrap();
+                p.set_var_bounds(2, 0.0, 2.0).unwrap();
+                p.set_objective(vec![(1, sign), (2, sign)], 0.0).unwrap();
+                p.add_constraint(None, vec![(0, -2.0), (1, 1.0)], RelOp::Le, 1.5).unwrap();
+                p.add_constraint(None, vec![(2, 2.0)], RelOp::Le, 3.0).unwrap();
+                let opts = probe_evidence_options(kind);
+                let mut bounds = Bounds::from_problem(&p);
+                bounds.ub[0] = 0.0;
+                let mut engine = new_engine(&p, tol(), kind).unwrap();
+                assert_eq!(engine.solve(&bounds).status, LpStatus::Optimal);
+                let before_local_cut = engine.snapshot();
+                // a=0 时整数 y≤1 有效；对兄弟 a=1 并不有效，必须随作用域卸载。
+                engine.add_row(&[(1, 1.0)], RelOp::Le, 1.0).unwrap();
+                let local_sol = engine.resolve(&bounds);
+                assert_eq!(local_sol.status, LpStatus::Optimal);
+                let local = probe_evidence_children(&p, &mut bounds, &local_sol, &mut *engine, &opts);
+                assert_eq!(local.len(), 1, "z≥2 已由探测证明不可行");
+                assert_eq!(local[0].var, 2);
+                assert_close(local[0].est, sign * 2.0);
+                engine = before_local_cut;
+                bounds.lb[0] = 1.0;
+                bounds.ub[0] = 1.0;
+                let sibling_sol = engine.resolve(&bounds);
+                assert_eq!(sibling_sol.status, LpStatus::Optimal);
+                let sibling = probe_evidence_children(&p, &mut bounds, &sibling_sol, &mut *engine, &opts);
+                assert_eq!(sibling.len(), 1);
+                assert_eq!(sibling[0].var, 2);
+                assert_close(sibling[0].est, sign * 4.0);
+                assert_close(sibling[0].parent_lp_objective, sign * 4.5);
+                assert_close(local[0].est, sign * 2.0,);
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_small_binary_exhaustion_limits_and_determinism() {
+        for seed in 0..12u64 {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let mut state = seed + 1;
+                let mut next = || {
+                    state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    state >> 32
+                };
+                let mut p = Problem::new("探测证据穷举", sense);
+                for j in 0..5 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+                let obj = (0..5).map(|j| (j, (next() % 17) as f64 / 2.0 - 4.0)).collect();
+                p.set_objective(obj, 0.25).unwrap();
+                for row in 0..4 {
+                    let terms = (0..5).map(|j| (j, (next() % 9) as f64 - 3.0)).collect();
+                    let rhs = (next() % 13) as f64 - 3.0;
+                    let op = if row == 3 && seed % 3 == 0 { RelOp::Eq }
+                        else if row % 2 == 0 { RelOp::Le } else { RelOp::Ge };
+                    p.add_constraint(None, terms, op, rhs).unwrap();
+                }
+                let mut optimum: Option<f64> = None;
+                for bits in 0..32u32 {
+                    let x: Vec<f64> = (0..5).map(|j| ((bits >> j) & 1) as f64).collect();
+                    if !p.constraints.iter().all(|c| match c.op {
+                        RelOp::Le => c.expr.eval(&x) <= c.rhs,
+                        RelOp::Ge => c.expr.eval(&x) >= c.rhs,
+                        RelOp::Eq => c.expr.eval(&x) == c.rhs,
+                    }) { continue; }
+                    let value = p.obj.eval(&x) + p.obj_offset;
+                    optimum = Some(optimum.map_or(value, |old| match sense {
+                        Sense::Maximize => old.max(value), Sense::Minimize => old.min(value),
+                    }));
+                }
+                for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                    let opts = probe_evidence_options(kind);
+                    let first = branch_and_bound(&p, &opts, tol()).unwrap();
+                    let second = branch_and_bound(&p, &opts, tol()).unwrap();
+                    assert_eq!(first.status, second.status);
+                    assert_eq!(first.best_values, second.best_values);
+                    assert_eq!(first.stats.nodes, second.stats.nodes);
+                    assert_eq!(first.stats.lp_iterations, second.stats.lp_iterations);
+                    match optimum {
+                        Some(value) => {
+                            assert_eq!(first.status, SolveStatus::Optimal, "种子 {seed} 引擎 {kind:?}");
+                            assert_close(first.best_objective.unwrap(), value);
+                            for limit in [1, 2, 4] {
+                                let limited = branch_and_bound(&p, &BbOptions { node_limit: limit, ..opts }, tol()).unwrap();
+                                assert!(matches!(limited.status, SolveStatus::Optimal | SolveStatus::LimitReached));
+                                let bound = limited.bound.unwrap();
+                                assert!(match sense {
+                                    Sense::Maximize => bound + 1e-7 >= value,
+                                    Sense::Minimize => bound - 1e-7 <= value,
+                                }, "种子 {seed} 的限额前沿界漏掉真最优");
+                            }
+                        }
+                        None => assert_eq!(first.status, SolveStatus::Infeasible, "种子 {seed} 引擎 {kind:?}"),
+                    }
+                }
+            }
+        }
+    }
+
+    /// 两条路径都复用探测证据；仅整数目标启用 cutoff，且不会误剪更优整数解。
+    #[test]
+    fn probe_evidence_integral_cutoff_preserves_optimum_and_node_limits() {
+        let optimum = chain_knapsack_bruteforce(8, 0.0);
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let sign = if sense == Sense::Maximize { 1.0 } else { -1.0 };
+                let mut integral = chain_knapsack(8, 0.0);
+                integral.sense = sense;
+                for (_, coefficient) in &mut integral.obj.terms {
+                    *coefficient *= sign;
+                }
+                let mut fractional = integral.clone();
+                fractional.obj_offset = 0.25;
+                assert!(objective_is_integral(&integral));
+                assert!(!objective_is_integral(&fractional));
+                let opts = probe_evidence_options(kind);
+                let complete = branch_and_bound(&integral, &opts, tol()).unwrap();
+                let ordinary = branch_and_bound(&fractional, &opts, tol()).unwrap();
+                assert_eq!(complete.status, SolveStatus::Optimal);
+                assert_eq!(ordinary.status, SolveStatus::Optimal);
+                assert_close(complete.best_objective.unwrap(), sign * optimum);
+                assert_close(ordinary.best_objective.unwrap(), sign * optimum + 0.25);
+                assert!(complete.stats.nodes < ordinary.stats.nodes,
+                    "证据复用开启时仍须实际覆盖整数 cutoff 剪枝");
+                let limited_opts = BbOptions { node_limit: complete.stats.nodes, ..opts };
+                let exact = branch_and_bound(&integral, &limited_opts, tol()).unwrap();
+                let limited = branch_and_bound(&fractional, &limited_opts, tol()).unwrap();
+                assert_eq!(exact.status, SolveStatus::Optimal);
+                assert_close(exact.best_objective.unwrap(), sign * optimum);
+                assert_eq!(limited.status, SolveStatus::LimitReached);
+                assert_eq!(limited.stats.nodes, complete.stats.nodes);
+                assert!(match sense {
+                    Sense::Maximize => limited.bound.unwrap() + 1e-7 >= optimum + 0.25,
+                    Sense::Minimize => limited.bound.unwrap() - 1e-7 <= -optimum + 0.25,
+                }, "限额后的证据前沿必须仍包含真最优");
+            }
+        }
+    }
+
+    /// 没有探测证据时，开关不得夹带非整数目标的一般父界提前剪枝。
+    #[test]
+    fn probe_evidence_without_probes_keeps_nonintegral_search_unchanged() {
+        let p = chain_knapsack(8, 0.25);
+        assert!(!objective_is_integral(&p));
+        for kind in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for branch_rule in [BranchRule::MostFractional, BranchRule::Pseudocost] {
+                for node_limit in [0, 6] {
+                    let opts = BbOptions {
+                        branch_rule,
+                        pc_reliability_probes: 0,
+                        node_limit,
+                        ..probe_evidence_options(kind)
+                    };
+                    let off = branch_and_bound(&p, &BbOptions { reuse_probe_evidence: false, ..opts }, tol()).unwrap();
+                    let on = branch_and_bound(&p, &opts, tol()).unwrap();
+                    assert_eq!(on.status, off.status);
+                    assert_eq!(on.best_objective, off.best_objective);
+                    assert_eq!(on.best_values, off.best_values);
+                    assert_eq!(on.bound, off.bound);
+                    assert_eq!(on.stats.nodes, off.stats.nodes);
+                    assert_eq!(on.stats.lp_iterations, off.stats.lp_iterations);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn probe_evidence_is_opt_in_and_rejected_by_parallel_entries() {
+        assert!(!BbOptions::default().reuse_probe_evidence);
+        let mut p = Problem::new("试验入口", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        let opts = probe_evidence_options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        assert!(branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).is_err());
+        let config = crate::parallel_bb::ParallelConfig {
+            threads: 2, mipgap_percent: None, adaptive_heuristics: false,
+            log_period_secs: None, degrade: DegradePolicy::default(), progress: None,
+        };
+        assert!(crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, tol()).is_err());
+    }
+
     /// 受控默认（SearchControl::default + hooks=None）与既有
     /// branch_and_bound 结果全等（含 nodes 计数与 bound/gap_terminated 口径）。
     #[test]
@@ -4539,6 +5821,95 @@ mod tests {
             heuristics: true,
             ..BbOptions::default()
         }
+    }
+
+    /// 关闭提前退出只屏蔽降级判定；顺序控制器仍会在停滞时请求树内启发式。
+    #[test]
+    fn early_stop_disabled_keeps_sequential_adaptive_decisions() {
+        let mut state = AdaptiveState::new(HeuristicConfig::default(), DegradePolicy::disabled());
+        let snapshot = SearchSnapshot {
+            nodes: 400,
+            incumbent: Some(21.5),
+            nodes_since_improvement: 400,
+            time_budget_secs: Some(100.0),
+            elapsed_secs: 60.0,
+        };
+        assert_eq!(state.controller.decide(&snapshot), HeuristicDecision::Run);
+        let stalled = DegradeSnapshot {
+            sense: Sense::Maximize,
+            elapsed_secs: 60.0,
+            budget_secs: Some(100.0),
+            has_incumbent: true,
+            last_improvement_secs: 0.0,
+            bound: Some(22.0),
+        };
+        assert!(!state.degrade.decide(&stalled));
+        assert!(!state.degrade.decide(&stalled));
+    }
+
+    /// 同一顺序问题在禁用降级后可以证完；节点限额和显式 gap 仍诚实截断。
+    #[test]
+    fn early_stop_disabled_preserves_sequential_completion_and_limits() {
+        let p = dive_problem();
+        let opts = BbOptions { time_limit_ms: 10_000, ..dive_opts() };
+        let mut ctrl = SearchControl {
+            adaptive_heuristics: true,
+            determinism: Determinism::Budget,
+            degrade: DegradePolicy { start_frac: 0.0, plateau_frac: 0.0, ..DegradePolicy::default() },
+            ..SearchControl::default()
+        };
+        let stopped = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(stopped.status, SolveStatus::LimitReached);
+        assert!(stopped.auto_degraded, "旧策略仍按双停滞提前退出");
+        ctrl.degrade = DegradePolicy::disabled();
+        let complete = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(complete.status, SolveStatus::Optimal);
+        assert!(!complete.auto_degraded && !complete.gap_terminated);
+        assert_close(complete.best_objective.unwrap(), 21.5);
+        assert_close(complete.bound.unwrap(), 21.5);
+        assert!(complete.stats.nodes > stopped.stats.nodes);
+
+        let limited = branch_and_bound_controlled(
+            &p, &BbOptions { node_limit: 1, ..opts }, &ctrl, tol(), None,
+        ).unwrap();
+        assert_eq!(limited.status, SolveStatus::LimitReached);
+        assert!(!limited.auto_degraded && !limited.gap_terminated);
+        assert_eq!(limited.stats.nodes, 1);
+        assert_close(limited.best_objective.unwrap(), 21.5);
+        assert!(limited.bound.unwrap() >= 21.5, "截断时不能丢剩余前沿的有效界");
+
+        ctrl.mipgap_percent = Some(3.0);
+        let gap = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(gap.status, SolveStatus::LimitReached);
+        assert!(gap.gap_terminated && !gap.auto_degraded);
+        assert_close(gap.best_objective.unwrap(), 21.5);
+    }
+
+    /// 禁用降级不取消确定性时间预算；截断和单线程复跑结果保持一致。
+    #[test]
+    fn early_stop_disabled_keeps_budget_time_limit_and_determinism() {
+        let p = chain_knapsack(8, 0.5);
+        let opts = BbOptions { time_limit_ms: 1, ..plain_opts() };
+        let ctrl = SearchControl {
+            adaptive_heuristics: true,
+            determinism: Determinism::Budget,
+            degrade: DegradePolicy::disabled(),
+            ..SearchControl::default()
+        };
+        let a = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        let b = branch_and_bound_controlled(&p, &opts, &ctrl, tol(), None).unwrap();
+        assert_eq!(a.status, SolveStatus::LimitReached);
+        assert_eq!(a.stats.nodes, 6, "1ms 的确定性预算仍为 6 个节点");
+        assert!(!a.auto_degraded && !a.gap_terminated);
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.stats.nodes, b.stats.nodes);
+        assert_eq!(a.stats.lp_iterations, b.stats.lp_iterations);
+        assert_eq!(a.best_objective, b.best_objective);
+        assert_eq!(a.best_values, b.best_values);
+        assert_eq!(a.bound, b.bound);
+        assert_eq!(a.auto_degraded, b.auto_degraded);
+        assert_eq!(a.gap_terminated, b.gap_terminated);
+        assert!(a.bound.unwrap() >= chain_knapsack_bruteforce(8, 0.5));
     }
 
     /// 顺序确定性 gap 用例（dive 问题，offset=0.5 非整数目标 ⇒ cutoff 关闭）：
@@ -4962,6 +6333,43 @@ mod tests {
         (lines, hooks)
     }
 
+    #[test]
+    fn subset_sum_root_proof_reports_bound_with_and_without_cuts() {
+        let path = std::path::Path::new("../bench/instances/marketsplit-4x40.milp");
+        let p = crate::instance::load_instance(path).unwrap();
+        for root_cuts in [true, false] {
+            let (lines, hooks) = collector();
+            let opts = BbOptions {
+                root_cuts,
+                node_limit: 1,
+                ..BbOptions::default()
+            };
+            let result = branch_and_bound_controlled(
+                &p,
+                &opts,
+                &SearchControl::default(),
+                tol(),
+                Some(&hooks),
+            )
+            .unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(19.0));
+            assert_eq!(result.best_objective, result.bound);
+            assert_eq!(result.stats.nodes, 1);
+            let lines = lines.lock().unwrap();
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].bound, result.bound);
+            assert_eq!(lines[0].incumbent, result.best_objective);
+
+            let off = BbOptions {
+                mitm_windows: 0,
+                ..opts
+            };
+            let limited = branch_and_bound(&p, &off, tol()).unwrap();
+            assert_eq!(limited.status, SolveStatus::LimitReached);
+        }
+    }
+
     /// hard-knapsack-12 + 极小 log_period：首行在根阶段结束（nodes=1）；
     /// 此后周期行仅在栈非空时出现 ⇒ 全部行 bound 均 Some（无
     /// 'incumbent=X bound=none gap=inf' 矛盾行）；行数 ≥ 2（首行后仍有行）。
@@ -5152,4 +6560,426 @@ mod tests {
             assert!(!r.gap_terminated);
         }
     }
+}
+
+#[cfg(test)]
+mod binary_propagation_tests {
+    use super::*;
+    use crate::model::{RelOp, VarType};
+    use crate::solver::{solve, SolveOptions};
+
+    std::thread_local! {
+        static LOCAL_SCOPE_RESTORES: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    }
+
+    struct LocalScopeAudit(Option<u64>);
+    impl LocalScopeAudit {
+        fn new() -> Self { Self(LOCAL_SCOPE_RESTORES.with(|state| state.replace(Some(0)))) }
+        fn count(&self) -> u64 { LOCAL_SCOPE_RESTORES.with(|state| state.get().unwrap()) }
+    }
+    impl Drop for LocalScopeAudit {
+        fn drop(&mut self) { LOCAL_SCOPE_RESTORES.with(|state| state.set(self.0)); }
+    }
+    pub(super) fn note_local_scope_restore() {
+        LOCAL_SCOPE_RESTORES.with(|state| {
+            if let Some(count) = state.get() { state.set(Some(count + 1)); }
+        });
+    }
+
+    fn small_model(seed: u64, sense: Sense) -> Problem {
+        let mut p = Problem::new("传播端到端穷举", sense);
+        let mut rng = seed + 17;
+        let mut next = || { rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1); rng >> 32 };
+        for j in 0..6 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.set_objective((0..6).map(|j| (j, (next() % 17) as f64 - 5.0)).collect(), 0.25).unwrap();
+        for row in 0..4 {
+            let terms = (0..6).map(|j| (j, (next() % 9) as f64 - 3.0)).collect();
+            let op = if row == 3 && seed % 3 == 0 { RelOp::Eq } else if row % 2 == 0 { RelOp::Le } else { RelOp::Ge };
+            p.add_constraint(None, terms, op, (next() % 16) as f64 - 3.0).unwrap();
+        }
+        p
+    }
+
+    fn optimum(p: &Problem) -> Option<f64> {
+        let mut best: Option<f64> = None;
+        for mask in 0..(1 << p.vars.len()) {
+            let x: Vec<_> = (0..p.vars.len()).map(|j| ((mask >> j) & 1) as f64).collect();
+            if !p.constraints.iter().all(|row| match row.op {
+                RelOp::Le => row.expr.eval(&x) <= row.rhs,
+                RelOp::Ge => row.expr.eval(&x) >= row.rhs,
+                RelOp::Eq => row.expr.eval(&x) == row.rhs,
+            }) { continue; }
+            let value = p.obj.eval(&x) + p.obj_offset;
+            best = Some(best.map_or(value, |old| match p.sense { Sense::Maximize => old.max(value), Sense::Minimize => old.min(value) }));
+        }
+        best
+    }
+
+    fn options(engine: LpEngineKind) -> BbOptions {
+        BbOptions { binary_row_propagation: BinaryPropagationMode::On, branch_rule_auto: false,
+            branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
+            local_cuts: false, root_rc_fixing: false, lp_engine: engine, ..BbOptions::default() }
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_replays_rc_after_dfs_and_hybrid_domain_restore() {
+        let tol = Tolerances::default();
+        let mut original = crate::presolve::certified_fallback_tests::branch_model();
+        original.add_var("unrelated", VarType::Binary).unwrap();
+        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
+        assert_eq!(saved.len(), 1);
+        let root = Bounds::from_problem(&problem);
+        let snapshot = DomainSnapshot::capture(&root, None);
+        let cache = RootRcCache { sense: Sense::Maximize, obj_offset: 0.25, obj_integral: false,
+            int_vars: vec![0, 1, 2, 3], z_lp: 3.0, rc: vec![0.0; 4], side: vec![0; 4],
+            n_struct: 4, base: root.clone() };
+        let mut rc = RcRefixState::new(cache);
+        rc.log.push(RcFixEntry { var: 0, tighten_lb: false, value: 0.0 });
+        let mut state = BinaryPropagation::with_preserved(&problem, tol, saved).unwrap();
+        assert_eq!(state.stats.accepted_rows, 2);
+        let mut bounds = root;
+        let mut trail = Vec::new();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
+        unwind(&mut trail, &mut bounds, 0);
+        assert_eq!(bounds.ub[0], 0.0, "RC固定不在DFS trail中");
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0));
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, [3], None, |_, _, _| {}), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (1.0, 1.0), "无关分支不能代替RC日志播种");
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
+        snapshot.restore(&mut bounds);
+        trail.clear();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0), "Hybrid完整域恢复后须重得旧行推论");
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_public_bb_has_no_hidden_payload_and_off_rejects_internal_payload() {
+        let tol = Tolerances::default();
+        let original = crate::presolve::certified_fallback_tests::branch_model();
+        let (problem, _, saved) = crate::presolve::presolve_for_solve(&original, &tol, true).unwrap();
+        let opts = options(LpEngineKind::Tableau);
+        let public = branch_and_bound(&problem, &opts, tol).unwrap();
+        assert_eq!(public.status, SolveStatus::Optimal);
+        assert_eq!(public.best_objective, Some(2.125));
+        assert_eq!(public.stats.propagation.accepted_rows, 1, "公开入口只认证传入的强化LP行");
+        let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts };
+        let error = branch_and_bound_with_preserved(&problem, &off, &SearchControl::default(), tol, None, saved, None, SearchPrelude::default()).unwrap_err();
+        assert!(error.to_string().contains("旧认证行只能移交"));
+    }
+
+    #[cfg(feature = "certified_row_fallback")]
+    #[test]
+    fn certified_fallback_keeps_static_rows_outside_real_local_cut_scopes() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let original = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        let tol = Tolerances::default();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut problem = original.clone();
+            // 生产强化只改负系数，必然不命中局部割的全正系数类门控。
+            // 此处专测载荷和真实割作用域的隔离：人工封存一个二元等价的
+            // 正系数行，不能把该测试载体当成 presolve 实际会捕获的模型。
+            let mut saved = PreservedBinaryRows::for_problem(&problem, tol);
+            assert!(saved.capture(0, &problem.vars, &problem.constraints[0], tol));
+            let coefficient = &mut problem.constraints[0].expr.terms[0].1;
+            let old = *coefficient;
+            *coefficient = f64::from_bits(old.to_bits() - 1);
+            let perturbation = old - *coefficient;
+            // 原行格距至少1；只有一项变动，二元赋值的总扰动至多为该差值。
+            // 连同认证保留的验收容差仍不足1，不能跨过原整数不可行间隔。
+            let norm: f64 = original.constraints[0].expr.terms.iter().map(|&(_, a)| a.abs()).sum();
+            let allowance = 10.0 * tol.feasibility + tol.integrality * norm;
+            assert!(old > 0.0 && old.fract() == 0.0 && norm < (1_u64 << 50) as f64);
+            assert!(perturbation > 0.0 && allowance.is_finite() && perturbation + allowance < 1.0);
+            assert_eq!(problem.constraints[0].rhs.fract(), 0.0);
+            assert!(original.constraints[0].expr.terms.iter().all(|&(_, a)| a.fract() == 0.0));
+            saved.seal_last(0, &problem.constraints[0]);
+            assert_eq!(saved.len(), 1);
+            assert!(detect_pseudocost_favorable(&problem), "测试必须保留真实局部割入口");
+            assert_eq!(BinaryPropagation::new(&problem, tol).stats.skipped_rows, 1,
+                "扰动行必须认证失败，才能实际检查旧行回退");
+            let audit = LocalScopeAudit::new();
+            let opts = BbOptions { root_cuts: false, local_cuts: true, lp_engine: engine,
+                binary_row_propagation: BinaryPropagationMode::On, ..BbOptions::default() };
+            let result = branch_and_bound_with_preserved(&problem, &opts, &SearchControl::default(), tol, None, saved, None, SearchPrelude::default()).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(2331.0));
+            assert!(result.stats.cuts > 0 && audit.count() > 0, "须实际退出局部割作用域");
+            assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
+            assert_eq!(result.stats.propagation.accepted_rows, problem.constraints.len() as u64,
+                "旧行回退只替代同号静态行，局部割不得进入全局传播库");
+        }
+    }
+
+    #[test]
+    fn binary_propagation_matches_enumeration_across_engines_domains_and_rc() {
+        let tol = Tolerances::default();
+        let mut calls = 0;
+        let mut fixes = 0;
+        for seed in 0..12 {
+            for sense in [Sense::Maximize, Sense::Minimize] {
+                let p = small_model(seed, sense);
+                let exact = optimum(&p);
+                for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+                    for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
+                        for rc in [false, true] {
+                            let opts = BbOptions { node_rule: rule, root_rc_fixing: rc, ..options(engine) };
+                            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..opts }, tol).unwrap();
+                            let on = branch_and_bound(&p, &opts, tol).unwrap();
+                            assert_eq!(off.status, on.status, "seed={seed} engine={engine:?} rule={rule:?} rc={rc}");
+                            assert_eq!(on.best_objective, exact);
+                            assert_eq!(on.status, if exact.is_some() { SolveStatus::Optimal } else { SolveStatus::Infeasible });
+                            assert_eq!(off.stats.propagation.calls, 0);
+                            assert_eq!(off.stats.propagation.accepted_rows, 0);
+                            calls += on.stats.propagation.calls;
+                            fixes += on.stats.propagation.fixes;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(calls > 0 && fixes > 0);
+    }
+
+    #[test]
+    fn binary_propagation_scaling_presolve_probe_local_cut_and_budget_paths() {
+        let mut p = Problem::new("传播背包接线", Sense::Maximize);
+        for j in 0..8 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.set_objective((0..8).map(|j| (j, (j * 7 % 11 + 1) as f64)).collect(), 0.25).unwrap();
+        for k in 0..3 {
+            p.add_constraint(None, (0..8).map(|j| (j, (j * 3 + k * 2 + 1) as f64)).collect(), RelOp::Le, (35 + k * 5) as f64).unwrap();
+        }
+        let exact = optimum(&p).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for presolve in [false, true] {
+                for scaling in [false, true] {
+                    for reuse in [false, true] {
+                        let bb = BbOptions { branch_rule: BranchRule::Pseudocost, reuse_probe_evidence: reuse,
+                            local_cuts: true, root_rc_fixing: true, ..options(engine) };
+                        let result = solve(&p, &SolveOptions { bb, use_presolve: presolve, use_scaling: scaling, ..SolveOptions::default() }).unwrap();
+                        assert_eq!(result.status, SolveStatus::Optimal);
+                        assert_eq!(result.objective, Some(exact));
+                    }
+                }
+            }
+            let mut fractional = Problem::new("传播限额前沿", Sense::Maximize);
+            fractional.add_var("a", VarType::Binary).unwrap();
+            fractional.add_var("b", VarType::Binary).unwrap();
+            fractional.set_objective(vec![(0, 10.0), (1, 7.0)], 0.25).unwrap();
+            fractional.add_constraint(None, vec![(0, 5.0), (1, 3.0)], RelOp::Le, 7.0).unwrap();
+            let opts = BbOptions { node_limit: 1, ..options(engine) };
+            let ctrl = SearchControl { determinism: Determinism::Budget, ..SearchControl::default() };
+            let first = branch_and_bound_controlled(&fractional, &opts, &ctrl, Tolerances::default(), None).unwrap();
+            let second = branch_and_bound_controlled(&fractional, &opts, &ctrl, Tolerances::default(), None).unwrap();
+            assert_eq!(first.status, SolveStatus::LimitReached);
+            assert!(first.bound.unwrap() >= 10.25);
+            assert_eq!(first.bound, second.bound);
+            assert_eq!(first.best_values, second.best_values);
+            assert_eq!(first.stats.nodes, second.stats.nodes);
+            assert_eq!(first.stats.lp_iterations, second.stats.lp_iterations);
+            assert_eq!(first.stats.propagation.fixes, second.stats.propagation.fixes);
+        }
+    }
+
+    #[test]
+    fn binary_propagation_replays_unchanged_rc_overlay_after_dfs_and_hybrid_restore() {
+        let mut p = Problem::new("覆盖层重复播种", Sense::Maximize);
+        for j in 0..3 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 1.0).unwrap();
+        let root = Bounds::from_problem(&p);
+        let snapshot = DomainSnapshot::capture(&root, None);
+        let cache = RootRcCache { sense: Sense::Maximize, obj_offset: 0.0, obj_integral: true,
+            int_vars: vec![0, 1, 2], z_lp: 3.0, rc: vec![0.0; 3], side: vec![0; 3], n_struct: 3, base: root.clone() };
+        let mut rc = RcRefixState::new(cache);
+        rc.log.push(RcFixEntry { var: 0, tighten_lb: true, value: 1.0 });
+        let mut state = BinaryPropagation::new(&p, Tolerances::default());
+        let mut bounds = root.clone();
+        let mut trail = Vec::new();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+        unwind(&mut trail, &mut bounds, 0);
+        assert_eq!(bounds.lb[0], 1.0, "RC不记trail，祖先仍保留覆盖界");
+        assert_eq!(bounds.ub[1], 1.0);
+        let before = bounds.clone();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(before.lb, bounds.lb);
+        // 只播种本次分支列会漏掉推论；生产接线必须播种整个RC日志。
+        assert_eq!(state.propagate(&mut bounds, false, [2], None, |_, _, _| {}), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 1.0);
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+        snapshot.restore(&mut bounds); trail.clear();
+        assert!(rc.intersect(&mut bounds));
+        assert_eq!(state.propagate(&mut bounds, false, rc.log.iter().map(|e| e.var), None,
+            |var, is_lb, old| trail.push(TrailEntry { var, is_lb, old })), PropagationOutcome::Complete);
+        assert_eq!(bounds.ub[1], 0.0);
+    }
+
+    #[test]
+    fn binary_propagation_rejects_both_parallel_public_entries() {
+        let p = small_model(1, Sense::Maximize);
+        let opts = options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let error = branch_and_bound_controlled(&p, &opts, &ctrl, Tolerances::default(), None).unwrap_err();
+        assert!(error.to_string().contains("二元静态行传播"));
+        // 直接入口不能绕过上层检查；配置其余项用已有默认控制参数构建。
+        let config = crate::parallel_bb::ParallelConfig { threads: 2, mipgap_percent: None,
+            adaptive_heuristics: false, degrade: DegradePolicy::disabled(), log_period_secs: None,
+            progress: None };
+        let result = crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, Tolerances::default());
+        assert!(matches!(result, Err(MilpError::InvalidModel(message)) if message.contains("二元静态行传播")));
+    }
+    #[test]
+    fn binary_propagation_root_children_scan_unrelated_rows_and_skip_conflict_lp() {
+        let mut p = Problem::new("两个根孩子独立播种", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 0.5), (1, 0.5)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.25).unwrap();
+        p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let on = branch_and_bound(&p, &options(engine), Tolerances::default()).unwrap();
+            let off = branch_and_bound(&p, &BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..options(engine) }, Tolerances::default()).unwrap();
+            assert_eq!(on.status, SolveStatus::Optimal);
+            assert_eq!(on.best_objective, Some(0.0));
+            assert_eq!(on.stats.propagation.calls, 2);
+            assert_eq!(on.stats.propagation.conflicts, 1);
+            assert_eq!(on.stats.nodes, 2, "一个根LP加一个非空孩子LP，冲突不算节点");
+            assert!(off.stats.nodes > on.stats.nodes);
+        }
+    }
+
+    #[test]
+    fn binary_propagation_large_hybrid_frontier_keeps_known_optimum() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = BbOptions { node_rule: NodeRule::HybridBestBound, node_limit: 128,
+                ..options(engine) };
+            let r = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert!(r.stats.nodes > 64, "覆盖跨子树最好界切换");
+            assert!(r.stats.propagation.calls > 64);
+            assert!(r.stats.propagation.accepted_rows > 0);
+            match r.status {
+                SolveStatus::Optimal => assert_eq!(r.best_objective, Some(2331.0)),
+                SolveStatus::LimitReached => assert!(r.bound.unwrap() >= 2331.0 - 1e-7),
+                other => panic!("已知可行实例不能被传播误报为{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn binary_propagation_deadline_keeps_the_only_frontier_after_partial_fixes() {
+        let mut p = Problem::new("传播途中保留唯一前沿", Sense::Maximize);
+        for j in 0..300 { p.add_var(&format!("x{j}"), VarType::Binary).unwrap(); }
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(300, 1.0)], 0.0).unwrap();
+        p.add_constraint(None, (0..300).map(|j| (j, 1.0)).collect(), RelOp::Le, 0.0).unwrap();
+        p.add_constraint(None, vec![(300, 1.0)], RelOp::Le, 0.5).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = BbOptions { branch_rule: BranchRule::Pseudocost, reuse_probe_evidence: true,
+                ..options(engine) };
+            let interrupted = {
+                // 第一次为入口，第二次为活动度扫描，第三次已写入部分固定。
+                let _deadline = crate::binary_propagation::TestDeadlineGuard::on_check(3);
+                branch_and_bound(&p, &opts, Tolerances::default()).unwrap()
+            };
+            assert_eq!(interrupted.status, SolveStatus::LimitReached);
+            assert_eq!(interrupted.stats.nodes, 1, "传播未完成，不得调用孩子LP");
+            assert_eq!(interrupted.stats.propagation.calls, 1);
+            assert!(interrupted.stats.propagation.fixes > 0 && interrupted.stats.propagation.fixes < 300);
+            assert_eq!(interrupted.stats.propagation.conflicts, 0);
+            assert_eq!(interrupted.best_objective, None, "不能把部分固定当成整数可行解");
+            // 强分支已排除上支，仅剩下支est=0；漏push当前Pending会得到None。
+            assert_eq!(interrupted.bound, Some(0.0));
+            let completed = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert_eq!(completed.status, SolveStatus::Optimal, "注入必须在离开作用域后清除");
+            assert_eq!(completed.best_objective, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn binary_propagation_real_local_cuts_restore_outside_their_scope() {
+        let path = format!("{}/../bench/instances/mknap-3x100.milp", env!("CARGO_MANIFEST_DIR"));
+        let p = crate::instance::load_instance(std::path::Path::new(&path)).unwrap();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let audit = LocalScopeAudit::new();
+            let opts = BbOptions { binary_row_propagation: BinaryPropagationMode::On, root_cuts: false,
+                local_cuts: true, lp_engine: engine, ..BbOptions::default() };
+            let result = branch_and_bound(&p, &opts, Tolerances::default()).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(2331.0));
+            assert!(result.stats.cuts > 0, "根割关闭，新增割必须来自真实树内局部割");
+            assert!(audit.count() > 0, "必须真的退出局部割作用域并恢复LP快照");
+            assert!(result.stats.propagation.fixes > 0, "传播必须实际写入trail");
+            assert_eq!(result.stats.propagation.accepted_rows, p.constraints.len() as u64,
+                "传播数据库只含工作模型静态行，不能把局部割纳入全局行");
+        }
+    }
+
+    #[test]
+    fn binary_propagation_auto_resolves_once_before_parallel_small_tree_prefix() {
+        let mut p = Problem::new("自动传播外层线程解析", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("b", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 0.5), (1, 0.5)], 0.0).unwrap();
+        p.add_constraint(None, vec![(0, 1.0)], RelOp::Le, 0.25).unwrap();
+        p.add_constraint(None, vec![(1, 1.0)], RelOp::Le, 0.5).unwrap();
+        let tol = Tolerances::default();
+        let auto = BbOptions { binary_row_propagation: BinaryPropagationMode::Auto, ..options(LpEngineKind::Tableau) };
+        let on = BbOptions { binary_row_propagation: BinaryPropagationMode::On, ..auto };
+        let off = BbOptions { binary_row_propagation: BinaryPropagationMode::Off, ..auto };
+        let automatic = branch_and_bound(&p, &auto, tol).unwrap();
+        let explicit = branch_and_bound(&p, &on, tol).unwrap();
+        assert_eq!(automatic.status, explicit.status);
+        assert_eq!(automatic.best_values, explicit.best_values);
+        assert_eq!(automatic.bound, explicit.bound);
+        assert_eq!(automatic.stats.nodes, explicit.stats.nodes);
+        assert_eq!(automatic.stats.lp_iterations, explicit.stats.lp_iterations);
+        assert_eq!(automatic.stats.propagation.fixes, explicit.stats.propagation.fixes);
+        assert!(automatic.stats.propagation.calls > 0);
+        let disabled = branch_and_bound(&p, &off, tol).unwrap();
+        assert_eq!(disabled.stats.propagation.accepted_rows, 0);
+        assert_eq!(disabled.stats.propagation.calls, 0);
+        assert!(disabled.stats.nodes > automatic.stats.nodes);
+        assert!(small_tree_gate_applies(&p, &auto));
+        assert!(resolve_work_stack_mode(&p, &auto).1, "实际命中自动工作栈的小树前缀入口");
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let parallel_prefix = {
+            // 若临时threads=1错误重开传播，会立刻返回LimitReached，不能伪装成通过。
+            let _deadline = crate::binary_propagation::TestDeadlineGuard::on_check(1);
+            branch_and_bound_controlled(&p, &auto, &ctrl, tol, None).unwrap()
+        };
+        assert_eq!(parallel_prefix.status, SolveStatus::Optimal);
+        assert_eq!(parallel_prefix.stats.nodes, disabled.stats.nodes);
+        assert_eq!(parallel_prefix.stats.lp_iterations, disabled.stats.lp_iterations);
+        assert_eq!(parallel_prefix.stats.propagation.calls, 0);
+        assert_eq!(parallel_prefix.stats.propagation.accepted_rows, 0);
+        assert!(branch_and_bound_controlled(&p, &on, &ctrl, tol, None).is_err());
+        let config = crate::parallel_bb::ParallelConfig { threads: 2, mipgap_percent: None,
+            adaptive_heuristics: false, degrade: DegradePolicy::disabled(), log_period_secs: None, progress: None };
+        for opts in [auto, off] {
+            let forced_parallel = BbOptions { work_stack_auto: false, ..opts };
+            let outer = branch_and_bound_controlled(&p, &forced_parallel, &ctrl, tol, None).unwrap();
+            assert_eq!(outer.status, SolveStatus::Optimal);
+            assert_eq!(outer.stats.propagation.calls, 0);
+            let direct = crate::parallel_bb::parallel_branch_and_bound(&p, &opts, &config, tol).unwrap();
+            assert_eq!(direct.best_objective, Some(0.0));
+            assert_eq!(direct.stats.propagation.calls, 0);
+            assert_eq!(direct.stats.propagation.accepted_rows, 0);
+        }
+    }
+
 }

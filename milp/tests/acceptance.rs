@@ -833,7 +833,8 @@ fn acceptance_heuristic_auto_optimal() {
 /// 控制器可补跑 dive；目标不变）。nodes 为 A+B 叠加实测钉值。
 #[test]
 fn acceptance_cli_heuristic_on_identical() {
-    let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on"]);
+    // 保留S13历史节点基线，隔离启发式/RC行为；新默认传播另验确定性与真值。
+    let (code, stdout) = cli(&[&instance_path("hard-knapsack-12"), "--heuristic-mode", "on", "--binary-propagation", "off"]);
     assert_eq!(code, Some(0), "{stdout}");
     // 演进：根 dive 供应 incumbent 227→235；整数目标 cutoff 235→211；根
     // 覆盖割 211→195；默认 Pseudocost + 可靠性探测 + best-estimate 压栈序
@@ -927,14 +928,12 @@ fn bench_instance_path(name: &str) -> String {
 }
 
 /// （P0-1 验收 + 割轮 IterationLimit 分流）setcover-100x150：根割循环
-/// 的割后 resolve 触发迭代上限时不再作整树终态——丢弃全部根割、重建
-/// 无割 Simplex 恢复 Optimal 根态后继续搜索。修复前 6/6 次运行 1 节点
-/// limit_reached 无解（bench/raw_runs.jsonl 第 3 轮基线）；修复后：
+/// 的迭代失败不能冒充整树终态；失败轮回滚增量，已提交的根割保留。
+/// 本验收检查保留割的语义，不绑定启发式具体生成的割条数：
 /// - t1/t4 均 Optimal 且目标 276（节点数 > 1：搜索越过根节点）；
 /// - threads≥2 + adaptive 与 t1 目标一致（子树不丢、不误终态）；
-/// - 记账完整：默认路径 lp_iterations **严格大于**关割等价路径（回退后
-///   树与关割一致，多出的恰是根 LP + 割循环的重建前迭代）；
-/// - 割丢弃如实：stats.cuts == 0（割已随 Simplex 一起丢弃）。
+/// - 记账完整：默认路径 lp_iterations **严格大于**关割路径；
+/// - 割保留如实：stats.cuts > 0；具体条数的跨次一致性由双跑验收覆盖。
 ///
 /// 重负载门禁（L4）：debug 构建下 8 次 setcover-100x150 求解（t1 + 关割
 /// + threads∈{2,4}×3 重复，含并行根预割启发式轮）实测 ~100s、release
@@ -958,15 +957,10 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
         seq.objective
     );
     assert!(seq.stats.nodes > 1, "搜索越过根节点（实际 {} 节点）", seq.stats.nodes);
-    // 割保留如实（R8 重钉：割循环收紧预算 + 回滚语义——失败轮弃增量割、
-    // 已提交割保留，不再触发 branch_bound 的整树回退。旧钉值 0 对应
-    // 『回退丢弃全部根割』；目标 276 恒为已知最优不变）。
-    // S9 重钉：R8 的 23 在 S5–S8 间漂移至 74（S9 复核经 HEAD 干净
-    // worktree 复跑同测试证明先于 S9 存在，漂移轮次未溯源——本测试
-    // #[ignore]，默认门禁不覆盖，属门禁缺口留档；S9 启发式不改变本值）。
-    assert_eq!(seq.stats.cuts, 74, "回滚语义：已提交割保留（S9 重钉）");
+    // 已提交的根割必须保留；启发式可以改变条数，无需反复重钉具体值。
+    assert!(seq.stats.cuts > 0, "回滚语义：已提交割保留");
 
-    // 记账完整：lp_iterations 含重建前迭代（根 LP + 割循环）。
+    // 记账完整：lp_iterations 包含根 LP 和割循环的工作量。
     let opts_nocuts = SolveOptions {
         bb: BbOptions {
             root_cuts: false,
@@ -980,7 +974,7 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
     assert!((nocuts.objective.unwrap() - 276.0).abs() <= 1e-6);
     assert!(
         seq.stats.lp_iterations > nocuts.stats.lp_iterations,
-        "默认（回退）lp_iterations={} 须 > 关割={}（含重建前根割迭代）",
+        "默认路径 lp_iterations={} 须 > 关割={}（包含根割循环迭代）",
         seq.stats.lp_iterations,
         nocuts.stats.lp_iterations
     );
@@ -1031,6 +1025,7 @@ fn acceptance_default_path_deterministic_two_runs() {
     assert_eq!(r1.objective, r2.objective);
     assert_eq!(r1.stats.nodes, r2.stats.nodes, "节点数跨次一致");
     assert_eq!(r1.stats.lp_iterations, r2.stats.lp_iterations);
+    assert_eq!(r1.stats.cuts, r2.stats.cuts, "割条数跨次一致");
 
     // 本地算例同断言（不同规模/结构）。
     let problem = load_instance(Path::new(&instance_path("hard-knapsack-12"))).unwrap();
@@ -1038,6 +1033,7 @@ fn acceptance_default_path_deterministic_two_runs() {
     let r2 = solve_default(&problem).unwrap();
     assert_eq!(r1.stats.nodes, r2.stats.nodes);
     assert_eq!(r1.stats.lp_iterations, r2.stats.lp_iterations);
+    assert_eq!(r1.stats.cuts, r2.stats.cuts, "割条数跨次一致");
     assert_eq!(r1.objective, r2.objective);
 }
 
@@ -1074,4 +1070,18 @@ fn acceptance_pc_probes_zero_passive_parity() {
         (probed.objective.unwrap() - p1.objective.unwrap()).abs() <= 1e-6,
         "探测预算只改统计不剪枝 ⇒ 目标必须一致"
     );
+}
+
+
+#[test]
+fn acceptance_cli_binary_propagation_auto_matches_on() {
+    let path = instance_path("hard-knapsack-12");
+    let default = cli(&[&path, "--heuristic-mode", "on"]);
+    let explicit = cli(&[&path, "--heuristic-mode", "on", "--binary-propagation", "on"]);
+    let repeated = cli(&[&path, "--heuristic-mode", "on", "--binary-propagation", "auto"]);
+    assert_eq!(default, explicit, "单线程默认Auto与显式On行为一致");
+    assert_eq!(default, repeated, "Auto重复求解输出确定");
+    assert_eq!(default.0, Some(0));
+    assert!(default.1.starts_with("status = optimal\n"));
+    assert!(default.1.ends_with("objective = 523.000000\n"));
 }

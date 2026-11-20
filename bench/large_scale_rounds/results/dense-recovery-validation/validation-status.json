@@ -1,0 +1,61 @@
+[
+  {
+    "log": "06-milp-default-final.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "07-planner.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "planner/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "08-release-acceptance.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--test",
+      "acceptance",
+      "--",
+      "--include-ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "09-work-proof-snapshot-risk.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--features",
+      "root_heuristic_work_limit,proof_profile,root_snapshot_restore,risk_pivot_refresh"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "10-no-default-focused.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--no-default-features",
+      "simplex::tests"
+    ],
+    "exit_code": 0
+  }
+]

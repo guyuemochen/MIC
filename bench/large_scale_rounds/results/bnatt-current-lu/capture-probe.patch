@@ -1,0 +1,48 @@
+diff --git a/milp/examples/round_probe.rs b/milp/examples/round_probe.rs
+index 7db2597..3f8ed21 100644
+--- a/milp/examples/round_probe.rs
++++ b/milp/examples/round_probe.rs
+@@ -166,7 +166,43 @@ fn solve(out: &mut impl Write, problem: &Problem, args: &[String]) -> Result<(),
+     #[cfg(feature = "proof_profile")]
+     milp::proof_profile::reset(ctrl.threads);
+     let start = Instant::now();
++    #[cfg(feature = "lu_failure_diagnostics")]
++    let capture_path = std::env::var_os("MIC_LU_CAPTURE");
++    #[cfg(feature = "lu_failure_diagnostics")]
++    if capture_path.is_some() {
++        milp::simplex_sparse::lu_failure_diagnostics::reset();
++    }
+     let result = solve_controlled(problem, &opts, &ctrl, None)?;
++    #[cfg(feature = "lu_failure_diagnostics")]
++    if let Some(path) = capture_path {
++        let mut capture = io::BufWriter::new(std::fs::File::create(path)?);
++        let failure = milp::simplex_sparse::lu_failure_diagnostics::take();
++        write!(capture, "{{\"failure\":")?;
++        if let Some(record) = failure {
++            record.write_json(&mut capture)?;
++            write!(capture, ",\"fresh_checks\":[")?;
++            for (i, check) in record.recheck().iter().enumerate() {
++                if i != 0 {
++                    write!(capture, ",")?;
++                }
++                check.write_json(&mut capture)?;
++            }
++            write!(capture, "],\"history_checks\":[")?;
++            for (i, (after, check)) in record.recheck_history().iter().enumerate() {
++                if i != 0 {
++                    write!(capture, ",")?;
++                }
++                write!(capture, "{{\"after_pivots\":{after},\"check\":")?;
++                check.write_json(&mut capture)?;
++                write!(capture, "}}")?;
++            }
++            write!(capture, "]")?;
++        } else {
++            write!(capture, "null")?;
++        }
++        writeln!(capture, "}}")?;
++        capture.flush()?;
++    }
+     let elapsed = start.elapsed().as_secs_f64();
+     let report = &result.report;
+     let stats = report.stats;

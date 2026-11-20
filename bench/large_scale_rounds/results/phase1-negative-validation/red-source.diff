@@ -1,0 +1,144 @@
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index d149863..d781f64 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -2898,6 +2898,67 @@ mod tests {
+     use crate::error::MilpError;
+     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+ 
++    mod phase1_negative_tests {
++        use super::*;
++
++        const GAP: f64 = 4.76837158203125e-7;
++
++        fn natural_problem(sense: Sense, two_steps: bool, reverse: bool) -> Problem {
++            let mut vars = vec![var("x", 0.0, f64::INFINITY)];
++            let mut second = vec![(0, 1.0)];
++            if two_steps {
++                vars.push(var("y", 0.0, f64::INFINITY));
++                second.push((1, 0.5));
++            }
++            let mut rows = vec![(vec![(0, 1.0)], RelOp::Eq, 1000.0 + GAP),
++                                (second, RelOp::Eq, 1000.0)];
++            if reverse { rows.reverse(); }
++            prob(sense, vars, vec![], rows)
++        }
++
++        fn natural_case(two_steps: bool) {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    let p = natural_problem(sense, two_steps, false);
++                    p.validate().unwrap();
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit,
++                        "两步={two_steps}, {sense:?}, 首次resolve={first_resolve}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending);
++                    assert_eq!(s.iterations(), 1, "不能让下一零步主元把负人工换出");
++                    assert!(s.basis.iter().enumerate().any(|(i, &j)|
++                        j >= s.ncols_static() && s.rhs[i] < -s.tol.feasibility));
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&bounds);
++                        assert_ne!(recovered.status, LpStatus::Optimal);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn natural_negative_artificial_is_not_cleaned_into_optimal() { natural_case(false); }
++
++        #[test]
++        fn natural_negative_artificial_is_not_erased_by_next_zero_pivot() { natural_case(true); }
++
++        #[test]
++        fn swapped_rows_still_prove_infeasible() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for two_steps in [false, true] {
++                    let p = natural_problem(sense, two_steps, true);
++                    let result = Simplex::new(&p, Tolerances::default()).unwrap()
++                        .solve(&Bounds::from_problem(&p));
++                    assert_eq!(result.status, LpStatus::Infeasible, "{result:?}");
++                }
++            }
++        }
++    }
++
+     mod phase1_finite_tests {
+         use super::*;
+ 
+diff --git a/milp/src/simplex_sparse.rs b/milp/src/simplex_sparse.rs
+index 6a8da3f..1c84657 100644
+--- a/milp/src/simplex_sparse.rs
++++ b/milp/src/simplex_sparse.rs
+@@ -4602,6 +4602,67 @@ mod tests {
+     use crate::simplex::Simplex as DenseSimplex;
+     use std::path::PathBuf;
+ 
++    mod phase1_negative_tests {
++        use super::*;
++
++        const GAP: f64 = 4.76837158203125e-7;
++
++        fn natural_problem(sense: Sense, two_steps: bool, reverse: bool) -> Problem {
++            let mut vars = vec![var("x", 0.0, f64::INFINITY)];
++            let mut second = vec![(0, 1.0)];
++            if two_steps {
++                vars.push(var("y", 0.0, f64::INFINITY));
++                second.push((1, 0.5));
++            }
++            let mut rows = vec![(vec![(0, 1.0)], RelOp::Eq, 1000.0 + GAP),
++                                (second, RelOp::Eq, 1000.0)];
++            if reverse { rows.reverse(); }
++            prob(sense, vars, vec![], rows)
++        }
++
++        fn natural_case(two_steps: bool) {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    let p = natural_problem(sense, two_steps, false);
++                    p.validate().unwrap();
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit,
++                        "两步={two_steps}, {sense:?}, 首次resolve={first_resolve}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending);
++                    assert_eq!(s.iterations(), 1, "不能让下一零步主元把负人工换出");
++                    assert!(s.basis.iter().enumerate().any(|(i, &j)|
++                        j >= s.ncols_static() && s.x_b[i] < -s.tol.feasibility));
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&bounds);
++                        assert_ne!(recovered.status, LpStatus::Optimal);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn natural_negative_artificial_is_not_cleaned_into_optimal() { natural_case(false); }
++
++        #[test]
++        fn natural_negative_artificial_is_not_erased_by_next_zero_pivot() { natural_case(true); }
++
++        #[test]
++        fn swapped_rows_still_prove_infeasible() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for two_steps in [false, true] {
++                    let p = natural_problem(sense, two_steps, true);
++                    let result = SparseSimplex::new(&p, Tolerances::default()).unwrap()
++                        .solve(&Bounds::from_problem(&p));
++                    assert_eq!(result.status, LpStatus::Infeasible, "{result:?}");
++                }
++            }
++        }
++    }
++
+     mod phase1_finite_tests {
+         use super::*;
+ 

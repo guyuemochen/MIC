@@ -3,7 +3,7 @@
 //! `create` 成功返回 `Box::into_raw` 的裸指针；FFI 侧一切操作经该指针
 //! 重建 `&mut ModelBox`。句柄非线程安全（禁止多线程并发使用同一句柄）。
 
-use milp::branch_bound::BbStats;
+use milp::branch_bound::{BbStats, BinaryPropagationMode};
 use milp::model::{Problem, Sense, SolveStatus};
 
 /// 启发式模式（FFI `HeuristicMode` 参数的内部表示；默认 `On`）。
@@ -35,18 +35,21 @@ pub(crate) struct Params {
     pub mipgap_percent: Option<f64>,
     /// 启发式模式；默认 On。
     pub heuristic_mode: HMode,
+    /// 二元行传播模式；默认 Auto。
+    pub binary_row_propagation: BinaryPropagationMode,
     /// 进度行周期秒；None = 不注入进度钩子（0.0 关断编码）。
     pub log_period_secs: Option<f64>,
 }
 
 impl Default for Params {
-    /// 默认：无时限 / threads=1 / 无 gap / HeuristicMode=on / 无日志。
+    /// 默认：无时限 / threads=1 / 无 gap / HeuristicMode=on / BinaryPropagation=auto / 无日志。
     fn default() -> Self {
         Params {
             time_limit_secs: None,
             threads: 1,
             mipgap_percent: None,
             heuristic_mode: HMode::On,
+            binary_row_propagation: BinaryPropagationMode::Auto,
             log_period_secs: None,
         }
     }

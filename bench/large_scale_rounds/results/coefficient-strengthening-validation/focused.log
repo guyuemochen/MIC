@@ -1,0 +1,15 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-negative-coeff/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.21s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 7 tests
+test presolve::binary_strengthening_tests::binary_both_branches_preserved_and_fractional_point_removed ... ok
+test presolve::binary_strengthening_tests::deterministic_and_postsolve_mapping_unchanged ... ok
+test presolve::binary_strengthening_tests::directed_neighbors_cover_zero_and_extremes ... ok
+test presolve::binary_strengthening_tests::nonzero_rhs_negative_bounds_and_underflow_are_conservative ... ok
+test presolve::binary_strengthening_tests::several_negative_columns_preserve_every_binary_assignment ... ok
+test presolve::binary_strengthening_tests::unsupported_or_uncertain_cases_are_bitwise_unchanged ... ok
+test presolve::binary_strengthening_tests::unused_infinite_bound_preserves_both_binary_branches ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s
+

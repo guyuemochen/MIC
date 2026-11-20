@@ -1,0 +1,35 @@
+   Compiling milp v0.1.0 (/tmp/mic-baseline-check/milp)
+   Compiling milp-ffi v0.1.0 (/tmp/mic-baseline-check/milp-ffi)
+warning: this creates a dangling pointer because temporary `CString` is dropped at end of statement
+   --> tests/abi.rs:844:29
+    |
+844 |     let one_name = [cs("a").as_ptr()];
+    |                     ------- ^^^^^^ pointer created here
+    |                     |
+    |                     this `CString` is dropped at end of statement
+    |
+    = help: bind the `CString` to a variable such that it outlives the pointer returned by `as_ptr`
+    = note: a dangling pointer is safe, but dereferencing one is undefined behavior
+    = note: returning a pointer to a local variable will always result in a dangling pointer
+    = note: for more information, see <https://doc.rust-lang.org/reference/destructors.html>
+    = note: `#[warn(dangling_pointers_from_temporaries)]` on by default
+
+warning: `milp-ffi` (test "abi") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.36s
+     Running tests/abi.rs (/tmp/mic-baseline-check/milp-ffi/target/debug/deps/abi-9280b93a0680f48c)
+
+running 1 test
+
+thread 'gap_vector_hard_knapsack_12' (136682) panicked at tests/abi.rs:312:5:
+objective = 520
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test gap_vector_hard_knapsack_12 ... FAILED
+
+failures:
+
+failures:
+    gap_vector_hard_knapsack_12
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--test abi`

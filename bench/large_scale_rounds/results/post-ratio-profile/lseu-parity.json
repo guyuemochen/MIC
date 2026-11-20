@@ -1,0 +1,114 @@
+{
+  "baseline": {
+    "path": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/safe-primal-ratio-default.jsonl",
+    "sha256": "302b1bf966aeb7c360592c941d2ea02cc156fada41beeabd059302a5b79fa493",
+    "command": [
+      "/private/tmp/mic-safe-ratio-binaries/round_probe_default",
+      "solve",
+      "/private/tmp/mic-rounds-public/lseu.milp",
+      "--early-stop",
+      "off",
+      "--probe-reuse",
+      "off",
+      "--binary-propagation",
+      "auto",
+      "--threads",
+      "1",
+      "--time-limit-secs",
+      "30",
+      "--node-limit",
+      "2000000"
+    ],
+    "source_commit": "ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4",
+    "source_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+    "binary_sha256": "8fc4745aec9448bbe24e8da2e65207cbe7d45166acd03898dfe65a59f21f1522",
+    "elapsed_secs": 17.582666125
+  },
+  "diagnostic": {
+    "path": "/private/tmp/mic-post-ratio-profile",
+    "commit": "d3369b6404b7bf0c40e4fd6daa32f7990abff17d",
+    "tree": "4424a5055d0dad70404acdf3d9e675f2c703c7f5",
+    "binary_sha256": "d11539d5272c249a84de7f5dad5548606c3f81d0a7ad524cd5a098eb774682c8",
+    "source_diff_sha256": "1a53c896e350a2b37aa410e2f63e1f0f2f11d94ce51a085fb759c4937a362ddd",
+    "build_log_sha256": "1f592ba8e50a2a85f00fe951aa5da3e74092800aa7dd453027cfba143680dc20",
+    "export_command": [
+      "/private/tmp/mic-post-ratio-profile-target/release/examples/round_probe",
+      "export",
+      "/private/tmp/mic-rounds-public/lseu.milp"
+    ],
+    "export_model_sha256": "0e941c84b47f82dc917f0c442fed91b56743a2ee6b24a78df7c3a2f3716844f5",
+    "command": [
+      "/private/tmp/mic-post-ratio-profile-target/release/examples/round_probe",
+      "solve",
+      "/private/tmp/mic-rounds-public/lseu.milp",
+      "--early-stop",
+      "off",
+      "--probe-reuse",
+      "off",
+      "--binary-propagation",
+      "auto",
+      "--threads",
+      "1",
+      "--time-limit-secs",
+      "30",
+      "--node-limit",
+      "2000000"
+    ],
+    "elapsed_secs": 17.546959875
+  },
+  "fields_equal": {
+    "auto_degraded": true,
+    "bound": true,
+    "cuts": true,
+    "gap_absolute": true,
+    "gap_percent": true,
+    "gap_terminated": true,
+    "lp_iterations": true,
+    "nodes": true,
+    "objective": true,
+    "presolve_reductions": true,
+    "prop_accepted_rows": true,
+    "prop_calls": true,
+    "prop_conflicts": true,
+    "prop_fixes": true,
+    "prop_row_visits": true,
+    "prop_skipped_rows": true,
+    "prop_term_visits": true,
+    "raw_status": true,
+    "rc_fixed": true,
+    "rc_reapplies": true,
+    "rc_refixed": true,
+    "status": true,
+    "values": true
+  },
+  "passed": true,
+  "changed": {},
+  "failure_samples": 2,
+  "failure_statuses": {
+    "iteration_limit": 2
+  },
+  "failure_events": [
+    {
+      "profile_event_index": 60,
+      "kind": "lp_failure",
+      "stage": "tree_lp",
+      "status": "iteration_limit",
+      "numerical_error": "阶段 2 行 74 基变量值 1.000000822976822 超出绝对界容差",
+      "phase1_pending": false
+    },
+    {
+      "profile_event_index": 61,
+      "kind": "lp_failure",
+      "stage": "tree_lp",
+      "status": "iteration_limit",
+      "numerical_error": "阶段 2 行 74 基变量值 1.0000008235908044 超出绝对界容差",
+      "phase1_pending": false
+    }
+  ],
+  "failures_omitted": 160,
+  "chosen_omitted": 24767,
+  "tree_lp_calls": 49513,
+  "tree_lp_iterations": 1552978,
+  "unresolved_lp_nodes": 2,
+  "unresolved_est": 1191.1870023965466
+}

@@ -1,0 +1,69 @@
+{
+  "commit": "d200934b0a33bcc3b95c12058047af6bb75934e9",
+  "milp_tree": "ff198575a2e599ba7cc32c38ac5a07e006291ec2",
+  "clean_before_and_after_build": true,
+  "binaries": {
+    "off": {
+      "path": "/tmp/mic-dense-optimal-binaries/round_probe_off",
+      "sha256": "0ad84d7c284453d5bcb22a1a67ab2eec53e7b8ed7583d390e6a6aaa32be10d28",
+      "features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "on": {
+      "path": "/tmp/mic-dense-optimal-binaries/round_probe_on",
+      "sha256": "2f70eb857875f4c17cad53922acf079c30fafe052467672af2d4507e12f66ae3",
+      "features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening",
+        "proof_profile"
+      ]
+    }
+  },
+  "command": [
+    "/tmp/mic-dense-optimal-binaries/round_probe_on",
+    "solve",
+    "/private/tmp/mic-rounds-public/p0201.milp",
+    "--early-stop",
+    "off",
+    "--probe-reuse",
+    "off",
+    "--binary-propagation",
+    "auto",
+    "--threads",
+    "1",
+    "--time-limit-secs",
+    "30",
+    "--node-limit",
+    "1"
+  ],
+  "baseline_command": [
+    "/private/tmp/mic-recovery-binaries/round_probe_default",
+    "solve",
+    "/private/tmp/mic-rounds-public/p0201.milp",
+    "--early-stop",
+    "off",
+    "--probe-reuse",
+    "off",
+    "--binary-propagation",
+    "auto",
+    "--threads",
+    "1",
+    "--time-limit-secs",
+    "30",
+    "--node-limit",
+    "2000000"
+  ],
+  "export_command": [
+    "/tmp/mic-dense-optimal-binaries/round_probe_on",
+    "export",
+    "/private/tmp/mic-rounds-public/p0201.milp"
+  ],
+  "export_model_sha256": "2f776a6e1991777599186bef4271aa5f9d46cf107217fca14aec63b169d07706",
+  "model_sha256": "2f776a6e1991777599186bef4271aa5f9d46cf107217fca14aec63b169d07706",
+  "milp_sha256": "040ec92353da3175afb3f6f87a323afc943ac305b66fa74d0931017e1c2710d2",
+  "performance_promotion_evidence": false,
+  "diagnostic_artifact_sha256": "19350aa7eaeae3177390ae103a0966dbe39adc9375149e82eeb6a5544b27d7d5",
+  "diagnostic_source_patch_sha256": "c743a835f72d4f12b85c7da453fffa9abe398814427a17aaaa7c82dc30964698"
+}

@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--",
+    "--test-threads=1"
+  ],
+  "base_commit": "f5f133b",
+  "exit_code": null,
+  "observed_result": "all test suites passed; log ends at doc-tests completion",
+  "scheduler_terminated_after_completed_cargo": true,
+  "reason": "优先修复经独立反例确认的Phase-1负人工证明漏洞；后续重测试在新核心基线上继续。"
+}

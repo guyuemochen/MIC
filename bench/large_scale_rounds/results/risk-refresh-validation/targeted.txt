@@ -1,0 +1,33 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-risk-pivot-refresh/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.50s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-2be937532966e8bd)
+
+running 7 tests
+test simplex_sparse::tests::risk_pivot_refresh_reprices_and_keeps_iteration_budget ... ok
+test simplex_sparse::tests::risk_pivot_scale_threshold_and_nonfinite_are_explicit ... ok
+test simplex_sparse::tests::risk_pivot_fresh_small_legal_pivot_is_accepted_once ... ok
+test simplex_sparse::tests::risk_pivot_refresh_deadline_before_and_after_is_honest ... ok
+test simplex_sparse::tests::risk_pivot_refresh_rejects_stale_zero_pivot_by_reselecting_ratio ... ok
+test simplex_sparse::tests::risk_pivot_refresh_failure_keeps_old_basis_and_phase_debt ... ok
+test simplex_sparse::tests::risk_pivot_healthy_cold_hot_and_cut_snapshot_match_disabled ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-12f527d508839b0f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-b33456d7e48298fd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-5a0554e7ca218298)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

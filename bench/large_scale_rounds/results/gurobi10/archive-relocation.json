@@ -1,0 +1,13 @@
+{
+  "changed_row_field": "model",
+  "originals_sha256": {
+    "gurobi10.jsonl": "6ca5405c83021aa05b85e0ae23393185375106a9baf094e6b34cf1509ffc9c08",
+    "run.log": "33ebbb666026e7f24164f22722ee229a57ac4eae4e072ee423797a33b7fee8ad",
+    "run-exit-code.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "frozen-permission-probe.json": "4486b463209ae8bb4713232d5eb8de89cc4e7e7b0b750251399d47bfe3cf6a9b",
+    "freeze.json": "bde3698681cdd9e7f134b828a66a9654f739a315f74031104cb73a422ff8bf17",
+    "execution.sh": "2f58f30d99207aa89627dc32a8e2f6187151440fbd74d50c5baee8125c37dfd7"
+  },
+  "archived_record_sha256": "6df7ab9c85e4a115bf4a06ebabf23aa40b4e87cc8e270fbf688ad6d0c40b9c93",
+  "states_match_20_models": true
+}

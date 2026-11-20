@@ -1,0 +1,10 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-bnatt-lu-diagnostic/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.87s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-30bf9873db67596e)
+
+running 2 tests
+test simplex_sparse::tests::lu_diagnostic_typed_failure_and_enabled_path_are_honest ... ok
+test simplex_sparse::tests::lu_diagnostic_first_failure_has_replayable_basis_and_fresh_alpha ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s
+

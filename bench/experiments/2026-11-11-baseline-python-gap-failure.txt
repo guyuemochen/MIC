@@ -1,0 +1,16 @@
+F
+======================================================================
+FAIL: test_mipgap_triggers_limit_reached (micpython.tests.test_params.ParamBehaviorTests.test_mipgap_triggers_limit_reached)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/guyuemochen/Desktop/projects/MIC/micpython/tests/test_params.py", line 141, in test_mipgap_triggers_limit_reached
+    self.assertAlmostEqual(m.ObjVal, 511.0, delta=TOL,
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                           msg='LIMIT_REACHED 携带 incumbent')
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 520.0 != 511.0 within 1e-06 delta (9.0 difference) : LIMIT_REACHED 携带 incumbent
+
+----------------------------------------------------------------------
+Ran 1 test in 0.514s
+
+FAILED (failures=1)

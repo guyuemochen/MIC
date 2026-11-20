@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--release",
+    "--example",
+    "round_probe",
+    "--locked",
+    "--target-dir",
+    "/Users/guyuemochen/Desktop/projects/MIC/milp/target"
+  ],
+  "started_at_utc": "2026-11-20T07:25:51.964668+00:00",
+  "finished_at_utc": "2026-11-20T07:25:52.065590+00:00",
+  "process_elapsed_secs": 0.10083254099299666,
+  "returncode": 0,
+  "timeout": false,
+  "spawn_error": null,
+  "stdout": "",
+  "stderr": "    Finished `release` profile [optimized] target(s) in 0.05s\n"
+}

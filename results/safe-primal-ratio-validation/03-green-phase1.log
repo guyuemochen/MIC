@@ -1,0 +1,35 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 13 tests
+test simplex::tests::phase1_negative_tests::existing_deadline_and_iteration_limit_precede_negative_entry ... ok
+test simplex_sparse::tests::phase1_negative_tests::existing_deadline_and_iteration_limit_precede_negative_entry ... ok
+test simplex::tests::phase1_negative_tests::rejected_entry_clone_and_new_bounds_recover ... ok
+test simplex::tests::phase1_negative_tests::artificial_tolerance_boundaries_and_cleanup_precondition ... ok
+test simplex::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex_sparse::tests::phase1_negative_tests::artificial_tolerance_boundaries_and_cleanup_precondition ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_negative_tests::rejected_entry_clone_and_new_bounds_recover ... ok
+test simplex_sparse::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+test simplex_sparse::tests::phase1_negative_tests::old_eta_negative_entry_recovers_but_real_violation_fails_fresh ... FAILED
+
+failures:
+
+---- simplex_sparse::tests::phase1_negative_tests::old_eta_negative_entry_recovers_but_real_violation_fails_fresh stdout ----
+
+thread 'simplex_sparse::tests::phase1_negative_tests::old_eta_negative_entry_recovers_but_real_violation_fails_fresh' (1155922) panicked at src/simplex_sparse.rs:4936:13:
+assertion `left == right` failed
+  left: Infeasible
+ right: IterationLimit
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    simplex_sparse::tests::phase1_negative_tests::old_eta_negative_entry_recovers_but_real_violation_fails_fresh
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 445 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

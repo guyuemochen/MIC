@@ -1,0 +1,190 @@
+{
+  "source": {
+    "source_commit": "07f4d2341e9ab86d1b78007467c8f2dbda81a44b",
+    "source_tree": "75bbd260424ecfc5c59485661acc14ef459830a9",
+    "binary_manifest_sha256": "a9c21500029f096573536dee620744259718634f823927348150e4d42740dce1",
+    "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  },
+  "new_stable_proof_models": [
+    "p0201",
+    "lseu"
+  ],
+  "timing": {
+    "common_optimal_models": 8,
+    "eligible_models": 7,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.9455714584964356,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "gates": {
+    "correctness": true,
+    "no_proof_loss": true,
+    "rss": true,
+    "case_median": true,
+    "enough_eligible": true,
+    "performance": true
+  },
+  "eligible_for_default": true,
+  "decision": "通过事前门槛；待当前串行计时结束后完成默认配置与后续正确性修复整合验证再启用",
+  "new_proof_evidence": {
+    "p0201": {
+      "pairs": [
+        {
+          "rep": 0,
+          "base": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 5640,
+            "lp_iterations": 966185,
+            "peak_rss_bytes": 10764288,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 4865,
+            "lp_iterations": 669445,
+            "peak_rss_bytes": 10141696,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "base": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 5640,
+            "lp_iterations": 963881,
+            "peak_rss_bytes": 10829824,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 4865,
+            "lp_iterations": 669445,
+            "peak_rss_bytes": 10108928,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "base": {
+            "status": "limit_reached",
+            "objective": 8460.0,
+            "bound": 7176.264323023764,
+            "nodes": 5640,
+            "lp_iterations": 963689,
+            "peak_rss_bytes": 10780672,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 7615.0,
+            "bound": 7615.0,
+            "nodes": 4865,
+            "lp_iterations": 669445,
+            "peak_rss_bytes": 10141696,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "common_optimal_timing": null,
+      "included_in_geomean": false,
+      "within_case_time_ratio": null
+    },
+    "lseu": {
+      "pairs": [
+        {
+          "rep": 0,
+          "base": {
+            "status": "limit_reached",
+            "objective": 1120.0,
+            "bound": 1086.4654869964006,
+            "nodes": 55934,
+            "lp_iterations": 2224219,
+            "peak_rss_bytes": 4472832,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 1120.0,
+            "bound": 1120.0,
+            "nodes": 49982,
+            "lp_iterations": 1571444,
+            "peak_rss_bytes": 4259840,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 1,
+          "base": {
+            "status": "limit_reached",
+            "objective": 1120.0,
+            "bound": 1086.4654869964006,
+            "nodes": 55934,
+            "lp_iterations": 2223931,
+            "peak_rss_bytes": 4489216,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 1120.0,
+            "bound": 1120.0,
+            "nodes": 49982,
+            "lp_iterations": 1571444,
+            "peak_rss_bytes": 4259840,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        },
+        {
+          "rep": 2,
+          "base": {
+            "status": "limit_reached",
+            "objective": 1120.0,
+            "bound": 1086.4654869964006,
+            "nodes": 55934,
+            "lp_iterations": 2224219,
+            "peak_rss_bytes": 4440064,
+            "has_incumbent": true
+          },
+          "candidate": {
+            "status": "optimal",
+            "objective": 1120.0,
+            "bound": 1120.0,
+            "nodes": 49982,
+            "lp_iterations": 1571444,
+            "peak_rss_bytes": 4259840,
+            "has_incumbent": true
+          },
+          "proof_lost": false,
+          "rss_limit_bytes": 67108864,
+          "rss_passed": true
+        }
+      ],
+      "common_optimal_timing": null,
+      "included_in_geomean": false,
+      "within_case_time_ratio": null
+    }
+  }
+}

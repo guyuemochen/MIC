@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--",
+    "--test-threads=1"
+  ],
+  "base_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+  "tracked_diff_sha256": "68fb07c449610a617b8de8af95903b99dc1202ddb9e1f10842495adef4eaf917",
+  "exit_code": 0,
+  "seconds": 114.28822493553162
+}

@@ -1,0 +1,161 @@
+   Compiling planner v0.1.0 (/private/tmp/mic-propagation-auto/planner)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests src/lib.rs (planner/target/debug/deps/planner-b687dea8a99d8ad9)
+
+running 103 tests
+test construct::tests::heuristic_enum_traits ... ok
+test construct::tests::invalid_model_returns_err_not_panic ... ok
+test construct::tests::bf_picks_min_key_sequence ... ok
+test construct::tests::result_is_complete_and_in_domain ... ok
+test construct::tests::ff_takes_first_feasible_while_bf_takes_cheapest ... ok
+test construct::tests::ff_skips_overloaded_first_value ... ok
+test construct::tests::deterministic_same_model_same_assignment ... ok
+test construct::tests::ff_tie_breaks_to_first_and_falls_back ... ok
+test construct::tests::incremental_final_score_equals_total ... ok
+test construct::tests::embedded_text_instance_ff_bf_scores ... ok
+test format::tests::bom_and_crlf_are_tolerated ... ok
+test format::tests::cap_after_intervening_res_targets_cap_resource ... ok
+test format::tests::cap_sugar_default_capacity_and_demand ... ok
+test format::tests::cost_overrides_costrow ... ok
+test format::tests::err_conf_self_loop ... ok
+test format::tests::err_costrow_arity_and_negative ... ok
+test format::tests::err_demand_arity_mismatch ... ok
+test format::tests::err_entities_missing_duplicate_zero_over ... ok
+test format::tests::err_entity_level_before_entities ... ok
+test format::tests::err_forbid_empties_domain_is_model_error ... ok
+test format::tests::err_id_out_of_range ... ok
+test format::tests::err_instruction_between_values_and_entities ... ok
+test format::tests::err_name_duplicate_and_after_values ... ok
+test format::tests::err_res_name_rules ... ok
+test format::tests::err_total_cost_sum_over_bound ... ok
+test format::tests::err_single_value_over_bound ... ok
+test format::tests::err_unknown_directive ... ok
+test format::tests::err_values_missing_duplicate_zero_over ... ok
+test format::tests::err_resource_count_exceeds_64 ... ok
+test format::tests::full_instance_with_every_directive ... ok
+test format::tests::seven_directives_interleave_freely ... ok
+test format::tests::unassigned_is_never_a_value ... ok
+test localsearch::tests::defaults_are_canonical ... ok
+test localsearch::tests::invalid_configurations_return_invalid ... ok
+test format::tests::parse_file_roundtrip ... ok
+test format::tests::err_total_demand_sum_over_bound ... ok
+test localsearch::tests::steps_zero_returns_initial_unchanged ... ok
+test localsearch::tests::sa_survives_scalar_magnitudes_beyond_i64 ... ok
+test localsearch::tests::time_limit_zero_completes_zero_steps ... ok
+test model::tests::accessors_and_domain_queries ... ok
+test model::tests::error_display_messages ... ok
+test model::tests::score_feasibility ... ok
+test model::tests::score_lexicographic_order ... ok
+test model::tests::solution_empty_and_from_assignment ... ok
+test model::tests::validate_rejects_structural_violations ... ok
+test moves::tests::apply_keeps_solution_and_shadow_in_sync ... ok
+test moves::tests::apply_swap_on_unassigned_panics ... ok
+test moves::tests::degenerate_single_value_domains_return_none ... ok
+test moves::tests::entities_pairs_and_counts ... ok
+test moves::tests::fallback_consumes_rng_in_contract_order ... ok
+test moves::tests::fallback_swap_to_change_when_all_values_equal ... ok
+test moves::tests::mixed_endpoints_match_direct_kinds_without_extra_draws ... ok
+test moves::tests::move_kind_default_is_mixed_half ... ok
+test localsearch::tests::tabu_and_la_improve_first_fit_construction ... ok
+test moves::tests::ratio_extremes_prefer_their_own_branch ... ok
+test parallel::tests::aggregate_is_min_with_min_index_on_ties ... ok
+test moves::tests::random_walk_moves_legal_and_preview_matches_apply_1000 ... ok
+test localsearch::tests::sa_same_seed_reproduces_bit_for_bit ... ok
+test localsearch::tests::time_limit_positive_returns_sound_result ... ok
+test localsearch::tests::best_le_initial_when_every_move_is_rejected ... ok
+test localsearch::tests::la_same_seed_reproduces_bit_for_bit ... ok
+test parallel::tests::injected_spawn_failure_returns_io ... ok
+test parallel::tests::invalid_model_errors_before_spawning ... ok
+test parallel::tests::invalid_worker_config_propagates_error ... ok
+test parallel::tests::sa_parallel_survives_scalar_magnitudes_beyond_i64 ... ok
+test parallel::tests::spawn_and_join_returns_results_in_index_order ... ok
+test parallel::tests::threads_out_of_bounds_returns_invalid ... ok
+test parallel::tests::spawn_failure_still_unwinds_panicking_worker ... ok
+test parallel::tests::worker_err_propagates_min_index ... ok
+test parallel::tests::worker_panic_without_spawn_failure_unwinds ... ok
+test localsearch::tests::non_default_seed_is_reproducible_too ... ok
+test rng::tests::derive_seed_matches_offline_reference_vectors ... ok
+test parallel::tests::three_metaheuristics_smoke ... ok
+test rng::tests::derive_seed_is_injective_for_first_10000_workers ... ok
+test rng::tests::different_seeds_differ ... ok
+test rng::tests::gen_range_invalid_interval_panics ... ok
+test rng::tests::gen_range_stays_in_domain ... ok
+test rng::tests::gen_ratio_degenerate_probabilities ... ok
+test rng::tests::matches_offline_reference_vectors ... ok
+test rng::tests::same_seed_same_stream_bit_for_bit ... ok
+test rng::tests::shuffle_is_permutation_and_matches_reference ... ok
+test rng::tests::gen_ratio_half_is_about_half ... ok
+test score::tests::change_to_same_value_is_noop ... ok
+test score::tests::fresh_scorer_is_zero_and_total_agrees_on_empty ... ok
+test score::tests::hand_computed_total_score ... ok
+test score::tests::preview_swap_on_unassigned_panics ... ok
+test score::tests::preview_swap_unassigned_panic_attribute_form - should panic ... ok
+test score::tests::reset_returns_total_and_shadow_matches ... ok
+test score::tests::swap_between_mutual_conflict_neighbors ... ok
+test parallel::tests::delegation_paths_equal_solve ... ok
+test solver::tests::solve_invalid_model_returns_model_error ... ok
+test solver::tests::solve_is_deterministic_end_to_end ... ok
+test solver::tests::solve_with_sa_config ... ok
+test solver::tests::solve_without_local_search_returns_construction ... ok
+test solver::tests::solver_config_defaults_are_canonical ... ok
+test score::tests::random_walk_incremental_equals_full_recompute ... ok
+test localsearch::tests::best_never_worse_across_algorithms_and_heuristics ... ok
+test parallel::tests::parallel_is_bit_reproducible ... ok
+test parallel::tests::worker_zero_score_equals_solve ... ok
+test solver::tests::solve_runs_construction_then_local_search ... ok
+test parallel::tests::five_rounds_threads4_are_repeatable ... ok
+test localsearch::tests::tabu_same_seed_reproduces_bit_for_bit ... ok
+test model::tests::validate_rejects_scale_bound_violations ... ok
+
+test result: ok. 103 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests src/main.rs (planner/target/debug/deps/planner-2293a45fce48cafe)
+
+running 13 tests
+test tests::threads_constants_match_lib ... ok
+test tests::threads_defaults_to_one ... ok
+test tests::steps_and_time_secs_are_mutually_exclusive ... ok
+test tests::threads_combines_with_other_flags_in_any_order ... ok
+test tests::defaults_when_only_path_given ... ok
+test tests::run_reports_missing_file_as_error_without_panic ... ok
+test tests::algo_construct_and_usage_errors ... ok
+test tests::samples_zero_rejected_at_parse_with_ge1_message ... ok
+test tests::all_flags_in_any_order ... ok
+test tests::integer_flag_bounds_and_literals ... ok
+test tests::threads_duplicate_and_missing_value_rejected ... ok
+test tests::threads_rejects_invalid_literals ... ok
+test tests::time_secs_numeric_safety ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (planner/target/debug/deps/acceptance-f9d4a9bfc0704d9c)
+
+running 11 tests
+test construction_deterministic ... ok
+test incremental_consistency ... ok
+test cli_threads_smoke ... ok
+test parallel_reproducible_fixed_seed_and_threads ... ok
+test parallel_no_worse_than_single_thread ... ok
+test parallel_repeated_runs_no_crash ... ok
+test cli_smoke ... ok
+test search_no_worse_than_construction ... ok
+test feasible_and_reproducible ... ok
+test must_match_known_optima ... ok
+test parallel_matches_known_optima ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.33s
+
+     Running tests/bench.rs (planner/target/debug/deps/bench-fdb15d56aadd4976)
+
+running 2 tests
+test bench_construct_and_tabu_300k ... ignored
+test bench_parallel_threads_scaling ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests planner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

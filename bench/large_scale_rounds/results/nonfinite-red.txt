@@ -1,0 +1,80 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-nonfinite-directions/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.97s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-c8204a0947103146)
+
+running 10 tests
+
+thread 'simplex::tests::nonfinite_direction_phase_one_preserves_pending' (442625) panicked at src/simplex.rs:2906:17:
+assertion failed: s.numerical_error.as_deref().unwrap().contains("入基方向非有限")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'simplex_sparse::tests::nonfinite_direction_can_overflow_from_finite_etas' (442629) panicked at src/simplex_sparse.rs:3954:13:
+assertion `left == right` failed
+  left: 0.0
+ right: -1.0
+
+thread 'simplex_sparse::tests::nonfinite_direction_with_old_eta_recovers_once' (442634) panicked at src/simplex_sparse.rs:3920:13:
+assertion `left == right` failed: NaN: LpSolution { status: Unbounded, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Unbounded
+ right: Optimal
+
+thread 'simplex::tests::nonfinite_direction_phase_two_negative_infinity' (442627) panicked at src/simplex.rs:2864:13:
+assertion `left == right` failed: Minimize / -inf: LpSolution { status: Unbounded, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Unbounded
+ right: IterationLimit
+
+thread 'simplex_sparse::tests::nonfinite_direction_phase_one_preserves_pending' (442630) panicked at src/simplex_sparse.rs:3894:17:
+assertion failed: sp.numerical_error.as_deref().unwrap().contains("入基方向非有限")
+
+thread 'simplex_sparse::tests::nonfinite_direction_phase_two_negative_infinity' (442632) panicked at src/simplex_sparse.rs:3850:13:
+assertion `left == right` failed: Minimize / -inf: LpSolution { status: Unbounded, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Unbounded
+ right: IterationLimit
+
+thread 'simplex_sparse::tests::nonfinite_direction_phase_two_positive_infinity' (442633) panicked at src/simplex_sparse.rs:3850:13:
+assertion `left == right` failed: Minimize / inf: LpSolution { status: Optimal, objective: 0.0, x: [0.0], duals: [-0.0] }
+  left: Optimal
+ right: IterationLimit
+
+thread 'simplex::tests::nonfinite_direction_phase_two_positive_infinity' (442628) panicked at src/simplex.rs:2864:13:
+assertion `left == right` failed: Minimize / inf: LpSolution { status: Optimal, objective: 0.0, x: [0.0], duals: [0.0] }
+  left: Optimal
+ right: IterationLimit
+
+thread 'simplex_sparse::tests::nonfinite_direction_phase_two_nan' (442631) panicked at src/simplex_sparse.rs:3850:13:
+assertion `left == right` failed: Minimize / NaN: LpSolution { status: Unbounded, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Unbounded
+ right: IterationLimit
+
+thread 'simplex::tests::nonfinite_direction_phase_two_nan' (442626) panicked at src/simplex.rs:2864:13:
+assertion `left == right` failed: Minimize / NaN: LpSolution { status: Unbounded, objective: NaN, x: [0.0], duals: [0.0] }
+  left: Unbounded
+ right: IterationLimit
+test simplex::tests::nonfinite_direction_phase_two_positive_infinity ... FAILED
+test simplex::tests::nonfinite_direction_phase_two_negative_infinity ... FAILED
+test simplex_sparse::tests::nonfinite_direction_phase_one_preserves_pending ... FAILED
+test simplex_sparse::tests::nonfinite_direction_phase_two_nan ... FAILED
+test simplex::tests::nonfinite_direction_phase_one_preserves_pending ... FAILED
+test simplex_sparse::tests::nonfinite_direction_with_old_eta_recovers_once ... FAILED
+test simplex_sparse::tests::nonfinite_direction_can_overflow_from_finite_etas ... FAILED
+test simplex_sparse::tests::nonfinite_direction_phase_two_positive_infinity ... FAILED
+test simplex_sparse::tests::nonfinite_direction_phase_two_negative_infinity ... FAILED
+test simplex::tests::nonfinite_direction_phase_two_nan ... FAILED
+
+failures:
+
+failures:
+    simplex::tests::nonfinite_direction_phase_one_preserves_pending
+    simplex::tests::nonfinite_direction_phase_two_nan
+    simplex::tests::nonfinite_direction_phase_two_negative_infinity
+    simplex::tests::nonfinite_direction_phase_two_positive_infinity
+    simplex_sparse::tests::nonfinite_direction_can_overflow_from_finite_etas
+    simplex_sparse::tests::nonfinite_direction_phase_one_preserves_pending
+    simplex_sparse::tests::nonfinite_direction_phase_two_nan
+    simplex_sparse::tests::nonfinite_direction_phase_two_negative_infinity
+    simplex_sparse::tests::nonfinite_direction_phase_two_positive_infinity
+    simplex_sparse::tests::nonfinite_direction_with_old_eta_recovers_once
+
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 395 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

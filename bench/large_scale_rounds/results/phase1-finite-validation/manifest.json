@@ -1,0 +1,127 @@
+{
+  "base_commit": "d2a318146c0343fb373c740c0c975164e28378d4",
+  "cwd": "/private/tmp/mic-phase1-finite-guard",
+  "logs": [
+    {
+      "file": "01-first-compile.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml phase1_finite -- --nocapture > bench/large_scale_rounds/results/phase1-finite-validation/01-first-compile.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "initial-source.diff",
+      "sha256": "f0e99484698a92f2145bf55ee9b4ac4f7a4a342e092afc0598ccb96ae52c4058",
+      "results": [
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "02-red-guards-removed.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml phase1_finite -- --nocapture > bench/large_scale_rounds/results/phase1-finite-validation/02-red-guards-removed.log 2>&1",
+      "exit_code": 101,
+      "source_patch": "red-source.diff",
+      "sha256": "5f7b6fe0561069b8585cf53ac085b8556992d5bbb6968d136dfea41f84ae092f",
+      "results": [
+        "test result: FAILED. 8 passed; 13 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "03-green-restored.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml phase1_finite -- --nocapture > bench/large_scale_rounds/results/phase1-finite-validation/03-green-restored.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "initial-source.diff",
+      "sha256": "1ddfef1824b4559fef5b877354b5456b54ccd3176bbd6f9cb8404545c55923fd",
+      "results": [
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "04-default-full.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml > bench/large_scale_rounds/results/phase1-finite-validation/04-default-full.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "initial-source.diff",
+      "sha256": "21f9c8fb69602a6f241adee3b552aab774d1cc8f50fbc49b8b3abc93a35cd112",
+      "results": [
+        "test result: ok. 422 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 55.33s",
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.69s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "05-default-release-acceptance.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml --release --test acceptance -- --include-ignored > bench/large_scale_rounds/results/phase1-finite-validation/05-default-release-acceptance.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "initial-source.diff",
+      "sha256": "17045b643f0c88903bf2e93edc3ab67e6086ee8fea0e44ca44ddccef79eccb98",
+      "results": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s"
+      ]
+    },
+    {
+      "file": "06-work-limit-targeted.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit phase1_finite -- --nocapture > bench/large_scale_rounds/results/phase1-finite-validation/06-work-limit-targeted.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "initial-source.diff",
+      "sha256": "f6acdd1acbada7e8533dbdd18918ffd53c8b3c65f30e65498a0b73c5611abcaa",
+      "results": [
+        "test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 418 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "07-combined-full.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore > bench/large_scale_rounds/results/phase1-finite-validation/07-combined-full.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "source.diff",
+      "sha256": "448fd965b801a33b499ad6f38f5875214828a0d52c8f05c65eba378bad831af3",
+      "results": [
+        "test result: ok. 464 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 56.91s",
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.76s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "08-combined-release-acceptance.log",
+      "command": "cargo test --manifest-path milp/Cargo.toml --release --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore --test acceptance -- --include-ignored > bench/large_scale_rounds/results/phase1-finite-validation/08-combined-release-acceptance.log 2>&1",
+      "exit_code": 0,
+      "source_patch": "source.diff",
+      "sha256": "6760bf58794db0bd836636df9a6af0299abf6fc7962f1b1f429752d29b1cf4d4",
+      "results": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.78s"
+      ]
+    }
+  ],
+  "source_files": [
+    {
+      "path": "milp/src/simplex.rs",
+      "sha256": "71cc3aba36435a81212aac9af07798e5e6fd43bee09e37bdec0006cd1980dcc3",
+      "git_blob": "d149863e21517dccd5ae200c84694c4f964336b8"
+    },
+    {
+      "path": "milp/src/simplex_sparse.rs",
+      "sha256": "170a369b19962b003a92b8adc8f566dae4fb0d198d96489d6dce9a3cc34b9758",
+      "git_blob": "6a8da3f2a0b7fd8c27b26d768c53b2b566f28171"
+    }
+  ],
+  "patches": {
+    "initial-source.diff": "3ba05f8a28d23feb83c22d21a8b5c0eefe453b28b3f5db5320ad91331d557651",
+    "red-source.diff": "eb34c474610ad3c642f81d038eed58d9263bdf6826290d8dc493b2031b1d59fd",
+    "source.diff": "b824753b15ef0c1015a17f47f0a96a96073bc9e921c12b3a76c7773a09fb8add"
+  },
+  "notes": [
+    "首编通过，无修测试或生产语义的编译补丁。",
+    "红灯仅把入口检查开关置false并移除单值/正部和finite检查，Result包装不变。",
+    "第06项编译开始后补充模块头注释，运行的生产语义与最终一致；最终组合构建已包含注释。",
+    "全部日志保留原始字节；仅红灯退出101属预期失败。",
+    "planner、FFI/Python和性能由主agent另行负责。"
+  ]
+}

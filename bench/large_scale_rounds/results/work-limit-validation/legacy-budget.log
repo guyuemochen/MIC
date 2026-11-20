@@ -1,0 +1,13 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-heuristic-work-limit/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.01s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-bcc5f29daa8127cb)
+
+running 5 tests
+test heuristics::tests::work_budget_positive_iterations_stop_next_call ... ok
+test heuristics::tests::work_budget_zero_iterations_never_resolves_and_validates_root ... ok
+test heuristics::tests::work_budget_is_shared_by_nested_nodes_and_separate_heuristics ... ok
+test heuristics::tests::work_budget_none_preserves_legacy_results_and_iterations ... ok
+test heuristics::tests::work_budget_counts_dive_retry_and_checks_candidate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 400 filtered out; finished in 0.00s
+

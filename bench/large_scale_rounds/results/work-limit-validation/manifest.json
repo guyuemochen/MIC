@@ -1,0 +1,207 @@
+{
+  "说明": "只归档已完成验证的已有日志；本次归档没有再次编译、测试或求解。",
+  "source": {
+    "commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+    "base_commit": "07f4d2341e9ab86d1b78007467c8f2dbda81a44b",
+    "branch": "codex/heuristic-work-limit",
+    "worktree": "/tmp/mic-heuristic-work-limit",
+    "commit_subject": "milp S2: 增加根启发式单次工作步限额试验",
+    "commit_time": "2026-11-12T14:59:00+08:00",
+    "diff_file": "source.diff",
+    "diff_command": "git diff 07f4d2341e9ab86d1b78007467c8f2dbda81a44b 0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5 -- milp/Cargo.toml milp/src/branch_bound.rs milp/src/heuristics.rs milp/src/parallel_bb.rs milp/src/simplex.rs milp/src/simplex_sparse.rs",
+    "diff_sha256": "134c84da215e935111bfcedd9c6747df74bebe1ce03a3591c4f6d7161e587595",
+    "files": [
+      {
+        "path": "milp/Cargo.toml",
+        "git_blob": "dc5c578896c4a469ada797acec859b48e47cdc19",
+        "sha256": "0942ae186e2ac48c9bd0e48c8aa8961f07dd01f4d6d2f9d009dc75967d468f08"
+      },
+      {
+        "path": "milp/src/branch_bound.rs",
+        "git_blob": "5b34db50bcd1a5df090b6b7f61dd1cd8e1aec06c",
+        "sha256": "1f129fa2338aefee281bae0ac072713cf8e1fd11f12caa09aa87739cad60df03"
+      },
+      {
+        "path": "milp/src/heuristics.rs",
+        "git_blob": "7c196c8142efabfa352a0c71ce1de38cb5b940e0",
+        "sha256": "d3aced478a77af573d5fe1f749b92992ceaf9745b7b6e4552a8ce1356ccc99fc"
+      },
+      {
+        "path": "milp/src/parallel_bb.rs",
+        "git_blob": "870fed4cafbadc2281106abff1226a9cb24a2411",
+        "sha256": "ca195e29a69d7073669d0888997430ae69ba4fed474f3ed94a326f368ada052e"
+      },
+      {
+        "path": "milp/src/simplex.rs",
+        "git_blob": "276ca46cb92867c343831ff9e084899236b04792",
+        "sha256": "7c748b1b0570f51a370f20faa576a6c96323961b2c691fa86db4fc7d2b215797"
+      },
+      {
+        "path": "milp/src/simplex_sparse.rs",
+        "git_blob": "4d6f1acc06a88b6721634c92830237707186cea9",
+        "sha256": "dc988a5801480c2425d39af99065552ab0148d65c7e1bf6fc64e6050ae74cf15"
+      }
+    ]
+  },
+  "static_review": {
+    "reviewer": "/root/risk_refresh_validation",
+    "reviewed_diff_sha256": "134c84da215e935111bfcedd9c6747df74bebe1ce03a3591c4f6d7161e587595",
+    "matches_archived_diff": true,
+    "result": "二审未发现阻断问题；审查为只读，审查者未运行测试。",
+    "evidence_kind": "本任务协作消息留存"
+  },
+  "command_provenance": "命令、退出码和源码对应关系来自本任务执行记录；原始日志仅保存标准输出/错误，不含命令回显。下面八份日志均逐字节复制，并记录校验和。",
+  "logs": [
+    {
+      "file": "targeted.log",
+      "original_path": "/tmp/mic-work-limit-targeted.log",
+      "sha256": "d65d926494e599539d449b36fdc42a825e160522cb6530dd31b2d445a136638c",
+      "bytes": 1744,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --lib work_limit",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --lib work_limit > /tmp/mic-work-limit-targeted.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 404 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "default.log",
+      "original_path": "/tmp/mic-work-limit-default.log",
+      "sha256": "7cbbdb2c47d7a7bdda9152296fa32ba1c16be0c49c4296c03befdb75b2836199",
+      "bytes": 33157,
+      "command": "cargo test --manifest-path milp/Cargo.toml",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml > /tmp/mic-work-limit-default.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 401 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 56.31s",
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.85s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "feature.log",
+      "original_path": "/tmp/mic-work-limit-full-feature.log",
+      "sha256": "e9f5b16614437ebc0dd50ec77740b1efc5034ecb0f22a0affc2d84f797fc04e5",
+      "bytes": 34482,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit > /tmp/mic-work-limit-full-feature.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 414 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 56.26s",
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.76s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "feature-release-acceptance.log",
+      "original_path": "/tmp/mic-work-limit-release-acceptance.log",
+      "sha256": "6fca88f52bda3d7d9802ee1c71448796d0c7fd19fd28a35de6c76e91f2585023",
+      "bytes": 1099,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --release --test acceptance -- --include-ignored",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit --release --test acceptance -- --include-ignored > /tmp/mic-work-limit-release-acceptance.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s"
+      ]
+    },
+    {
+      "file": "combined.log",
+      "original_path": "/tmp/mic-work-limit-combined.log",
+      "sha256": "d78e252ee89f5ddd0f29b5839155720bf905ff8706445e20ad53cddb01f39393",
+      "bytes": 36878,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore > /tmp/mic-work-limit-combined.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 439 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 57.34s",
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.73s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "combined-release-acceptance.log",
+      "original_path": "/tmp/mic-work-limit-combined-acceptance.log",
+      "sha256": "e3ee87b59d60136f87b2b0bf7b762b5d1e31a207576b1b1dfcf63fdffb8e4dc0",
+      "bytes": 1099,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore --release --test acceptance -- --include-ignored",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_limit,binary_coefficient_strengthening,risk_pivot_refresh,lu_failure_diagnostics,proof_profile,root_snapshot_restore --release --test acceptance -- --include-ignored > /tmp/mic-work-limit-combined-acceptance.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.77s"
+      ]
+    },
+    {
+      "file": "legacy-budget.log",
+      "original_path": "/tmp/mic-work-limit-legacy-budget.log",
+      "sha256": "ba5716ebd4f46caed235fbb6d9742f08aa2ee6bd663ab030d1e1d8f472176742",
+      "bytes": 773,
+      "command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_budget --lib work_budget",
+      "executed_command": "cargo test --manifest-path milp/Cargo.toml --features root_heuristic_work_budget --lib work_budget > /tmp/mic-work-limit-legacy-budget.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 400 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "file": "planner.log",
+      "original_path": "/tmp/mic-work-limit-planner.log",
+      "sha256": "fe6347fb90409e0181f26d29bb2e40e8a9473a78fbf18b3455217e016bdfcd46",
+      "bytes": 8845,
+      "command": "cargo test --manifest-path planner/Cargo.toml",
+      "executed_command": "cargo test --manifest-path planner/Cargo.toml > /tmp/mic-work-limit-planner.log 2>&1",
+      "cwd": "/tmp/mic-heuristic-work-limit",
+      "exit_code": 0,
+      "source_commit": "0a41ddece73ea9520dc21b7b8d8e68c4555d3aa5",
+      "result_lines": [
+        "test result: ok. 103 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.51s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  ],
+  "initial_failures": [
+    {
+      "file": "initial-compile-excerpt.txt",
+      "sha256": "09e95c27ba6273cf1c4d133d99f1ee8992317a798d85d20accce2d20edd8bc39",
+      "evidence_kind": "留存工具输出摘录，非原始完整日志",
+      "original_log_overwritten": true,
+      "source_commit": null,
+      "exit_code": 101
+    },
+    {
+      "file": "initial-targeted-excerpt.txt",
+      "sha256": "9de3decd8b20eb52f53370ba78d15c7de37c06042a47d515a104552a25ac2378",
+      "evidence_kind": "留存工具输出摘录，非原始完整日志",
+      "original_log_overwritten": true,
+      "source_commit": null,
+      "exit_code": 101
+    }
+  ],
+  "limitations": [
+    "没有进行本候选的性能筛查或正式计时，未证明性能收益或新增求解证明。",
+    "工作步限额不是硬墙钟限制，已开始的原子主元包括既有周期维护。",
+    "本归档没有 FFI/Python 整合验证结果；该部分由主代理后续执行。"
+  ]
+}

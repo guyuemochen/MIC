@@ -60,7 +60,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use milp::branch_bound::{BbOptions, BranchRule, SearchControl};
+use milp::branch_bound::{BbOptions, BranchRule, NodeRule, SearchControl};
 use milp::cuts::{cut_loop_recorded, CutOptions};
 use milp::instance::load_instance;
 use milp::model::{Problem, SolveStatus, Tolerances};
@@ -72,7 +72,7 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions};
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：profile_stats <算例路径> [--threads N] [--time-limit-secs S] \
 [--branch-rule mostfrac|pseudo] [--pc-probes N] [--root-cuts on|off] \
-[--work-stack auto|local|global]";
+[--work-stack auto|local|global] [--hybrid] [--no-local-cuts]";
 
 /// `--threads` 允许的最大线程数（与 CLI main.rs 同口径）。
 const MAX_THREADS: usize = 1024;
@@ -84,6 +84,8 @@ const MAX_THREADS: usize = 1024;
 struct Config {
     /// 算例文件路径。
     instance_path: String,
+    hybrid: bool,
+    no_local_cuts: bool,
     /// 线程数（1..=1024）；默认 1。
     threads: usize,
     /// 时间上限秒（None = 不限）；经 saturating_mul(1000) 映射毫秒。
@@ -190,6 +192,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut threads: Option<usize> = None;
     let mut time_limit_secs: Option<u64> = None;
     let mut branch_rule: Option<BranchRule> = None;
+    let mut hybrid = false;
+    let mut no_local_cuts = false;
     let mut pc_probes: Option<usize> = None;
     let mut root_cuts: Option<bool> = None;
     let mut work_stack: Option<WorkStack> = None;
@@ -343,6 +347,10 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             determinism = Some(mode);
             index += 1;
+        } else if arg == "--hybrid" {
+            hybrid = true;
+        } else if arg == "--no-local-cuts" {
+            no_local_cuts = true;
         } else if arg.starts_with("--") {
             return Err(format!("未知参数 `{arg}`（{USAGE}）"));
         } else if instance_path.is_some() {
@@ -357,6 +365,8 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     };
     Ok(Config {
         instance_path,
+        hybrid,
+        no_local_cuts,
         threads: threads.unwrap_or(1),
         time_limit_secs,
         branch_rule, // None = 类自适应（R3，复刻 CLI 默认）
@@ -384,6 +394,8 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
             pc_reliability_probes: config.pc_probes,
             root_cuts: config.root_cuts,
+            node_rule: if config.hybrid { NodeRule::HybridBestBound } else { NodeRule::DepthFirst },
+            local_cuts: !config.no_local_cuts,
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（复刻 CLI 默认）；
             // 显式 local/global ⇒ 覆盖优先。
             global_work_stack: config.work_stack == WorkStack::Global,

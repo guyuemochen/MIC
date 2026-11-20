@@ -1,0 +1,12 @@
+test_artificial_location_is_not_basis_position (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_current_bounds_and_rows_are_distinct (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_input_near_zero_and_unscaled_row_differences (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_missing_truncated_and_invalid_mapping (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_nonfinite_payloads_illegal_upper_and_negative_zero (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_overflow_is_retained_and_cancellation_is_order_independent (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+test_real_fixture_and_same_state_pricing (test_inspect_phase1_capture.InspectPhase1CaptureTest) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.014s
+
+OK

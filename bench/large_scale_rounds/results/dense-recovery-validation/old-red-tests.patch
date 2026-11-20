@@ -1,0 +1,48 @@
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index 768f0b5..8540ee9 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -2976,6 +2976,43 @@ mod tests {
+     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+ 
+ 
++    mod dense_cold_recovery_tests {
++        use super::*;
++
++        #[test]
++        fn one_phase_two_fault_recovers_same_bounds_and_cut() {
++            for first_resolve in [false, true] {
++                let p = prob(Sense::Minimize, vec![var("x", 0.0, 10.0)], vec![(0, -1.0)],
++                    vec![(vec![(0, 1.0)], RelOp::Le, 8.0)]);
++                let mut s = Simplex::new(&p, tol()).unwrap();
++                s.add_row(&[(0, 1.0)], RelOp::Le, 3.0).unwrap();
++                let mut bounds = Bounds::from_problem(&p);
++                bounds.lb[0] = 1.0;
++                bounds.ub[0] = 4.0;
++                let rows = s.row_terms.clone();
++                let rhs = s.row_rhs.clone();
++                let origins = s.layout.slack.iter().map(|col| col.origin).collect::<Vec<_>>();
++                let fault = direction_fault::Guard::new(f64::NAN);
++                let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                assert!(fault.consumed());
++                assert_eq!(result.status, LpStatus::Optimal, "{result:?}");
++                assert_eq!(result.x, vec![3.0]);
++                assert_eq!(result.objective, -3.0);
++                assert!(result.x[0] >= bounds.lb[0] && result.x[0] <= bounds.ub[0]);
++                assert!(result.x[0] <= 8.0 && result.x[0] <= 3.0);
++                assert_eq!(s.bounds.lb, bounds.lb);
++                assert_eq!(s.bounds.ub, bounds.ub);
++                assert_eq!(s.row_terms, rows);
++                assert_eq!(s.row_rhs, rhs);
++                assert_eq!(s.layout.slack.iter().map(|col| col.origin).collect::<Vec<_>>(), origins);
++                assert_eq!(s.num_rows(), 2);
++                assert!(s.check_phase_basic_values(2).is_ok());
++                assert!(!s.phase1_pending);
++                assert_eq!(s.iterations(), 1);
++            }
++        }
++    }
++
+     mod safe_primal_ratio_tests {
+         use super::*;
+ 

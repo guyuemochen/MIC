@@ -1,0 +1,16 @@
+{
+  "fields_equal": {
+    "status": true,
+    "objective": true,
+    "bound": true,
+    "values": true,
+    "nodes": true,
+    "lp_iterations": true,
+    "cuts": true,
+    "auto_degraded": true,
+    "gap_terminated": true
+  },
+  "passed": true,
+  "baseline": "root_heuristic_work_limit-screen.jsonl",
+  "source_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380"
+}

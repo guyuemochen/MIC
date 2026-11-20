@@ -1,0 +1,2 @@
+Dense Optimal objective=408f400000000000 iterations=2 basis=[0, 1] x=[4652007308841189376, 0]
+Revised Optimal objective=408f400000000000 iterations=2 basis=[0, 1] x=[4652007308841189376, 0]

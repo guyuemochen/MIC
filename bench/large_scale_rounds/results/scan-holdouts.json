@@ -1,0 +1,34 @@
+[
+  {
+    "name": "scan2-sparse-wide",
+    "variables": 2400,
+    "rows": 500,
+    "density": 0.05,
+    "seed": 2026111201,
+    "sha256": "d5560b1fa4d4bf0f6c5565c200c1d68509b4246e80d1c9ed69613d0366f56067"
+  },
+  {
+    "name": "scan2-sparse-tall",
+    "variables": 1000,
+    "rows": 1500,
+    "density": 0.08,
+    "seed": 2026111202,
+    "sha256": "a636264234396b3fbbd5f6ed46e99be1154c0ab0441e5ff5121b39b12050d696"
+  },
+  {
+    "name": "scan2-medium",
+    "variables": 1600,
+    "rows": 800,
+    "density": 0.3,
+    "seed": 2026111203,
+    "sha256": "6da73eda409ec1b745b2347adf1e07689df570a9738700f5de4e827906272a08"
+  },
+  {
+    "name": "scan2-dense-wide",
+    "variables": 2000,
+    "rows": 500,
+    "density": 1.0,
+    "seed": 2026111204,
+    "sha256": "dce567c93ec35f98a96de119e8f45e987ccdc07d9f618444fd8dba59f6a829dd"
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "stage": "单次筛查，不是推广证据",
+  "correctness_passed": true,
+  "selection_rule": "同为现代0/8、总计7/20且不丢base证明，按共同证优耗时选择双开组做事前规定的复测；尚未达到推广门槛",
+  "selected_variant": "both",
+  "comparisons": {
+    "snapshot": {
+      "lost_base_proofs": [],
+      "rss_violations": [],
+      "eligible_count": 6,
+      "eligible_geomean_ratio": 1.0207247128497505,
+      "max_common_ratio": 1.1269768083923752
+    },
+    "budget": {
+      "lost_base_proofs": [],
+      "rss_violations": [],
+      "eligible_count": 6,
+      "eligible_geomean_ratio": 1.000457791462653,
+      "max_common_ratio": 1.1217801546862052
+    },
+    "both": {
+      "lost_base_proofs": [],
+      "rss_violations": [],
+      "eligible_count": 6,
+      "eligible_geomean_ratio": 0.9623021827310579,
+      "max_common_ratio": 1.0139558022993187
+    }
+  },
+  "formal": {
+    "models": 20,
+    "seconds": 30,
+    "repetitions": 3,
+    "variants": [
+      "base",
+      "both"
+    ]
+  }
+}

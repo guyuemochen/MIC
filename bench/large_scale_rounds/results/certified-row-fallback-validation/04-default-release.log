@@ -1,0 +1,24 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-certified-row-fallback/milp)
+    Finished `release` profile [optimized] target(s) in 2.59s
+     Running tests/acceptance.rs (milp/target/release/deps/acceptance-534d240996514074)
+
+running 16 tests
+test acceptance_all_instances_optimal ... ok
+test acceptance_auto_with_budget_still_optimal ... ok
+test acceptance_cli_binary_propagation_auto_matches_on ... ok
+test acceptance_cli_default_output_identical ... ok
+test acceptance_cli_exit_codes ... ok
+test acceptance_cli_heuristic_on_identical ... ok
+test acceptance_cli_mipgap ... ok
+test acceptance_cli_objective_line ... ok
+test acceptance_cli_progress_log_format ... ok
+test acceptance_cli_threads4 ... ok
+test acceptance_default_path_deterministic_two_runs ... ok
+test acceptance_heuristic_auto_optimal ... ok
+test acceptance_pc_probes_zero_passive_parity ... ok
+test acceptance_setcover_100x150_unlocked_optimal ... ok
+test acceptance_status_instances ... ok
+test acceptance_threads4_matches_threads1 ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.83s
+

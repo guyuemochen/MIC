@@ -1,0 +1,64 @@
+{
+  "source": "/tmp/mic-feature-r8-r9",
+  "commit": "07f4d2341e9ab86d1b78007467c8f2dbda81a44b",
+  "tree": "75bbd260424ecfc5c59485661acc14ef459830a9",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "builds": {
+    "base": {
+      "binary": "/tmp/mic-r8-r9-binaries/round_probe_base",
+      "sha256": "fcbfd14f9b41924c92482bee42e084d1e83a93ddf1bbaa0743ee016456be2664",
+      "features": [],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r8-r9/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r8-r9-target"
+      ]
+    },
+    "coeff": {
+      "binary": "/tmp/mic-r8-r9-binaries/round_probe_coeff",
+      "sha256": "6b9431bc8e48ca45d5950e507041aae092cfadcb319715782f5a4b5e71df522d",
+      "features": [
+        "binary_coefficient_strengthening"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r8-r9/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r8-r9-target",
+        "--features",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "risk": {
+      "binary": "/tmp/mic-r8-r9-binaries/round_probe_risk",
+      "sha256": "0d76965a5007d569bf37c1016c75b894c0f032d99aafdd26960ba2207f5c250a",
+      "features": [
+        "risk_pivot_refresh"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r8-r9/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r8-r9-target",
+        "--features",
+        "risk_pivot_refresh"
+      ]
+    }
+  }
+}

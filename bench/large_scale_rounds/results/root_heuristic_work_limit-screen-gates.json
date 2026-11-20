@@ -1,0 +1,66 @@
+{
+  "feature": "root_heuristic_work_limit",
+  "phase": "screen",
+  "time_limit_secs": 10,
+  "repetitions": 1,
+  "source": {
+    "source_commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+    "source_tree": "073990a459ae989a9bd7b6bd9c6af573690115a7",
+    "binary_manifest_sha256": "ec279668427b40ad6f86be8c45033aedb81df6d5c0d9662160d9bd4a493cf0a5",
+    "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  },
+  "variants": {
+    "base": {
+      "binary": "/private/tmp/mic-r10-binaries/round_probe_base",
+      "binary_sha256": "e9370de693077dcec2b736149a6a63d16de84f1f115fc7db2527ff66f9825f29",
+      "features": [],
+      "status_counts": {
+        "optimal": 6,
+        "limit_reached": 14
+      },
+      "proof_runs": 6,
+      "proved_models_in_all_reps": 6
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r10-binaries/round_probe_candidate",
+      "binary_sha256": "85c5a5a430ec27fcb0cf469522b9e01643d8ababc2d0b100199223807eb2374c",
+      "features": [
+        "root_heuristic_work_limit"
+      ],
+      "status_counts": {
+        "optimal": 6,
+        "limit_reached": 14
+      },
+      "proof_runs": 6,
+      "proved_models_in_all_reps": 6
+    }
+  },
+  "thresholds": {
+    "max_proof_losses": 0,
+    "rss_floor_bytes": 67108864,
+    "rss_base_multiplier": 2,
+    "max_case_ratio": 1.25
+  },
+  "gates": {
+    "correctness": true,
+    "no_proof_loss": true,
+    "rss": true,
+    "case_median": true
+  },
+  "overall_passed": true,
+  "eligible_for_paired": true,
+  "correctness_errors": [],
+  "paired_proof_losses": 0,
+  "rss_failures": 0,
+  "timing": {
+    "common_optimal_models": 6,
+    "eligible_models": 5,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.9615224942903621,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "new_stable_proof_models": [],
+  "new_proof_evidence": {},
+  "input_summary": "bench/large_scale_rounds/results/root_heuristic_work_limit-screen-summary.json"
+}

@@ -1,0 +1,1056 @@
+{
+  "source_revision": "3394310d07e3e25810a828d8da4f6d7241115113",
+  "probe_options": [
+    "--threads",
+    "1",
+    "--node-limit",
+    "2000000",
+    "--time-limit-secs",
+    "60",
+    "--early-stop",
+    "off"
+  ],
+  "source_files": 30,
+  "skipped": {
+    "calzone_cellfate": "28 个变量超出 2–16",
+    "dahlhaus_neuroplastoma": "23 个变量超出 2–16",
+    "grieco_mapk": "53 个变量超出 2–16",
+    "irons_yeast": "18 个变量超出 2–16",
+    "jaoude_thdiff": "103 个变量超出 2–16",
+    "klamt_tcr": "40 个变量超出 2–16",
+    "multivalued": "上游注明采用多值水平编码",
+    "remy_tumorigenesis": "35 个变量超出 2–16",
+    "pyboolnet/repository/remy_tumorigenesis/remy_tumorigenesis_myversion.bnet": "非同名主模型",
+    "saadatpour_guardcell": "与 dinwoodie_stomatal 的原规则相同",
+    "selvaggio_emt": "56 个变量超出 2–16",
+    "zhang_tlgl": "60 个变量超出 2–16",
+    "zhang_tlgl_v2": "60 个变量超出 2–16"
+  },
+  "results": [
+    {
+      "name": "arellano_rootstem",
+      "source_sha256": "e96a9c06c10824e72e8d4134514d1b077efe584dfcfa871411e8f22ffdbe962a",
+      "file_sha256": "bf658934a5358119209da2a9b090a303ceb00c849ae6906f88bad9d8a5a9372b",
+      "states": 512,
+      "state_variables": 9,
+      "objective_variable": "AUXINS",
+      "fixed_points": 4,
+      "minimum": 1,
+      "milp_variables": 13,
+      "milp_rows": 20,
+      "two_column_rows": 3,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "elapsed_secs": 8.9375e-05,
+        "callbacks": 1,
+        "final_bits": "1010000010000",
+        "callback_bits": [
+          "1010000010000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "elapsed_secs": 9.2458e-05,
+        "callbacks": 1,
+        "final_bits": "1010000010000",
+        "callback_bits": [
+          "1010000010000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00037883299228269607,
+        "callbacks": 1,
+        "final_bits": "1110000010000",
+        "callback_bits": [
+          "1010000010000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "davidich_yeast",
+      "source_sha256": "9c8a1f32178f89f89467fe2c9d8e3e22d2dc380c7b357dcdc7a4cd4abe1da0cc",
+      "file_sha256": "6925bad7797f5cb224843a84b679f4c8c5172a80e4293d8cca1727ee4357474d",
+      "states": 1024,
+      "state_variables": 10,
+      "objective_variable": "Start",
+      "fixed_points": 12,
+      "minimum": 0,
+      "milp_variables": 26,
+      "milp_rows": 48,
+      "two_column_rows": 3,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 127,
+        "elapsed_secs": 0.000727958,
+        "callbacks": 1,
+        "final_bits": "00000100000000010000000000",
+        "callback_bits": [
+          "00000100000000010000000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 127,
+        "elapsed_secs": 0.00073275,
+        "callbacks": 1,
+        "final_bits": "00000100000000010000000000",
+        "callback_bits": [
+          "00000100000000010000000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00022562500089406967,
+        "callbacks": 1,
+        "final_bits": "00000100110000010000100010",
+        "callback_bits": [
+          "00000100000000010000000000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "dinwoodie_life",
+      "source_sha256": "a36946ddd5edb492997ef22d638c52f0184935edb74698f8e274a9f2bf22e9ac",
+      "file_sha256": "cd8fc13a9caa75a0469954b71a839829a7b404f3568b51ae60da1587e1c0083f",
+      "states": 32768,
+      "state_variables": 15,
+      "objective_variable": "compuse",
+      "fixed_points": 7,
+      "minimum": 0,
+      "milp_variables": 25,
+      "milp_rows": 47,
+      "two_column_rows": 3,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 205,
+        "elapsed_secs": 0.001021833,
+        "callbacks": 1,
+        "final_bits": "0101101011100001000000000",
+        "callback_bits": [
+          "0101101011100001000000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 205,
+        "elapsed_secs": 0.001006625,
+        "callbacks": 1,
+        "final_bits": "0101101011100001000000000",
+        "callback_bits": [
+          "0101101011100001000000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00037191700539551675,
+        "callbacks": 1,
+        "final_bits": "0011100000001000001001000",
+        "callback_bits": [
+          "0011100000001000001001000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "dinwoodie_stomatal",
+      "source_sha256": "ce0c21f6efe7f2b3f1508ab47e818cd276a4bdd5dd7651b905c561aada07df10",
+      "file_sha256": "f55913451b7d6e7ea2dbba3e555a9d406665698792792dcd581d1669f363a7ac",
+      "states": 8192,
+      "state_variables": 13,
+      "objective_variable": "ADPRc",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 14,
+      "milp_rows": 17,
+      "two_column_rows": 11,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 22,
+        "elapsed_secs": 9.7459e-05,
+        "callbacks": 1,
+        "final_bits": "00000000000100",
+        "callback_bits": [
+          "00000000000100"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 22,
+        "elapsed_secs": 0.000100708,
+        "callbacks": 1,
+        "final_bits": "00000000000100",
+        "callback_bits": [
+          "00000000000100"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0001252919901162386,
+        "callbacks": 1,
+        "final_bits": "00000000000100",
+        "callback_bits": [
+          "00000000000100"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "faure_cellcycle",
+      "source_sha256": "1ce4463e66f53db98ad0bc3c5203da8824f8a473681f56ecb963b9a61f93a2f3",
+      "file_sha256": "9f97bf6288ce1f7242014f881caa7312644352741e7a0d329b700037ab19777b",
+      "states": 1024,
+      "state_variables": 10,
+      "objective_variable": "CycD",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 26,
+      "milp_rows": 49,
+      "two_column_rows": 1,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 9,
+        "lp_iterations": 3391,
+        "elapsed_secs": 0.019688375,
+        "callbacks": 1,
+        "final_bits": "00000010110000001100011111",
+        "callback_bits": [
+          "00000010110000001100011111"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 9,
+        "lp_iterations": 3391,
+        "elapsed_secs": 0.019290667,
+        "callbacks": 1,
+        "final_bits": "00000010110000001100011111",
+        "callback_bits": [
+          "00000010110000001100011111"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0004057500045746565,
+        "callbacks": 1,
+        "final_bits": "00000010110000001100011111",
+        "callback_bits": [
+          "00000010110000001100011111"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "krumsiek_myeloid",
+      "source_sha256": "813dab8c714d7800e4f6a902029a66aa9ea307d935a41eadac0e852cf448c58c",
+      "file_sha256": "23987135d4d098ab220a115379d25a80adb7fb32889d0e0f3d1cab65c5fc3824",
+      "states": 2048,
+      "state_variables": 11,
+      "objective_variable": "GATA2",
+      "fixed_points": 6,
+      "minimum": 0,
+      "milp_variables": 17,
+      "milp_rows": 33,
+      "two_column_rows": 3,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 2,
+        "elapsed_secs": 0.000137709,
+        "callbacks": 1,
+        "final_bits": "00000000000000000",
+        "callback_bits": [
+          "00000000000000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 2,
+        "elapsed_secs": 0.000131333,
+        "callbacks": 1,
+        "final_bits": "00000000000000000",
+        "callback_bits": [
+          "00000000000000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0004718330019386485,
+        "callbacks": 1,
+        "final_bits": "00000000000000000",
+        "callback_bits": [
+          "00000000000000000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n12c5",
+      "source_sha256": "b901d8d798b17c0280793ead14ea9dd297098caadbfc50acef443cb3a1b872fb",
+      "file_sha256": "ee651340c26945e6ac40d96e93b2b08c539e7916cf850c9748ac00d4799d2287",
+      "states": 4096,
+      "state_variables": 12,
+      "objective_variable": "v1",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 25,
+      "milp_rows": 50,
+      "two_column_rows": 1,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 718,
+        "elapsed_secs": 0.002305333,
+        "callbacks": 1,
+        "final_bits": "0111110111110011100011111",
+        "callback_bits": [
+          "0111110111110011100011111"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 718,
+        "elapsed_secs": 0.002332291,
+        "callbacks": 1,
+        "final_bits": "0111110111110011100011111",
+        "callback_bits": [
+          "0111110111110011100011111"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0005067080055596307,
+        "callbacks": 1,
+        "final_bits": "0111110111110011100011111",
+        "callback_bits": [
+          "0111110111110011100011111"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n3s1c1a",
+      "source_sha256": "933432ffcb944d4b76aa126daa0bc9a0554db55967c14ab6e94314d560e6ea16",
+      "file_sha256": "c8d87ee01770e3747a3ccd6a70ff9519c907cd7cfaf694183affd3cefe2d25a7",
+      "states": 8,
+      "state_variables": 3,
+      "objective_variable": "v1",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 5,
+      "milp_rows": 10,
+      "two_column_rows": 1,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 12,
+        "elapsed_secs": 8.4458e-05,
+        "callbacks": 1,
+        "final_bits": "01100",
+        "callback_bits": [
+          "01100"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 12,
+        "elapsed_secs": 9.1042e-05,
+        "callbacks": 1,
+        "final_bits": "01100",
+        "callback_bits": [
+          "01100"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0001642499992158264,
+        "callbacks": 1,
+        "final_bits": "01100",
+        "callback_bits": [
+          "01100"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n3s1c1b",
+      "source_sha256": "3af45c22abbdd7f2edf23b15889f16bebe0b53a3ba42017d5a27061e97915fa2",
+      "file_sha256": "f7a26f699f2a90e14462d7c28b00859fb46770a2a40708a0aeb61e92560dbb3c",
+      "states": 8,
+      "state_variables": 3,
+      "objective_variable": "v4",
+      "fixed_points": 1,
+      "minimum": 1,
+      "milp_variables": 4,
+      "milp_rows": 7,
+      "two_column_rows": 4,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 1,
+        "lp_iterations": 19,
+        "elapsed_secs": 7.675e-05,
+        "callbacks": 1,
+        "final_bits": "1111",
+        "callback_bits": [
+          "1111"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 1,
+        "lp_iterations": 19,
+        "elapsed_secs": 7.825e-05,
+        "callbacks": 1,
+        "final_bits": "1111",
+        "callback_bits": [
+          "1111"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00011562500731088221,
+        "callbacks": 1,
+        "final_bits": "1111",
+        "callback_bits": [
+          "1111"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n5s3",
+      "source_sha256": "304ccca2f55ff9e735f8708b0f6dac4b9180d586032f7074909917b1e3b09203",
+      "file_sha256": "a3ee4b1e848777e88ed9fe61867c02ebbadaaed40c4c311d39001174ae80b352",
+      "states": 32,
+      "state_variables": 5,
+      "objective_variable": "v1",
+      "fixed_points": 3,
+      "minimum": 0,
+      "milp_variables": 14,
+      "milp_rows": 28,
+      "two_column_rows": 2,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00011625,
+        "callbacks": 1,
+        "final_bits": "00000000000000",
+        "callback_bits": [
+          "00000000000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.000115875,
+        "callbacks": 1,
+        "final_bits": "00000000000000",
+        "callback_bits": [
+          "00000000000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00030174999847076833,
+        "callbacks": 1,
+        "final_bits": "00010000000001",
+        "callback_bits": [
+          "00000000000000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n6s1c2",
+      "source_sha256": "67b38e5c9f00da90b2715d5015c4e2b3a7efdc5a66113b26ce422e11e4344a94",
+      "file_sha256": "dcdf4211a499e03cd281c269ff6db2c162840c9e6a40db2b3fe9d2e998a8b364",
+      "states": 64,
+      "state_variables": 6,
+      "objective_variable": "v1",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 11,
+      "milp_rows": 22,
+      "two_column_rows": 1,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 18,
+        "elapsed_secs": 0.000123417,
+        "callbacks": 1,
+        "final_bits": "01111100111",
+        "callback_bits": [
+          "01111100111"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 18,
+        "elapsed_secs": 0.000121125,
+        "callbacks": 1,
+        "final_bits": "01111100111",
+        "callback_bits": [
+          "01111100111"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00025637500220909715,
+        "callbacks": 1,
+        "final_bits": "01111100111",
+        "callback_bits": [
+          "01111100111"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "n7s3",
+      "source_sha256": "fc2ca1c9e736c68fddeb6492d920330a952d00aa040487a98fcd81ba1697e301",
+      "file_sha256": "e13e5a6f9bc04de9a9dd73f6ff6e7ec089b0815d9e027b8e79de7783101f16f0",
+      "states": 128,
+      "state_variables": 7,
+      "objective_variable": "v1",
+      "fixed_points": 3,
+      "minimum": 0,
+      "milp_variables": 7,
+      "milp_rows": 10,
+      "two_column_rows": 4,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 8,
+        "elapsed_secs": 7.4875e-05,
+        "callbacks": 1,
+        "final_bits": "0000000",
+        "callback_bits": [
+          "0000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 8,
+        "elapsed_secs": 8.0166e-05,
+        "callbacks": 1,
+        "final_bits": "0000000",
+        "callback_bits": [
+          "0000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00014229200314730406,
+        "callbacks": 1,
+        "final_bits": "0000111",
+        "callback_bits": [
+          "0000000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "raf",
+      "source_sha256": "48ad64c6cdc5c066052a6dfc8b4260ce16bb195fba7a47f3cf4ea04867088758",
+      "file_sha256": "87bb252448d612bc8209f1db7d2587d39b652cb391010273acde1787245ec8a4",
+      "states": 8,
+      "state_variables": 3,
+      "objective_variable": "Erk",
+      "fixed_points": 1,
+      "minimum": 0,
+      "milp_variables": 6,
+      "milp_rows": 12,
+      "two_column_rows": 2,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 14,
+        "elapsed_secs": 9.1417e-05,
+        "callbacks": 1,
+        "final_bits": "001000",
+        "callback_bits": [
+          "001000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 14,
+        "elapsed_secs": 9.3125e-05,
+        "callbacks": 1,
+        "final_bits": "001000",
+        "callback_bits": [
+          "001000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00012170900299679488,
+        "callbacks": 1,
+        "final_bits": "001000",
+        "callback_bits": [
+          "001000"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "randomnet_n15k3",
+      "source_sha256": "ea1b38938bd5106abab787e05590384cf49379897000dc14252d410c2bf10c04",
+      "file_sha256": "988e9e45ff2219c182ea802395df6393178e435900582083ee0e308ba34164c1",
+      "states": 32768,
+      "state_variables": 15,
+      "objective_variable": "Gene1",
+      "fixed_points": 3,
+      "minimum": 0,
+      "milp_variables": 46,
+      "milp_rows": 92,
+      "two_column_rows": 0,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 6,
+        "lp_iterations": 4499,
+        "elapsed_secs": 0.057505833,
+        "callbacks": 1,
+        "final_bits": "0011101010101010000001000001000000000010000101",
+        "callback_bits": [
+          "0011101010101010000001000001000000000010000101"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 6,
+        "lp_iterations": 4499,
+        "elapsed_secs": 0.056367416,
+        "callbacks": 1,
+        "final_bits": "0011101010101010000001000001000000000010000101",
+        "callback_bits": [
+          "0011101010101010000001000001000000000010000101"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00044379199971444905,
+        "callbacks": 2,
+        "final_bits": "0110110011111010100000101000000000110000100100",
+        "callback_bits": [
+          "1011100110111110000001010000000100001010001001",
+          "0110110011111010100000101000000000110000100100"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "randomnet_n7k3",
+      "source_sha256": "a0d6fbe3d6a8e9ace4f20092e5257c6bc14166e11f4587fc748d7a5a86a66230",
+      "file_sha256": "480eb431c002048d47103d6b15e4583b283b449926534d598b01596bada34167",
+      "states": 128,
+      "state_variables": 7,
+      "objective_variable": "Gene1",
+      "fixed_points": 10,
+      "minimum": 0,
+      "milp_variables": 27,
+      "milp_rows": 54,
+      "two_column_rows": 0,
+      "detector": {
+        "eligible": true,
+        "primary_variables": 7,
+        "clauses": 30,
+        "preferred": -1
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 261,
+        "elapsed_secs": 0.001284083,
+        "callbacks": 1,
+        "final_bits": "011000000000110000000000000",
+        "callback_bits": [
+          "011000000000110000000000000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 6,
+        "lp_iterations": 0,
+        "elapsed_secs": 4.6625e-05,
+        "callbacks": 1,
+        "final_bits": "000110000000000001011000000",
+        "callback_bits": [
+          "000110000000000001011000000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.000531708006747067,
+        "callbacks": 1,
+        "final_bits": "010110000001100010011000000",
+        "callback_bits": [
+          "010110000001100010011000000"
+        ],
+        "verified": true
+      },
+      "verified_repeat_secs": {
+        "baseline": [
+          0.001975584,
+          0.001287833,
+          0.001263208,
+          0.001259917,
+          0.001277167,
+          0.001255375,
+          0.001273875,
+          0.001276791,
+          0.001300208
+        ],
+        "current": [
+          4.6083e-05,
+          4.4875e-05,
+          4.1625e-05,
+          4.1459e-05,
+          3.9542e-05,
+          4.2917e-05,
+          5.2166e-05,
+          4.4917e-05,
+          4.5834e-05
+        ],
+        "gurobi": [
+          0.0004889580013696104,
+          0.0003972080012317747,
+          0.0004248750046826899,
+          0.00042866700096055865,
+          0.00042550000944174826,
+          0.0003389170014997944,
+          0.00048712499847169966,
+          0.00043529200775083154,
+          0.0004284169990569353
+        ]
+      }
+    },
+    {
+      "name": "tournier_apoptosis",
+      "source_sha256": "f31b8e12ab59e3250b25f7960d767fbaea6ac6f722e993877145d1b5ca932db6",
+      "file_sha256": "1df4e3906f41493a034e97dd76e61b9c13f33957d8cf0de5917334644811b2a5",
+      "states": 4096,
+      "state_variables": 12,
+      "objective_variable": "TNF",
+      "fixed_points": 2,
+      "minimum": 0,
+      "milp_variables": 23,
+      "milp_rows": 42,
+      "two_column_rows": 2,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 420,
+        "elapsed_secs": 0.00176125,
+        "callbacks": 1,
+        "final_bits": "00110000100001000000010",
+        "callback_bits": [
+          "00110000100001000000010"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 420,
+        "elapsed_secs": 0.001791834,
+        "callbacks": 1,
+        "final_bits": "00110000100001000000010",
+        "callback_bits": [
+          "00110000100001000000010"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.00028554198797792196,
+        "callbacks": 1,
+        "final_bits": "00001010100000010010010",
+        "callback_bits": [
+          "00001010100000010010010"
+        ],
+        "verified": true
+      }
+    },
+    {
+      "name": "xiao_wnt5a",
+      "source_sha256": "1772e86d48efaa036fc8f0ab4ba3b01f39da97fac366cae9263961000f7a9b41",
+      "file_sha256": "dadc057762f03df059bd469bbc56f8b3de4ab73bc1e3c0da4c0d733b57dd7966",
+      "states": 128,
+      "state_variables": 7,
+      "objective_variable": "x4",
+      "fixed_points": 4,
+      "minimum": 0,
+      "milp_variables": 10,
+      "milp_rows": 16,
+      "two_column_rows": 3,
+      "detector": {
+        "eligible": false
+      },
+      "baseline": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 20,
+        "elapsed_secs": 0.000104708,
+        "callbacks": 1,
+        "final_bits": "0000110000",
+        "callback_bits": [
+          "0000110000"
+        ],
+        "verified": true
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 1,
+        "lp_iterations": 20,
+        "elapsed_secs": 0.000110375,
+        "callbacks": 1,
+        "final_bits": "0000110000",
+        "callback_bits": [
+          "0000110000"
+        ],
+        "verified": true
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "elapsed_secs": 0.0002557499974500388,
+        "callbacks": 1,
+        "final_bits": "0111001010",
+        "callback_bits": [
+          "0111001010"
+        ],
+        "verified": true
+      }
+    }
+  ]
+}

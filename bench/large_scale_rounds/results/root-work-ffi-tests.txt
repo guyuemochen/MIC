@@ -1,0 +1,48 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+   Compiling milp-ffi v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp-ffi)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.19s
+     Running unittests src/lib.rs (milp-ffi/target/debug/deps/milp_ffi-1558474298d79263)
+
+running 5 tests
+test api::tests::guard_passes_through_ok ... ok
+test api::tests::secs_to_limit_ms_rounds_not_truncates ... ok
+test api::tests::guard_catches_panic_returns_7 ... ok
+test api::tests::guard_poisons_model_handle ... ok
+test api::tests::guard_panic_sets_sticky_error_message ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/abi.rs (milp-ffi/target/debug/deps/abi-0251964f9e5c6279)
+
+running 22 tests
+test error_paths_all_codes ... ok
+test batch_duplicate_names_rejected_zero_mutation ... ok
+test batch_invalid_element_rejected_zero_mutation ... ok
+test batch_model_semantics_rejected_with_rollback ... ok
+test batch_auto_names_and_empty_batch ... ok
+test format_number_matches_cli_vectors ... ok
+test last_error_truncation_length_and_stickiness ... ok
+test lp_with_offset_111 ... ok
+test full_flow_dive_optimal_21 ... ok
+test param_setters_happy_paths ... ok
+test dimension_anchored_to_stored_solve ... ok
+test named_create_and_named_constraint ... ok
+test knapsack_10_optimal_17 ... ok
+test batch_success_contiguous_indices_and_solvable ... ok
+test set_objective_failure_leaves_sense_untouched ... ok
+test set_var_bounds_updates_and_validates ... ok
+test solution_dimension_and_all_stats_after_solve ... ok
+test threads_two_parallel_path_still_exact ... ok
+test repeated_solve_overwrites_result ... ok
+test gap_vector_hard_knapsack_12 ... ok
+test zero_overrides_previous_time_limit_and_log ... ok
+test binary_propagation_modes_follow_thread_count ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+   Doc-tests milp_ffi
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,22 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-heuristic-work-limit/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-3a80c82bd8f8838d)
+
+running 14 tests
+test simplex::tests::work_limit_tests::phases_and_artificial_cleanup_share_one_balance ... ok
+test simplex_sparse::tests::work_limit_tests::bfrt_failure_before_pivot_only_charges_completed_flip ... ok
+test simplex::tests::work_limit_tests::tiny_limits_stop_inside_cold_resolve_and_resume ... ok
+test simplex::tests::work_limit_tests::caller_limits_and_unlimited_path_are_preserved ... ok
+test simplex::tests::work_limit_tests::dual_repair_limit_does_not_rebuild_or_change_root_cuts ... ok
+test heuristics::tests::work_limit_primal_flips_and_zero_budget_do_not_forge_proofs ... ok
+test simplex_sparse::tests::work_limit_tests::bfrt_checks_entire_batch_before_mutating_or_charging ... ok
+test simplex_sparse::tests::work_limit_tests::both_dual_layers_share_balance_and_limit_does_not_fall_through ... ok
+test heuristics::tests::work_limit_nested_nodes_share_balance_and_root_restore_is_outside ... ok
+test heuristics::tests::work_limit_box_scope_snapshot_and_none_path ... ok
+test simplex_sparse::tests::work_limit_tests::caller_limits_zero_action_and_unlimited_parity ... ok
+test simplex_sparse::tests::work_limit_tests::primal_and_cleanup_failed_pivots_charge_without_extra_retry ... ok
+test simplex_sparse::tests::work_limit_tests::last_step_keeps_atomic_refactor_failure_charged_and_broken ... ok
+test simplex_sparse::tests::work_limit_tests::tiny_limits_cover_cold_phases_and_cleanup_recovery ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 404 filtered out; finished in 0.00s
+

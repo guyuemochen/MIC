@@ -1,0 +1,20 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-safe-primal-ratio/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.29s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 12 tests
+test simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... ok
+test simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... ok
+test simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... ok
+test simplex::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... ok
+test simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 446 filtered out; finished in 0.00s
+

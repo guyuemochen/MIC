@@ -1,0 +1,15 @@
+{
+  "measured_commit": "4692638",
+  "main_binary_domain_fix": "d49055c",
+  "candidate_branch": "codex/auto-selector-review",
+  "platform": "macOS arm64 / Apple M4",
+  "threads": 1,
+  "adaptive_heuristics": true,
+  "rss_unit": "bytes",
+  "screen_repeats": 1,
+  "screen_seconds": 5,
+  "paired_repeats": 3,
+  "paired_seconds": 10,
+  "binary_sha256": "83aef8b9b5c58f04a9e20cea6700d7d05a3f30f70b3868c02fbebee37f5136f3",
+  "manifest_sha256": "39a53445bdefcc9ecd6cf0a2be58e8cd31e8717c851ed204f5de4a7e1f913c56"
+}

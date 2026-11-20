@@ -47,7 +47,7 @@ cargo test  --manifest-path milp/Cargo.toml
 映射为 `BbOptions.time_limit_ms`，极值不溢出、不 panic）：
 
 ```text
-milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]
+milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]
 ```
 
 无参时向 stderr 打印用法；各参数非法（见下表）一律 stderr 中文 `error: ...`
@@ -62,14 +62,27 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--log-secs F` | 进度行周期秒数（首行必发，见「进度日志」一节） | 不输出任何进度行 | 有限且 `F > 0`（0/负/NaN/inf 报错）；重复出现 |
 | `--mipgap P` | MIP gap 提前终止阈值（百分比，见「MIP gap 提前终止」一节） | 关闭 | 有限且 `P ≥ 0`（`0` ≡ 关闭；负/NaN/inf 报错）；重复出现 |
 | `--heuristic-mode auto\|on\|off` | 启发式模式（见「自适应启发式」一节） | `auto` | 未知 token（大小写敏感）报错；重复出现 |
+| `--early-stop on\|off` | 是否允许停滞时提前返回；`off` 保留 auto 启发式，关闭策略级自动降级。时间、节点、迭代上限和显式 mipgap 仍生效 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
 | `--branch-rule most_fractional\|pseudocost` | 分支规则；**缺省 = 类自适应**（R3：全 Binary + 全正系数 Le 行 + 行数 2..=64 的多维背包类自动用 `pseudocost` 含可靠性冷启动，否则 `most_fractional`；P3 收紧行数下限 2——单行背包类探测零收益纯开销，回落 `most_fractional`）；显式指定覆盖优先 | 类自适应（auto） | 未知 token / 重复出现报错 |
+| `--node-rule dfs\|hybrid` | 节点选择；`dfs` 为原深度优先，`hybrid` 每64节点选择当前最好界，其余深搜。混合策略以不可变共享块保存完整父域，未变化的块不重复复制；仍可能比DFS多用内存，收益依问题而异，不自动启用 | `dfs` | 未知值 / 缺参 / 重复出现报错；`hybrid` 必须显式 `--local-cuts off` 且 `--threads 1`，否则报错；支持等号/空格两式 |
+| `--local-cuts on\|off` | 树内局部割开关；`off` 不影响根割开关，用于混合策略及同口径对照 | `on` | 未知值 / 缺参 / 重复出现报错；支持等号/空格两式 |
 | `--scaling=on\|off` | 问题级数值缩放（R4：行列迭代几何均值，2 的幂系数；目标/解还原原尺度，输出契约不变） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
 | `--determinism wall\|budget` | 确定性模式（W3）：`wall`（默认）= 现状（时限/自适应/降级按墙钟判定，长跑终态随机器状态漂移）；`budget` = 纯预算制——`--time-limit-secs` 换算为节点预算（6,000 节点/秒），全部墙钟判定改为等价节点数预算，决策路径零墙钟读点 ⇒ **同参数双跑全部行为字段逐字节相同**（仅 `--threads 1`，与 ≥2 组合报错；慢机上墙钟可超名义值——确定性优先） | `wall` | 非 `wall\|budget` token / 重复出现报错 |
 | `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）= 类自适应——表格规模 m×(n+m) ≥ 10^6 格 ⇒ revised，阈下留 tableau（小算例走旧路径防 codegen 扰动）；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
 | `--root-rc-fixing on\|off` | reduced-cost 变量固定**两级总开关**（大规模轮 S12 根阶段固定 + S13 树内再应用同门控，映射 `BbOptions.root_rc_fixing`）：`on` = 根阶段按对偶界固定非基贴界整数列 + 树内 incumbent 严格改进时以更小 τ 对同一根基快照再固定（均保最优，见「深度优先分支定界」一节）；`off` = 两级全关（不捕获快照、不挂触发、取交零开销直通），复现 S12 之前的旧行为 | `on` | 非 `on\|off` token / 缺参 / 重复出现报错（等号/空格两式） |
+| `--binary-propagation auto\|on\|off` | 精确二元静态行传播：`auto` 按用户请求的线程数一次解析，单线程开启、多线程关闭（包括内部顺序小树探测）；`on` 显式开启，`off` 完全关闭。只接受能认证为共同二进制格点、且格距严格大于验收容差的二元行，其余交回 LP；不读取根割或局部割 | `auto` | 显式 `on` 与多线程组合报错；缺参、重复或未知值报错，支持等号和空格形式 |
 | `--verbose` | Optimal 时先输出固定机制统计三行（`rc_fixed` / `rc_reapplies` / `rc_refixed`，S13；全 0 也如实输出），再逐行输出变量取值 | 关 | — |
+
+可选混合节点策略示例：
+
+```bash
+cargo run --release --manifest-path milp/Cargo.toml -- bench/instances/mknap-5x300.milp --node-rule hybrid --local-cuts off --threads 1
+```
+
+比较节点策略本身时，以 `--node-rule dfs --local-cuts off` 作对照；同时保留不加参数的默认成绩，
+避免将关闭局部割的影响算作策略收益。混合策略不隐式关闭局部割，也不改变根割或RC固定。
 
 ### 输出格式
 
@@ -201,8 +214,8 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 在「树节点上要不要投资 dive」的微观自适应之上，`auto` 还有一层**策略级**
 自适应：自动判断「继续证明最优」还是「提前返回当前最好解」。
 
-- **激活条件（缺一不可）**：`--heuristic-mode auto`（默认）**且**给了
-  `--time-limit-secs N`。不给时间预算 = 没有表达速度优先的需求 ⇒ 契约
+- **激活条件（缺一不可）**：`--heuristic-mode auto`（默认）、
+  `--early-stop on`（默认），**且**给了 `--time-limit-secs N`。不给时间预算 = 没有表达速度优先的需求 ⇒ 契约
   红线：auto 仍**证明最优**，绝不降级。
 - **触发判定**（`search_ctrl::AutoDegrade`，默认参数 0.5/0.25/0.01，
   经 `SearchControl::degrade` 可注入）：预算消耗 ≥ 50% 之后，若
@@ -218,6 +231,11 @@ progress t=0.12 nodes=42 incumbent=511.000000 bound=526.870859 gap=3.11%
 - **与 `--mipgap` 的关系**：`--mipgap` 是手动的「gap 到多少就停」；
   自动降级是求解器自己判断「这预算内证不完了，别耗着」。两者可并用，
   谁先满足谁终止。
+
+要在给定预算内持续尝试证明最优，同时保留自适应启发式，可用
+`--heuristic-mode auto --early-stop off --time-limit-secs 60`。库入口对应
+`SearchControl::degrade = DegradePolicy::disabled()`。该开关支持顺序和并行路径，
+不把限额返回的可行解标成最优；默认行为保持不变。
 
 ### 确定性模式（--determinism budget，W3）
 
@@ -434,6 +452,13 @@ postsolve 还原 → 安全网终检 → 报告。库 API 统一 `Result<T, Milp
 
 ### 双引擎架构（--lp-engine，大规模轮 S2–S4、S6）
 
+2026-11新增受影响行累加：定价与Devex权重更新时，先按实际访问项数判断
+逐行累加是否比逐列扫描便宜，只访问乘子非零的行。逐列浮点累加顺序、破键、
+Bland路径保持原语义；不改变LP迭代轨迹。七个LP配对测量通过后默认启用
+`sparse_row_products`特性，访问计数仍需单独开启`sparse_row_products_stats`。
+复现旧扫描可对本crate构建`--no-default-features`；仅在milp-ffi顶层传此参数
+不会关闭其milp依赖的默认特性。实测范围和限制见大规模报告第17节。
+
 LP 求解器有两个实现，是**同一 LP 语义的两个实现**（比值测试、反循环、
 两阶段纪律的契约逐条写在 `simplex_sparse.rs` 模块头注释，改任一侧都要
 检查另一侧是否需要对齐）：
@@ -574,6 +599,21 @@ S7 起全部割族另在施加边界统一过数值卫生闸（清洁化/密度�
 该集合为空时割可切空松弛区域）——终态如实映射 Infeasible（CLI
 `status = infeasible`、退出码 2），不是数值错误。
 
+Cargo 默认开启 `root_cut_recheck`。每轮先按原顺序清洁候选并截断配额。首批割求解
+收敛后，借用这次 LP 的报告解重新检查剩余候选，保序跳过有限违反量低于原阈值的割。
+报告解不可用或单条活动度非有限时保留候选。余池为空只结束当前轮，后续轮仍按原预算
+分离。复查只影响选割。
+
+在仓库根构建下列版本，可关闭复查并保留第十二轮之前的另外两项生产默认特性：
+
+```sh
+cargo build --manifest-path milp/Cargo.toml --release --example round_probe \
+  --no-default-features --features sparse_row_products,binary_coefficient_strengthening
+```
+
+重建第十二轮正式对照的两个探针，或重建推广前的 C ABI 与 Python 依赖库时，使用冻结
+提交 `5f22868`。
+
 #### 表格行聚合 MIR 割（大规模轮 R2）
 
 根割循环的割族在 c-MIR、GMI 之后新增**聚合 MIR**（`cuts::aggregated_mir_cuts`）：
@@ -631,6 +671,17 @@ worker 重放的即过闸后的行。丢割永远安全（只丢界强度）。�
 基 160 条 74% 密度噪声割毒化全树的根因链；mknap-5x300 −25% 墙钟、
 knapsack-2000/mknap 节点数变化与目标恒同对账）见
 `docs/large-scale-report.md` S7 节。
+
+### 精确二元静态行传播
+
+二元静态行传播对应库字段 `BbOptions.binary_row_propagation`，类型为
+`BinaryPropagationMode::{Auto, On, Off}`。默认 `Auto` 在最外层求解入口按请求线程数解析，
+所以并行调度内部暂用单线程探测小树时不会意外开启。显式 `On` 仍仅支持单线程。
+传播在树节点 LP 之前处理工作模型原有行，推导只写精确 0/1 界并随节点回退；
+未完成的传播不会报告不可行。`BbStats.propagation` 单独记录认证行、扫描、固定和冲突，
+冲突剪枝不计作 LP 节点。根部已闭合及 `Off` 模式均不构造传播数据库。
+本文早期轮次记录的固定节点数与迭代数以 `--binary-propagation off` 复现；
+新默认保留最优值和单线程确定性，但传播剪枝会改变搜索节点数。
 
 ### 预处理（WP3；W5 增 R5 等价列聚合）
 
@@ -743,7 +794,7 @@ marketsplit-4x40 从 200 万节点零 incumbent（25.2s）变为 854,952 节点�
 | `assign-4x4` | 4×4 指派（16 binary） | Optimal，objective = 10 | W1→J3, W2→J1, W3→J4, W4→J2 | 4!=24 穷举；LP 松弛即整最优且高度退化（Bland 规则测试点） |
 | `milp-wolsey-2` | 一般整数 MILP | Optimal，objective = 40 | (x1,x2) = (0,5) | 穷举；LP 松弛 41.25 于 (2.25,3.75) 触发分支 + GMI 机会；整数可行点 25 个（x2=0..5 时 x1 上限 6,5,4,3,1,0），GMI 公式对 25 点全部验证有效 |
 | `milp-mixed-5` | binary+整数+连续混合 | Optimal，objective = 29 | (y1,y2,z,c) = (1,1,2,3) | 4 个二元组合 × z 枚举并解析求 c；根 LP 松弛即整数最优 |
-| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 91 节点（threads=1 默认——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定后 93→95、S13 树内再固定后 95→91，`--heuristic-mode off` 复现 159、`--root-rc-fixing=off` 复现 93；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
+| `hard-knapsack-12` | 0-1 背包（12 变量，权重/价值/容量 7..47 / 11..144 / 172） | Optimal，objective = 523 | 91 节点（threads=1、`--binary-propagation off` 的历史口径——单行背包类 P3 起不命中类检测、回落 `most_fractional`；S9 根节点 sub-MIP 启发式后自 159 降至 93、S12 根 rc 固定后 93→95、S13 树内再固定后 95→91，`--heuristic-mode off` 复现 159、`--root-rc-fixing=off` 复现 93；`--branch-rule pseudocost` 方向 1 前口径为 196、未随 S9 重测；并行下节点数可变） | 2^12 = 4096 穷举；实测节点数 ≫ 原算例（≤7），作为 `--threads 2/4` 真实压满节点池、`--log-secs` 周期行与 `--heuristic-mode` 的并发/受控参数验收载体 |
 | `infeasible-tiny` | 状态型 | Infeasible，退出码 2，无 objective 行 | — | x≥3 ∧ x≤1 空集；正右端 ≥ 行（x≥3 在 lb=0 处违反，走人工变量路径）端到端覆盖 |
 | `unbounded-tiny` | 状态型 | Unbounded，退出码 3，无 objective 行 | — | max x，x≥3 且上界 +∞；默认上界 +∞ 的合法性由本例顺带验收 |
 

@@ -1,0 +1,93 @@
+{
+  "source": "https://miplib2010.zib.de/miplib3/miplib3",
+  "instances": [
+    {
+      "instance": "p0033",
+      "group": "regression",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0033.mps.gz",
+      "gzip_sha256": "d606d733c9c7165d4e6ed621b20870e2b0dbce3c3dfd42f0f8e5b35d418f6a5e",
+      "mps": "p0033.mps",
+      "mps_sha256": "8ccff819023237c79ef32e238a5da9348725ce9a4425d48888baf3a0b3b42628",
+      "included": true,
+      "milp": "p0033.milp",
+      "milp_sha256": "18425217587af33fc001d1b3954a55de862b495b81452df386fcb25850ab40cb"
+    },
+    {
+      "instance": "p0201",
+      "group": "regression",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0201.mps.gz",
+      "gzip_sha256": "3df3dac32b6e096db1a7b136eca8bf8c4bc901203b5f4959f4c9e0ccc0c20204",
+      "mps": "p0201.mps",
+      "mps_sha256": "8352d7f121289185f443fdc67080fa9de01e5b9bf11b0bf41087fba4277c07a4",
+      "included": true,
+      "milp": "p0201.milp",
+      "milp_sha256": "040ec92353da3175afb3f6f87a323afc943ac305b66fa74d0931017e1c2710d2"
+    },
+    {
+      "instance": "enigma",
+      "group": "regression",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/enigma.mps.gz",
+      "gzip_sha256": "eeae727af2ec40bf6cf330f254b91186c852fb63f0e13ffca1f232f69a10aa1c",
+      "mps": "enigma.mps",
+      "mps_sha256": "bbc4a1a6e9ab30d2615b5e0391f0df1782d29b0a125eb38ef852e8dda6ebc323",
+      "included": true,
+      "milp": "enigma.milp",
+      "milp_sha256": "afc7f6a77f32f6dceaf047306a73e6786a6d67d4b7eeb82cbe986d56620a02e2"
+    },
+    {
+      "instance": "stein27",
+      "group": "regression",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/stein27.mps.gz",
+      "gzip_sha256": "559caf031adb6e3536d47b39325c82e52dc60507487e73ff046e6a43268c4abb",
+      "mps": "stein27.mps",
+      "mps_sha256": "b8889994eda0853d71bad6ba9bf45755d4e59f33a13a3f43008e1ba681738c5b",
+      "included": true,
+      "milp": "stein27.milp",
+      "milp_sha256": "23a762e7bd3ea01cddea4582681d3a7ad83b4ed456e511d4244cb506ad67358d"
+    },
+    {
+      "instance": "p0282",
+      "group": "holdout",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0282.mps.gz",
+      "gzip_sha256": "f2784a9fa3c0436ac20c93e09dbc3d64cd350b09acb7ab3a205e20f072b0cd92",
+      "mps": "p0282.mps",
+      "mps_sha256": "3bf907c6aa3cbf80de7c48ca8e71dc29f5d70f6e5fffb716502bfc5c513196a1",
+      "included": true,
+      "milp": "p0282.milp",
+      "milp_sha256": "fe34c7cf574f2027cc9e40a6e813f61b1db07144f8f2bb837225eed6272400a0"
+    },
+    {
+      "instance": "p0548",
+      "group": "holdout",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/p0548.mps.gz",
+      "gzip_sha256": "4ddd28f1f29f582d642a43a695a06a8692ae3efc7fa24abb0eb39fbb27f974f6",
+      "mps": "p0548.mps",
+      "mps_sha256": "81fa3fb1e071cac0b72649c38196c18bca7ff6d7f2f6639776dcb0daf6bcab15",
+      "included": true,
+      "milp": "p0548.milp",
+      "milp_sha256": "0012146521dfec56f5efeafcb3f464b52c656787715ced8723a479ea17bdd0e6"
+    },
+    {
+      "instance": "lseu",
+      "group": "holdout",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/lseu.mps.gz",
+      "gzip_sha256": "230eab07c9e1c7b6f4e827b0343b8aca3d3d1ad39da445b18562e22737a1e1b8",
+      "mps": "lseu.mps",
+      "mps_sha256": "00416576ed4adac15b62b1982cb7be9d7dcb2d6505067dd8396183ff1eac3dab",
+      "included": true,
+      "milp": "lseu.milp",
+      "milp_sha256": "18f55dbba8ee394a0bcb8dd24adc5163592b6d813846aff705adf45c1ac77854"
+    },
+    {
+      "instance": "air03",
+      "group": "holdout",
+      "url": "https://miplib2010.zib.de/miplib3/miplib3/air03.mps.gz",
+      "gzip_sha256": "333b97429ba8bbe09d41d877475370717bb21683eeae7c7ee08a0871c61607ba",
+      "mps": "air03.mps",
+      "mps_sha256": "2346f74b150a39aef68378c9e576346ecfe9e175fa5f7538977e9d8224c393a1",
+      "included": true,
+      "milp": "air03.milp",
+      "milp_sha256": "fe79be75baac0c235e1771a7f3102507e93e264881e6973c221611aa2f35c3a5"
+    }
+  ]
+}

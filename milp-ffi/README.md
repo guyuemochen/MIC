@@ -55,7 +55,7 @@ ctypes 对应列见文末类型对齐表。
 | 12 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（**仅在目标写入成功后**写 `problem.sense`——下标越界→2 失败时模型零突变，对齐 add_var 回滚纪律）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9 |
 | 13 | `int32_t milp_ffi_set_param_real(void *model, const char *name, double value)` | real 型参数（见参数表）；非有限/负→9；类型不符→9；名字不存在→10 |
 | 14 | `int32_t milp_ffi_set_param_int(void *model, const char *name, int64_t value)` | int 型参数（`Threads` 1..=1024，越界→9） |
-| 15 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`：`auto\|on\|off`，大小写敏感，未知值→9） |
+| 15 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`、`BinaryPropagation` 均接受 `auto\|on\|off`，大小写敏感，未知值→9） |
 | 16 | `int32_t milp_ffi_solve(void *model)` | 选项组装见下文；`Err` 按 `MilpError` 变体映射 2-6 且**不覆盖旧结果**；`Ok`（含 Infeasible/Unbounded/LimitReached）存档并返回 0，状态经 getter 读取 |
 | 17 | `int32_t milp_ffi_get_status(void *model, int32_t *out)` | 0=NOT_SOLVED, 1=OPTIMAL, 2=INFEASIBLE, 3=UNBOUNDED, 4=LIMIT_REACHED |
 | 18 | `int32_t milp_ffi_get_objective(void *model, double *out)` | 无解（未求解/无可行解）→11 |
@@ -125,6 +125,7 @@ ctypes 对应列见文末类型对齐表。
 | Threads | int | 1..=1024 | 1 | `SearchControl.threads`（1=纯顺序，≥2 并行引擎） |
 | MIPGap | real 百分比 | ≥0（**0=关闭**） | 0 | `SearchControl.mipgap_percent`（None/Some(p>0)） |
 | HeuristicMode | str | `auto\|on\|off`（大小写敏感） | **`on`** | off ⇒ `bb.heuristics=false`；on/auto ⇒ true；auto 另置 `adaptive_heuristics=true` |
+| BinaryPropagation | str | `auto\|on\|off`（大小写敏感） | `auto` | `BbOptions.binary_row_propagation` |
 | LogPeriodSecs | real 秒 | ≥0（**0=关闭**，>0 开启） | 0 | `SearchControl.log_period_secs` + 仅开启时注入 stdout 进度钩子（镜像 milp CLI `--log-secs`） |
 
 - **0 是规范关断编码，任何后设值可覆盖先设值**：先 `TimeLimit=5.0` 再
@@ -135,12 +136,16 @@ ctypes 对应列见文末类型对齐表。
 - **HeuristicMode 默认 `on` 而非 CLI 的 `auto`**：对齐 `SearchControl::default`
   库语义（adaptive_heuristics=false），并避免 auto + TimeLimit 意外触发策略级
   自动降级（LIMIT_REACHED）。需要自适应行为请显式 `set_param_str("HeuristicMode","auto")`。
+- `BinaryPropagation` 是 MIC 自有参数，控制是否用通过精确性检查的纯二元约束推断变量的取值。
+  `auto` 在 `Threads=1` 时启用，在 `Threads>=2` 时关闭。`on` 要求 `Threads=1`，
+  否则求解返回错误码 2。`off` 始终关闭。
 
-### solve 的选项组装（固定，无关闭入口）
+### solve 的选项组装
 
 - `SolveOptions`：`Tolerances::default` + `BbOptions::default`（root_cuts=true、
-  use_presolve=true）——仅按 HeuristicMode 覆盖 `heuristics`、按 TimeLimit 覆盖
-  `time_limit_ms`（`secs_to_limit_ms`：秒→毫秒四舍五入 + 正值下限 1ms + 饱和，
+  use_presolve=true），按 HeuristicMode 覆盖 `heuristics`，按 BinaryPropagation 覆盖
+  `binary_row_propagation`，按 TimeLimit 覆盖 `time_limit_ms`（`secs_to_limit_ms`：
+  秒→毫秒四舍五入 + 正值下限 1ms + 饱和，
   见参数表；与 CLI 的整秒 `u64×1000` 截断有意不同——FFI 收 f64 秒）；
 - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=(mode==Auto) /
   log_period_secs / degrade=default；

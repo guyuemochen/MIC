@@ -1,0 +1,257 @@
+{
+  "tests": [
+    {
+      "command": "cargo test --manifest-path milp/Cargo.toml",
+      "passed": 578,
+      "failed": 0,
+      "ignored": 6
+    },
+    {
+      "command": "cargo test --release --manifest-path milp/Cargo.toml --test acceptance -- --include-ignored",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test --manifest-path planner/Cargo.toml",
+      "passed": 127,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "command": "python3 -m unittest discover -s micpython/tests -t .",
+      "passed": 65,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --manifest-path milp-ffi/Cargo.toml",
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "eligible_in_79": {
+    "binary_equalities": [
+      "marketsplit-5x50"
+    ],
+    "dense_packing": [
+      "boundary_n512_m16",
+      "boundary_n513_m16"
+    ],
+    "unit_covering": [
+      "seymour"
+    ],
+    "periodic": [
+      "icir97_tension"
+    ]
+  },
+  "binary_equalities": {
+    "independent_certificate": {
+      "left_subsets": 33554432,
+      "right_subsets": 33554432,
+      "projection_bits": 59,
+      "certified_lower_bound": 25
+    },
+    "certificate_source_sha256": "fadcadd14fe53693beab2a3a935125c71a16a61bdc22a32ac27e2da18f94998e",
+    "original_input_sha256": "32edc540d6417bff0cb7a5628313c1b6724da5d5207bb40e14e6a9624e249dfb",
+    "generated_models": 32,
+    "generated_statuses": {
+      "infeasible": 4,
+      "optimal": 28
+    },
+    "generated_callbacks": 544,
+    "callback_over_deadline": {
+      "status": "limit_reached",
+      "objective": 25,
+      "bound": 24,
+      "elapsed_secs": 0.17800475,
+      "time_limit_ms": 150,
+      "callback_sleep_ms": 170,
+      "events": 1,
+      "nodes": 1,
+      "values": [
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        1.0
+      ]
+    },
+    "independent_certificate_reproduced": true
+  },
+  "dense_packing": {
+    "source_sha256": "3a03ee0c22c8656aa945c82cc4f74b6519180ec713e91b24eb557b8c2bd32780",
+    "eligible_frozen_instances": [
+      "boundary_n512_m16",
+      "boundary_n513_m16"
+    ],
+    "dynamic_programming": {
+      "runs": 48,
+      "status": {
+        "limit_reached": 23,
+        "optimal": 25
+      },
+      "validated_callbacks": 64
+    },
+    "dimension_boundaries": {
+      "runs": 6,
+      "status": {
+        "optimal": 6
+      },
+      "validated_callbacks": 6
+    },
+    "resource_limits": [
+      {
+        "instance": "boundary_n512_m16",
+        "nodes_limit": 1,
+        "time_limit": 60,
+        "reference": 14202,
+        "status": "limit_reached",
+        "bound": 14218.0,
+        "value": 14107.0,
+        "nodes": 1,
+        "events": 1,
+        "elapsed": 0.028954292
+      },
+      {
+        "instance": "boundary_n512_m16",
+        "nodes_limit": 2000000,
+        "time_limit": 1,
+        "reference": 14202,
+        "status": "limit_reached",
+        "bound": 14210.0,
+        "value": 14202.0,
+        "nodes": 388594,
+        "events": 7,
+        "elapsed": 1.000216667
+      },
+      {
+        "instance": "boundary_n513_m16",
+        "nodes_limit": 1,
+        "time_limit": 60,
+        "reference": 14448,
+        "status": "limit_reached",
+        "bound": 14470.0,
+        "value": 14357.0,
+        "nodes": 1,
+        "events": 1,
+        "elapsed": 0.028101333
+      },
+      {
+        "instance": "boundary_n513_m16",
+        "nodes_limit": 2000000,
+        "time_limit": 1,
+        "reference": 14448,
+        "status": "limit_reached",
+        "bound": 14472.0,
+        "value": 14448.0,
+        "nodes": 213117,
+        "events": 5,
+        "elapsed": 1.000083583
+      }
+    ],
+    "release_unit_tests": 2,
+    "checks": [
+      "独立两维整数动态规划，与另外至多十八条冗余行组成原模型",
+      "所有回调和终解重新验原变量界/整数性/原行/收益",
+      "触限界包住参考可行目标或最优，处理节点不超过上限"
+    ],
+    "results_sha256": "b52636213b1f4e0bb09b4cf8e087d441eb1e6686b2484a826d980a0917c8d52c",
+    "script_sha256": "01a21a373200b981cacfde0a25c2e6f641c9748443121c58e3dc3be3c7aa4c42",
+    "all_runs": 58,
+    "generated_models": 24,
+    "all_validated_callbacks": 84
+  },
+  "periodic": {
+    "limits": {
+      "cases": {
+        "cap-1": {
+          "status": "limit_reached",
+          "nodes": 1,
+          "objective": 6437.0,
+          "bound": 6333.295028746128
+        },
+        "cap-2": {
+          "status": "limit_reached",
+          "nodes": 2,
+          "objective": 6437.0,
+          "bound": 6333.295028746128
+        },
+        "max-1": {
+          "status": "limit_reached",
+          "nodes": 1,
+          "objective": -6437.0,
+          "bound": -6333.295028746128
+        },
+        "max-2": {
+          "status": "limit_reached",
+          "nodes": 2,
+          "objective": -6437.0,
+          "bound": -6333.295028746128
+        }
+      },
+      "max_original_equality_violation": 0,
+      "max_original_objective_difference": 0
+    },
+    "generated_models": 48,
+    "runs": 96,
+    "fractional_optimum_models": 13,
+    "statuses": {
+      "limit_reached": 45,
+      "optimal": 51
+    },
+    "callbacks": 218
+  },
+  "unit_covering": {
+    "generated_models_with_exact_witness": 20,
+    "validated_callbacks": 22,
+    "additional_exhaustive_bound_models": 150,
+    "all_bounds_valid": true
+  },
+  "detail_sha256": "6f108787f40fd5b723ba281e8ac36303755680f17425c004052d0b10d3a68aea"
+}

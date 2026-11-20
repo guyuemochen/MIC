@@ -1,0 +1,17 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `release` profile [optimized] target(s) in 4.54s
+     Running unittests src/lib.rs (milp/target/release/deps/milp-d659a10446665ce9)
+
+running 9 tests
+test scaling::tests::pow2_factors_and_roundtrip ... ok
+test scaling::tests::uniform_problem_untouched ... ok
+test scaling::tests::var_type_constraints ... ok
+test scaling::tests::scaled_optimum_matches_original ... ok
+test scaling::tests::sparse_scaling_preserves_extreme_finite_coefficients ... ok
+test scaling::tests::direct_scaling_keeps_existing_invalid_row_behavior ... ok
+test scaling::tests::sparse_scaling_matches_dense_reference_bitwise ... ok
+test scaling::engage_tests::scaling_engagement_on_bench_family ... ok
+test scaling::tests::sparse_scaling_handles_one_hundred_thousand_rows_and_columns ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 337 filtered out; finished in 0.04s
+

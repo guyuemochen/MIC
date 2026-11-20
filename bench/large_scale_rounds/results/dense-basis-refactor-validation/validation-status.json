@@ -1,0 +1,73 @@
+[
+  {
+    "log": "08-milp-default.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "09-planner.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "planner/Cargo.toml"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "10-release-acceptance.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--test",
+      "acceptance",
+      "--",
+      "--include-ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "11-feature-combination.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--features",
+      "root_heuristic_work_limit,proof_profile,root_snapshot_restore,risk_pivot_refresh,phase1_progress_diagnostics,lu_failure_diagnostics"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "12-release-basis.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "dense_basis_refactor_tests"
+    ],
+    "exit_code": 0
+  },
+  {
+    "log": "13-no-default-simplex.log",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--no-default-features",
+      "simplex::tests"
+    ],
+    "exit_code": 0
+  }
+]

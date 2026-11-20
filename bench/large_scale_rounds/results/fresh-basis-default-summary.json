@@ -1,0 +1,361 @@
+{
+  "source": {
+    "source_commit": "4be76f7e85d104c6a3e531fea9b62fb9d8e73e8c",
+    "source_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+    "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+    "default_features": [
+      "sparse_row_products",
+      "binary_coefficient_strengthening"
+    ],
+    "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  },
+  "results": "bench/large_scale_rounds/results/fresh-basis-default.jsonl",
+  "results_sha256": "e1dbe324b0febf4e45ce2a0bdac05717c0bedf9edafe2e75ea3e6bedfb365fbc",
+  "time_limit_secs": 30,
+  "repetitions": 1,
+  "cases": {
+    "knapsack-5000": {
+      "status": "optimal",
+      "objective": 88526.0,
+      "bound": 88526.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 88526.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "mknap-5x300": {
+      "status": "optimal",
+      "objective": 4762.0,
+      "bound": 4762.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 4762.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "setcover-300x600": {
+      "status": "optimal",
+      "objective": 144.0,
+      "bound": 144.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 144.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "lp-sparse-4000x800": {
+      "status": "optimal",
+      "objective": 5893.7057566182575,
+      "bound": 5893.7057566182575,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 5893.7057566182575,
+      "r8_stable_proof_reproduced": true
+    },
+    "p0033": {
+      "status": "optimal",
+      "objective": 3089.0,
+      "bound": 3089.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 3089.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "p0201": {
+      "status": "limit_reached",
+      "objective": 7615.0,
+      "bound": 7227.000000639117,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 7615.0,
+      "r8_stable_proof_reproduced": false
+    },
+    "enigma": {
+      "status": "optimal",
+      "objective": 0.0,
+      "bound": 0.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 0.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "stein27": {
+      "status": "optimal",
+      "objective": 18.0,
+      "bound": 18.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 18.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "p0282": {
+      "status": "limit_reached",
+      "objective": 288918.0,
+      "bound": 192168.14761190012,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "p0548": {
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 5783.89431109819,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "lseu": {
+      "status": "optimal",
+      "objective": 1120.0,
+      "bound": 1120.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 1120.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "air03": {
+      "status": "optimal",
+      "objective": 340160.0,
+      "bound": 340160.0,
+      "proof_completed": true,
+      "r8_candidate_statuses": [
+        "optimal",
+        "optimal",
+        "optimal"
+      ],
+      "r8_stable_optimal": true,
+      "r8_optimum": 340160.0,
+      "r8_stable_proof_reproduced": true
+    },
+    "bnatt500": {
+      "status": "limit_reached",
+      "objective": null,
+      "bound": null,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "seymour": {
+      "status": "limit_reached",
+      "objective": 449.0,
+      "bound": 403.8464741251932,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "neos17": {
+      "status": "limit_reached",
+      "objective": 0.360140369630367,
+      "bound": 0.0006814985014985119,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "neos-4954672-berkel": {
+      "status": "limit_reached",
+      "objective": 5929602.0,
+      "bound": 1289166.8638632847,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "gen-ip054": {
+      "status": "limit_reached",
+      "objective": 6923.8644663469995,
+      "bound": 6767.562882327659,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "icir97_tension": {
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 6304.637047163364,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "drayage-100-23": {
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 11714.141979217544,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    },
+    "drayage-25-23": {
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 11714.141979217546,
+      "proof_completed": false,
+      "r8_candidate_statuses": [
+        "limit_reached",
+        "limit_reached",
+        "limit_reached"
+      ],
+      "r8_stable_optimal": false,
+      "r8_optimum": null,
+      "r8_stable_proof_reproduced": null
+    }
+  },
+  "status_counts": {
+    "optimal": 9,
+    "limit_reached": 11
+  },
+  "proofs_completed": 9,
+  "r8_reference": {
+    "path": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/binary_coefficient_strengthening-paired.jsonl",
+    "sha256": "c6feb4dfb3452333bb7da944251eb380fd4273f0fdfddaa09eb3b569268a8a9d",
+    "source": {
+      "source_commit": "07f4d2341e9ab86d1b78007467c8f2dbda81a44b",
+      "source_tree": "75bbd260424ecfc5c59485661acc14ef459830a9",
+      "binary_sha256": "6b9431bc8e48ca45d5950e507041aae092cfadcb319715782f5a4b5e71df522d"
+    },
+    "time_limit_secs": 30,
+    "repetitions": 3,
+    "stable_optimal_models": [
+      "knapsack-5000",
+      "mknap-5x300",
+      "setcover-300x600",
+      "lp-sparse-4000x800",
+      "p0033",
+      "p0201",
+      "enigma",
+      "stein27",
+      "lseu",
+      "air03"
+    ],
+    "stable_proofs_not_reproduced": [
+      "p0201"
+    ]
+  },
+  "proof_regression_passed": false,
+  "correctness_passed": true,
+  "correctness_errors": [],
+  "independent_check": {
+    "passed": true,
+    "runs": 152,
+    "instances": 20,
+    "solutions_checked": 136,
+    "mic_with_external_optimum": 54,
+    "mic_bounds_checked": 51,
+    "errors": [],
+    "public_truth": {
+      "manifest": "/tmp/mic-rounds-miplib2017/sources.json",
+      "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+      "source": "https://miplib.zib.de/",
+      "solution_file": {
+        "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+        "file": "miplib2017-v37.solu",
+        "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+        "release_date": "2026-09-24"
+      },
+      "matched_runs": 32,
+      "hashes_checked": 32,
+      "checked_runs": 32,
+      "optimal_runs": 28,
+      "infeasible_runs": 4,
+      "optimal_claims_checked": 6,
+      "bounds_checked": 24,
+      "feasible_objectives_checked": 20,
+      "skipped": {}
+    }
+  }
+}

@@ -1,0 +1,422 @@
+[
+  {
+    "instance": "boundary_n200",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 0.07030625,
+    "min_secs": 0.069981209,
+    "max_secs": 0.070601375,
+    "peak_rss_bytes": 3981312,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      6127.0
+    ]
+  },
+  {
+    "instance": "boundary_n200",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 0.028072916,
+    "min_secs": 0.027827667,
+    "max_secs": 0.028313583,
+    "peak_rss_bytes": 4587520,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      6127.0
+    ]
+  },
+  {
+    "instance": "covering_120x200_s12109",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 1.56560075,
+    "min_secs": 1.561997125,
+    "max_secs": 1.5713792500000001,
+    "peak_rss_bytes": 10977280,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      58.0
+    ]
+  },
+  {
+    "instance": "covering_120x200_s12109",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 1.568986333,
+    "min_secs": 1.5678929579999998,
+    "max_secs": 1.571928459,
+    "peak_rss_bytes": 10944512,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      58.0
+    ]
+  },
+  {
+    "instance": "negative_coefficient",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 0.155553666,
+    "min_secs": 0.154980166,
+    "max_secs": 0.160278167,
+    "peak_rss_bytes": 3129344,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      4305.0
+    ]
+  },
+  {
+    "instance": "negative_coefficient",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 0.155471334,
+    "min_secs": 0.155298667,
+    "max_secs": 0.156496458,
+    "peak_rss_bytes": 3162112,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      4305.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12017",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 5.06478725,
+    "min_secs": 5.057340917,
+    "max_secs": 5.066599291,
+    "peak_rss_bytes": 1308442624,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1741.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12017",
+    "mode": "dfs_controls",
+    "runs": 3,
+    "median_secs": 9.713252583,
+    "min_secs": 9.626396249999999,
+    "max_secs": 9.791704125,
+    "peak_rss_bytes": 3604480,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1737.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12017",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 9.711438708,
+    "min_secs": 9.603972333,
+    "max_secs": 9.723654291999999,
+    "peak_rss_bytes": 3604480,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1737.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12017",
+    "mode": "hybrid",
+    "runs": 3,
+    "median_secs": 5.064377208,
+    "min_secs": 5.056348333,
+    "max_secs": 5.067873292,
+    "peak_rss_bytes": 1314734080,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1741.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12043",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 7.192567,
+    "min_secs": 7.033265667,
+    "max_secs": 7.212814042,
+    "peak_rss_bytes": 1197719552,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1748.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12043",
+    "mode": "dfs_controls",
+    "runs": 3,
+    "median_secs": 5.000166166,
+    "min_secs": 5.000162666,
+    "max_secs": 5.000605917,
+    "peak_rss_bytes": 3555328,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1736.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12043",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 5.000222,
+    "min_secs": 5.000155375,
+    "max_secs": 5.000286375,
+    "peak_rss_bytes": 3555328,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1736.0
+    ]
+  },
+  {
+    "instance": "packing_correlated_s12043",
+    "mode": "hybrid",
+    "runs": 3,
+    "median_secs": 7.100291834,
+    "min_secs": 7.064855458,
+    "max_secs": 7.152046291,
+    "peak_rss_bytes": 1197359104,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      1748.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12017",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 2.583837834,
+    "min_secs": 2.54012525,
+    "max_secs": 2.596469792,
+    "peak_rss_bytes": 19513344,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3009.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12017",
+    "mode": "dfs_controls",
+    "runs": 3,
+    "median_secs": 3.690798833,
+    "min_secs": 3.681043542,
+    "max_secs": 3.704508583,
+    "peak_rss_bytes": 3325952,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3009.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12017",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 3.117788417,
+    "min_secs": 3.081742541,
+    "max_secs": 3.14029925,
+    "peak_rss_bytes": 4210688,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3009.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12017",
+    "mode": "hybrid",
+    "runs": 3,
+    "median_secs": 2.5760585000000003,
+    "min_secs": 2.551625709,
+    "max_secs": 2.583019583,
+    "peak_rss_bytes": 19513344,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3009.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12043",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 4.925036542,
+    "min_secs": 4.829325458,
+    "max_secs": 4.931304959,
+    "peak_rss_bytes": 39534592,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      2904.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12043",
+    "mode": "dfs_controls",
+    "runs": 3,
+    "median_secs": 3.686663208,
+    "min_secs": 3.631912583,
+    "max_secs": 3.693666666,
+    "peak_rss_bytes": 3325952,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      2904.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12043",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 3.320937834,
+    "min_secs": 3.268075375,
+    "max_secs": 3.389572542,
+    "peak_rss_bytes": 4407296,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      2904.0
+    ]
+  },
+  {
+    "instance": "packing_many_rows_s12043",
+    "mode": "hybrid",
+    "runs": 3,
+    "median_secs": 4.907823208,
+    "min_secs": 4.837906416,
+    "max_secs": 4.910291375,
+    "peak_rss_bytes": 39518208,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      2904.0
+    ]
+  },
+  {
+    "instance": "packing_medium_s12017",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 0.318790625,
+    "min_secs": 0.318684875,
+    "max_secs": 0.319353833,
+    "peak_rss_bytes": 5439488,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3264.0
+    ]
+  },
+  {
+    "instance": "packing_medium_s12017",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 0.318301458,
+    "min_secs": 0.318136375,
+    "max_secs": 0.318621875,
+    "peak_rss_bytes": 5439488,
+    "statuses": [
+      "Optimal"
+    ],
+    "objectives": [
+      3264.0
+    ]
+  },
+  {
+    "instance": "sparse_packing",
+    "mode": "auto",
+    "runs": 3,
+    "median_secs": 5.009986958,
+    "min_secs": 5.008381583,
+    "max_secs": 5.011007875,
+    "peak_rss_bytes": 224755712,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      8130.0
+    ]
+  },
+  {
+    "instance": "sparse_packing",
+    "mode": "dfs_controls",
+    "runs": 3,
+    "median_secs": 5.00070575,
+    "min_secs": 5.00037525,
+    "max_secs": 5.001598459,
+    "peak_rss_bytes": 3932160,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      8087.0
+    ]
+  },
+  {
+    "instance": "sparse_packing",
+    "mode": "existing",
+    "runs": 3,
+    "median_secs": 5.000677917,
+    "min_secs": 5.00029475,
+    "max_secs": 5.00135125,
+    "peak_rss_bytes": 3915776,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      8087.0
+    ]
+  },
+  {
+    "instance": "sparse_packing",
+    "mode": "hybrid",
+    "runs": 3,
+    "median_secs": 5.008790542,
+    "min_secs": 5.008145791,
+    "max_secs": 5.011286292,
+    "peak_rss_bytes": 224313344,
+    "statuses": [
+      "LimitReached"
+    ],
+    "objectives": [
+      8130.0
+    ]
+  }
+]

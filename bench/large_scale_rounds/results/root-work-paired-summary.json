@@ -1,0 +1,262 @@
+{
+  "correctness_passed": true,
+  "correctness_errors": [],
+  "independent_check": {
+    "passed": true,
+    "runs": 252,
+    "instances": 20,
+    "solutions_checked": 214,
+    "mic_with_external_optimum": 129,
+    "mic_bounds_checked": 126,
+    "errors": [],
+    "public_truth": {
+      "manifest": "/tmp/mic-rounds-miplib2017/sources.json",
+      "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+      "source": "https://miplib.zib.de/",
+      "solution_file": {
+        "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+        "file": "miplib2017-v37.solu",
+        "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+        "release_date": "2026-09-24"
+      },
+      "matched_runs": 72,
+      "hashes_checked": 72,
+      "checked_runs": 72,
+      "optimal_runs": 63,
+      "infeasible_runs": 9,
+      "optimal_claims_checked": 6,
+      "bounds_checked": 59,
+      "feasible_objectives_checked": 40,
+      "skipped": {}
+    }
+  },
+  "models": 20,
+  "repetitions": 3,
+  "time_limit_secs": 30,
+  "source_commit": "3c70943e865bc1f3488d3fcc6b5d5adb4b4dcf47",
+  "source_tree": "0430a5c1da6cfb4767d5a9ab299e72df2623ff18",
+  "binary_manifest_sha256": "9286e6ad308987571c27affd21a2acb60e6ca692d4525fa7ea19eab07acc3b31",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "variants": {
+    "base": {
+      "features": [],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_base",
+      "binary_sha256": "674d4108ea43347031997d87efcb5e95b0fd3fe71076697f0b3955c923a5b336",
+      "status_counts": {
+        "optimal": 24,
+        "limit_reached": 36
+      },
+      "proof_runs": 24,
+      "proved_models_in_all_reps": 8,
+      "missing_rss_runs": 0
+    },
+    "both": {
+      "features": [
+        "root_snapshot_restore",
+        "root_heuristic_work_budget"
+      ],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_both",
+      "binary_sha256": "f95d1182b14ffe0245021d14196417b525f2ae52bbd5022e0985aa253a1ef383",
+      "status_counts": {
+        "optimal": 24,
+        "limit_reached": 36
+      },
+      "proof_runs": 24,
+      "proved_models_in_all_reps": 8,
+      "missing_rss_runs": 0
+    }
+  },
+  "comparisons_to_base": {
+    "both": {
+      "common_optimal_models": 8,
+      "times": {
+        "knapsack-5000": {
+          "base_median_secs": 0.013204375,
+          "candidate_median_secs": 0.012758625,
+          "candidate_over_base": 0.9662422492545083
+        },
+        "mknap-5x300": {
+          "base_median_secs": 4.4518559589999995,
+          "candidate_median_secs": 4.465978042,
+          "candidate_over_base": 1.0031721787789316
+        },
+        "setcover-300x600": {
+          "base_median_secs": 13.9361,
+          "candidate_median_secs": 12.0860085,
+          "candidate_over_base": 0.867244673904464
+        },
+        "lp-sparse-4000x800": {
+          "base_median_secs": 0.968929042,
+          "candidate_median_secs": 0.9689455,
+          "candidate_over_base": 1.0000169857639587
+        },
+        "p0033": {
+          "base_median_secs": 0.137156,
+          "candidate_median_secs": 0.134669,
+          "candidate_over_base": 0.9818673627110736
+        },
+        "enigma": {
+          "base_median_secs": 7.770360708,
+          "candidate_median_secs": 7.796170541,
+          "candidate_over_base": 1.0033215746308184
+        },
+        "stein27": {
+          "base_median_secs": 3.348048166,
+          "candidate_median_secs": 3.043540833,
+          "candidate_over_base": 0.9090492974108545
+        },
+        "air03": {
+          "base_median_secs": 1.3389070840000001,
+          "candidate_median_secs": 1.170717125,
+          "candidate_over_base": 0.8743826505887692
+        }
+      },
+      "excluded_from_timing": {
+        "p0201": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "p0282": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "p0548": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "lseu": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "bnatt500": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "seymour": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "neos17": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "neos-4954672-berkel": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "gen-ip054": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "icir97_tension": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "drayage-100-23": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        },
+        "drayage-25-23": {
+          "base_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached",
+            "limit_reached",
+            "limit_reached"
+          ]
+        }
+      }
+    }
+  }
+}

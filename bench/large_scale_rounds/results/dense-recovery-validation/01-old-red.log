@@ -1,0 +1,24 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-numerical-recovery/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.92s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 1 test
+test simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut ... FAILED
+
+failures:
+
+---- simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut stdout ----
+
+thread 'simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut' (1241231) panicked at src/simplex.rs:3006:17:
+assertion `left == right` failed: LpSolution { status: IterationLimit, objective: NaN, x: [1.0], duals: [0.0] }
+  left: IterationLimit
+ right: Optimal
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    simplex::tests::dense_cold_recovery_tests::one_phase_two_fault_recovers_same_bounds_and_cut
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 474 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

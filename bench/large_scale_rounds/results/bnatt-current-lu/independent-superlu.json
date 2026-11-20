@@ -1,0 +1,153 @@
+{
+  "captured": true,
+  "phase": "phase1",
+  "reason": "pivot_eta_limit",
+  "rows": 5058,
+  "iterations": 3904,
+  "eta_count": 64,
+  "failed_factor_column": 4950,
+  "max_candidate": 0.0,
+  "basis_column_at_failure": 342,
+  "basis_history_replays": true,
+  "fresh_checks": [
+    {
+      "name": "failed_basis",
+      "error": "LU 第 4950 列未分配候选最大 |v| = 0e0 低于主元下限 1e-9（奇异基）",
+      "failed_column": 4950,
+      "max_candidate": 0.0,
+      "alpha_r": null,
+      "relative_residual": null
+    },
+    {
+      "name": "before_last_pivot",
+      "error": "LU 第 4950 列未分配候选最大 |v| = 0e0 低于主元下限 1e-9（奇异基）",
+      "failed_column": 4950,
+      "max_candidate": 0.0,
+      "alpha_r": null,
+      "relative_residual": null
+    },
+    {
+      "name": "last_successful_refactor",
+      "error": null,
+      "failed_column": null,
+      "max_candidate": null,
+      "alpha_r": null,
+      "relative_residual": null
+    }
+  ],
+  "history_factorizations": 64,
+  "history_failed_after_pivots": [
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63
+  ],
+  "first_history_failure_after_pivots": 25,
+  "transition_into_first_failure": {
+    "entering": 8,
+    "row": 1906,
+    "leaving": 14,
+    "alpha_r": 1.2300387375833728e-09,
+    "step": 0.0,
+    "eta_before": 24,
+    "iterations_before": 3865,
+    "call_iterations_before": 3865,
+    "phase": "phase1"
+  },
+  "fresh_check_before_first_failure": {
+    "name": "history_basis",
+    "error": null,
+    "failed_column": null,
+    "max_candidate": null,
+    "alpha_r": -0.0,
+    "relative_residual": 1.4541125713086106e-17,
+    "alpha": null
+  },
+  "last_pivot": {
+    "entering": 43,
+    "row": 1750,
+    "leaving": 42,
+    "alpha_r": 1.0,
+    "step": 0.0,
+    "eta_before": 63,
+    "iterations_before": 3904,
+    "call_iterations_before": 3904,
+    "phase": "phase1"
+  },
+  "eta_alpha_relative_residual": 1.586032892321652e-17,
+  "independent_superlu": {
+    "scipy_version": "1.16.3",
+    "results": [
+      {
+        "after_pivots": 24,
+        "column_order": "NATURAL",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 6.008649812842221e-05,
+        "max_abs_u": 4.0,
+        "max_abs_basis": 1.0,
+        "alpha_r": -8.048378405544288e-11,
+        "relative_residual": 5.089394000359371e-17
+      },
+      {
+        "after_pivots": 24,
+        "column_order": "COLAMD",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 5.17314516882457e-06,
+        "max_abs_u": 3.0,
+        "max_abs_basis": 1.0,
+        "alpha_r": 1.210567985794927e-12,
+        "relative_residual": 1.4541125713157562e-17
+      },
+      {
+        "after_pivots": 25,
+        "column_order": "NATURAL",
+        "diag_pivot_thresh": 1.0,
+        "min_abs_u_diagonal": 6.008888140129658e-16,
+        "max_abs_u": 4.0,
+        "max_abs_basis": 1.0
+      },
+      {
+        "after_pivots": 25,
+        "column_order": "COLAMD",
+        "diag_pivot_thresh": 1.0,
+        "error": "Factor is exactly singular"
+      }
+    ]
+  },
+  "source_sha256": "7d1db73306a309c172ca1ce4941f3ac7e5378300fda2a2ee5626c5f134f7d696"
+}

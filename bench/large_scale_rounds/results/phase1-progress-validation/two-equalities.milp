@@ -1,0 +1,11 @@
+name phase1-diagnostic-two-equalities
+sense min
+vars
+  x continuous
+  y continuous
+obj
+  1 x -1 y
+cons
+  a: 1 x 1 y = 1000
+  b: 1 x 0.5 y = 1000
+end

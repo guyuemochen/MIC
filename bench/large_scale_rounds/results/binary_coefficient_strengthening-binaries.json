@@ -1,0 +1,38 @@
+{
+  "base": {
+    "binary": "/tmp/mic-r8-r9-binaries/round_probe_base",
+    "sha256": "fcbfd14f9b41924c92482bee42e084d1e83a93ddf1bbaa0743ee016456be2664",
+    "features": [],
+    "command": [
+      "cargo",
+      "build",
+      "--release",
+      "--manifest-path",
+      "/tmp/mic-feature-r8-r9/milp/Cargo.toml",
+      "--example",
+      "round_probe",
+      "--target-dir",
+      "/tmp/mic-r8-r9-target"
+    ]
+  },
+  "candidate": {
+    "binary": "/tmp/mic-r8-r9-binaries/round_probe_coeff",
+    "sha256": "6b9431bc8e48ca45d5950e507041aae092cfadcb319715782f5a4b5e71df522d",
+    "features": [
+      "binary_coefficient_strengthening"
+    ],
+    "command": [
+      "cargo",
+      "build",
+      "--release",
+      "--manifest-path",
+      "/tmp/mic-feature-r8-r9/milp/Cargo.toml",
+      "--example",
+      "round_probe",
+      "--target-dir",
+      "/tmp/mic-r8-r9-target",
+      "--features",
+      "binary_coefficient_strengthening"
+    ]
+  }
+}

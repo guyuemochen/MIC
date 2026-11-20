@@ -1,0 +1,17 @@
+{
+  "baseline": "af25ba3",
+  "snapshot_source": "bench/large_scale_rounds/results/dense-failure-profile/lseu-failures.jsonl",
+  "snapshot_sha256": "a9221c2e205807e733e8ed3efccf06345fddd1749f06ed424cb103ce28095123",
+  "fixtures": [
+    {
+      "path": "milp/tests/data/dense_refresh_state_1.txt",
+      "event": 1,
+      "sha256": "e12ddcc1d48c9aabb8a998c290a015fc5d79f86902f99241045a96455da988a6"
+    },
+    {
+      "path": "milp/tests/data/dense_refresh_state_2.txt",
+      "event": 3,
+      "sha256": "22b36e9169932fffbeb45c909d7114d1d7e4df25d89334d543e885881bfd7e31"
+    }
+  ]
+}

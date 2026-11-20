@@ -1,0 +1,62 @@
+{
+  "source": "09574e83d2a3b2033799c6676f6ad8e3bb3f0f6d",
+  "source_tree": "b9b79f1b2044aa14224340086822610b421b6fc0",
+  "milp_source_tree": "bad87b3f186dbc171ef62f581eb902eee057c460",
+  "diagnostic_commit": "15289a91b7b9edcc530004ebf30a6530e71bcb73",
+  "binary": "lu_failure_probe",
+  "binary_sha256": "37e31d3bf6b4b0aa60e8a639127a7d1f4771fa22f6fdd4b5cb10164e865862d7",
+  "input": "bnatt500.milp",
+  "input_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+  "new_capture": {
+    "file": "mic-bnatt500-lu-final-capture.json",
+    "sha256": "e1ddc5bd2032425fa86c724beacc6f3cc11871a47c1a23e810dc5bb6c477c4d1"
+  },
+  "prior_captures": [
+    {
+      "file": "mic-bnatt500-lu-first-failure.json",
+      "sha256": "63a1d7847c78e4df458d8737c91648517a30458309ee6aaf16193bb9801346bc",
+      "identical_fields": [
+        "status",
+        "nodes",
+        "lp_iterations",
+        "failure"
+      ]
+    },
+    {
+      "file": "mic-bnatt500-lu-history.json",
+      "sha256": "29190aa132975371d9fbf1900679fd259796111274e05700e4eab26127ba2da2",
+      "identical_fields": [
+        "status",
+        "nodes",
+        "lp_iterations",
+        "failure"
+      ]
+    }
+  ],
+  "independent_validation": {
+    "file": "mic-bnatt500-independent-lu.json",
+    "sha256": "14dcb96f64cc2d60f8e7008c5026ec830c3e66cbbe1125913c18820b0595d3ba",
+    "input_history_sha256": "29190aa132975371d9fbf1900679fd259796111274e05700e4eab26127ba2da2",
+    "reused_existing_result": true
+  },
+  "solve": {
+    "problem": "bnatt500",
+    "status": "LimitReached",
+    "nodes": 1,
+    "lp_iterations": 2688
+  },
+  "failure": {
+    "phase": "phase1",
+    "reason": "pivot_eta_limit",
+    "rows": 5058,
+    "iterations": 2688,
+    "call_iterations": 2688,
+    "eta_count": 64,
+    "failed_column": 5055,
+    "max_candidate": 1.3877787807814457e-17,
+    "pivot_floor": 1e-09,
+    "basis_column_at_failure": 1183,
+    "columns_captured": 5081,
+    "pivots_captured": 64
+  }
+}

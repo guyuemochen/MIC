@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "runs": 32,
+  "models": 8,
+  "compared_fields": [
+    "status",
+    "objective",
+    "bound",
+    "gap_percent",
+    "nodes",
+    "lp_iterations",
+    "cuts",
+    "rc_fixed",
+    "rc_reapplies",
+    "rc_refixed",
+    "auto_degraded",
+    "values"
+  ]
+}

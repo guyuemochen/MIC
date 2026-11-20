@@ -1,0 +1,33 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-safe-primal-ratio/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.17s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 2 tests
+test simplex::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray ... FAILED
+
+failures:
+
+---- simplex::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray' (1168042) panicked at src/simplex.rs:3106:25:
+assertion `left == right` failed: Minimize, reverse=false, resolve=false: LpSolution { status: Unbounded, objective: NaN, x: [1.0, 0.0], duals: [0.0, 0.0] }
+  left: Unbounded
+ right: IterationLimit
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray' (1168043) panicked at src/simplex_sparse.rs:4831:25:
+assertion `left == right` failed: Minimize, reverse=false, resolve=false: LpSolution { status: Unbounded, objective: NaN, x: [1.0, 0.0], duals: [0.0, 0.0] }
+  left: Unbounded
+ right: IterationLimit
+
+
+failures:
+    simplex::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray
+    simplex_sparse::tests::safe_primal_ratio_tests::phase2_remaining_artificial_is_not_an_unbounded_ray
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 468 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

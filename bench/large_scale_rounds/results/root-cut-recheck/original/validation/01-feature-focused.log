@@ -1,0 +1,14 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.85s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-f0cce0a41ff47e28)
+
+running 6 tests
+test cuts::tests::root_recheck_unknown_inputs_keep_candidates ... ok
+test cuts::tests::root_recheck_preserves_prefix_order_bits_and_threshold_tie ... ok
+test cuts::tests::root_recheck_real_expired_deadline_keeps_zero_cuts ... ok
+test cuts::tests::root_recheck_dense_and_sparse_batch_replay ... ok
+test cuts::tests::root_recheck_failure_before_and_after_filter_keeps_original_accounting ... ok
+test cuts::tests::root_recheck_recorded_rows_match_mknap_worker_replay ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 501 filtered out; finished in 0.05s
+

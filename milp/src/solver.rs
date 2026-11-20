@@ -1,7 +1,7 @@
 //! 统一求解编排与终检（WP4 契约，本文件为 WP4 实现）。
 //!
-//! 流程：`validate` →（可选）presolve → branch_and_bound(缩减问题) → postsolve
-//! → 安全网终检 → 报告。
+//! 流程：`validate` →（可选）时间窗路线求解或 presolve → branch_and_bound
+//! → postsolve → 安全网终检 → 报告。
 //!
 //! 受控入口 [`solve_controlled`] 在同一编排上注入 [`crate::branch_bound::SearchControl`]
 //!（threads/mipgap/自适应启发式/日志周期）与 [`crate::branch_bound::SearchHooks`]
@@ -14,23 +14,41 @@
 //! objective 口径 = 原 sense、含 obj_offset。
 //!
 //! # 实现说明（WP4）
-//! - presolve 关闭时直接在原始问题上求解（`values` 天然同维）；
+//! - 开启预处理和启发式的单线程入口会先尝试可识别的时间窗路径覆盖。
+//!   每条原行必须能由恰选一、时间窗或活动行程解释，候选要通过原模型复核。
+//!   专用求解只有在精确对偶与覆盖搜索共同完成证明时才报最优。
+//!   结构不适用时走通用流程，接手前已核验的解与已消耗的预算仍有效。
+//! - 单线程预处理也可将独立的二元短行组编成选项。每个选项保存原变量赋值，
+//!   改写后仍走通用分支定界，回调与终解都还原到原模型并检查。
+//! - 若固定共享决策后各条需求可独立求解，可在根节点用整数成本表直接证优。
+//! - 少量整数容量的二元装载可用单行背包上界精确搜索。非负特征分类可从冲突费用
+//!   推出固定开关；周期等式可先修出一个原模型可行解，交给后续分支定界。
+//! - 可由二层逻辑门完整解释的二元网络只搜索主列。每个可行赋值回填原列后终检。
+//! - presolve 关闭时不做约束化简（`values` 仍在原列顺序）；
 //!   开启时 `presolve_reductions` = 被固定删除的列数 + 被删除的行数 +
 //!   被聚合合并的重复列数（W5）。
-//! - 只有 B&B 带回取值（Optimal 或有 incumbent 的 LimitReached）才走
-//!   postsolve 与终检；Infeasible/Unbounded/无 incumbent 的 LimitReached
-//!   报告 `objective`/`values` 均为 `None`。
+//! - 时间窗路线可在缩放前直接返回已核验的原空间解。通用路径在 B&B 带回取值
+//!   （Optimal 或有 incumbent 的 LimitReached）时还原并终检，未找到解时
+//!   报告 `objective` 与 `values` 均为 `None`。
 //! - 终检容差为契约固定安全网值（相对 1e-6、整数 1e-5），宽于 WP3 复核
 //!   阶梯，正常路径不会被误伤；超差说明数值已失真，宁可报错也不输出错解。
 
-use crate::branch_bound::{self, BbOptions, BbStats, SearchControl, SearchHooks};
+use std::time::{Duration, Instant};
+
+use crate::branch_bound::{
+    self, BbOptions, BbStats, NodeRule, SearchControl, SearchHooks, SearchPrelude,
+};
+use crate::conditional_rows;
 use crate::error::{MilpError, Result};
-use crate::model::{Problem, RelOp, SolveStatus, Tolerances, VarType};
+use crate::heuristics::{self, Incumbent};
+use crate::model::{Problem, RelOp, Sense, SolveStatus, Tolerances, VarType};
 use crate::presolve;
-use crate::search_ctrl::gap_percent;
+use crate::search_ctrl::{gap_percent, Determinism};
+use crate::simplex::Bounds;
+use crate::time_window_routes::{sum_bounds, RouteModel};
 
 /// 终检约束违反相对容差（契约固定：violation ≤ 1e-6×(1+|rhs|+‖row‖₁)）。
-const FINAL_VIOLATION_REL: f64 = 1e-6;
+pub(crate) const FINAL_VIOLATION_REL: f64 = 1e-6;
 /// 终检整数性容差（契约固定：|x−round(x)| ≤ 1e-5，超差即 Err）。
 const FINAL_INTEGER_TOL: f64 = 1e-5;
 
@@ -107,8 +125,268 @@ pub fn solve_controlled(
     ctrl: &SearchControl,
     hooks: Option<&SearchHooks>,
 ) -> Result<ControlledSolveReport> {
+    solve_controlled_impl(problem, opts, ctrl, hooks, None)
+}
+
+/// 单线程受控求解，并在搜索接受新解时报告接受时刻、原尺度目标和变量值。
+/// 回调只读。工作模型的解按原列顺序还原，最终报告仍按原模型终检。
+pub fn solve_controlled_with_incumbent(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    observe: &dyn Fn(Instant, f64, &[f64]),
+) -> Result<ControlledSolveReport> {
+    if ctrl.threads != 1 {
+        return Err(MilpError::InvalidModel("新解观测仅支持单线程".into()));
+    }
+    solve_controlled_impl(problem, opts, ctrl, hooks, Some(observe))
+}
+
+type IncumbentObserver<'a> = Option<&'a dyn Fn(Instant, f64, &[f64])>;
+
+fn solve_controlled_impl(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    incumbent_observer: IncumbentObserver<'_>,
+) -> Result<ControlledSolveReport> {
+    let start = Instant::now();
     problem.validate()?;
+    let deadline = if ctrl.determinism == Determinism::Budget {
+        None
+    } else {
+        branch_bound::bb_time_deadline(&start, &opts.bb)
+    };
+    let eligible = opts.use_presolve
+        && ctrl.threads == 1
+        && !(opts.bb.node_rule == NodeRule::HybridBestBound && opts.bb.local_cuts);
+    let form = if eligible {
+        if opts.bb.heuristics && !ctrl.mipgap_percent.is_some_and(|gap| gap > 0.0) {
+            if let Some(report) = solve_integer_structure(
+                problem,
+                opts,
+                ctrl,
+                start,
+                deadline,
+                hooks,
+                incumbent_observer,
+            )? {
+                return Ok(report);
+            }
+            if let Some(form) =
+                crate::classification_conflicts::reformulate(problem, opts.tol, deadline)
+            {
+                return solve_classification(
+                    problem,
+                    form,
+                    opts,
+                    ctrl,
+                    hooks,
+                    incumbent_observer,
+                    start,
+                    deadline,
+                );
+            }
+        }
+        let form = conditional_rows::reformulate(problem, opts.tol, deadline);
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            let stopped = PresolveOutcome {
+                start,
+                deadline,
+                stats: BbStats::default(),
+                best: None,
+                bound: None,
+                status: Some(SolveStatus::LimitReached),
+            };
+            return Ok(stopped.report(problem, hooks, 0));
+        }
+        form
+    } else {
+        None
+    };
+    let Some(form) = form else {
+        return solve_prepared(problem, opts, ctrl, hooks, incumbent_observer, start, None);
+    };
+    form.problem.validate()?;
+    // 每个选项只代表一个整数组合。原空间和选项空间的目标（含常数）须相同。
+    let restore = |point: &[f64], objective: f64| -> Result<Vec<f64>> {
+        let x = form
+            .restore(point)
+            .ok_or_else(|| MilpError::Numerical("二元选项解无法还原为原变量".into()))?;
+        if x.len() != problem.vars.len()
+            || x.iter()
+                .zip(&problem.vars)
+                .any(|(&v, var)| !(v == 0.0 || v == 1.0) || v < var.lb || v > var.ub)
+            || problem
+                .constraints
+                .iter()
+                .any(|row| !(row.expr.eval(&x) <= row.rhs))
+            || problem.obj.eval(&x) + problem.obj_offset != objective
+        {
+            return Err(MilpError::Numerical("二元选项解未通过原模型复核".into()));
+        }
+        Ok(x)
+    };
+    let callback_error = std::cell::Cell::new(None);
+    let lift_event = |when, objective, point: &[f64]| {
+        if let Some(observe) = incumbent_observer {
+            match restore(point, objective) {
+                Ok(x) => observe(when, objective, &x),
+                Err(error) => callback_error.set(Some(error)),
+            }
+        }
+    };
+    let observer = incumbent_observer.map(|_| &lift_event as &dyn Fn(Instant, f64, &[f64]));
+    let mut result = solve_prepared(&form.problem, opts, ctrl, hooks, observer, start, None)?;
+    if let Some(error) = callback_error.take() {
+        return Err(error);
+    }
+    result.report.values = match (result.report.values.take(), result.report.objective) {
+        (Some(point), Some(objective)) => Some(restore(&point, objective)?),
+        (None, None) => None,
+        _ => return Err(MilpError::Internal("二元选项目标与解向量不对应".into())),
+    };
+    if deadline.is_some_and(|end| Instant::now() >= end) {
+        result.report.status = SolveStatus::LimitReached;
+    }
+    result.report.stats.time_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    Ok(result)
+}
+
+// 分类模型只保留可能改善已知解的分支。首解、后续回调、终解都在原变量下计价。
+fn solve_classification(
+    original: &Problem,
+    form: crate::classification_conflicts::Reformulation,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    observe: IncumbentObserver<'_>,
+    start: Instant,
+    deadline: Option<Instant>,
+) -> Result<ControlledSolveReport> {
+    form.problem.validate()?;
+    let checked = |mut values: Vec<f64>| -> Result<Incumbent> {
+        if values.len() != original.vars.len()
+            || values.iter().zip(&original.vars).any(|(&v, b)| {
+                !v.is_finite() || v < b.lb - opts.tol.feasibility || v > b.ub + opts.tol.feasibility
+            })
+        {
+            return Err(MilpError::Numerical("分类解未通过原变量界检查".into()));
+        }
+        final_check(original, &mut values)?;
+        let objective = original.obj.eval(&values) + original.obj_offset;
+        Ok(Incumbent { objective, values })
+    };
+    let restore = |point: &[f64], objective: f64| -> Result<Incumbent> {
+        let values = form
+            .restore(original, point)
+            .ok_or_else(|| MilpError::Numerical("分类模型的误差变量无法还原".into()))?;
+        let candidate = checked(values)?;
+        if (candidate.objective - objective).abs() > 1e-8 * (1.0 + objective.abs()) {
+            return Err(MilpError::Numerical("分类解还原后目标不一致".into()));
+        }
+        Ok(candidate)
+    };
+    let seed = checked(form.seed.clone())?;
+    if let Some(observe) = observe {
+        observe(Instant::now(), seed.objective, &seed.values);
+    }
+    let best = std::cell::RefCell::new(seed);
+    let error = std::cell::Cell::new(None);
+    let lift = |when: Instant, objective: f64, point: &[f64]| match restore(point, objective) {
+        Ok(candidate) if better(original.sense, candidate.objective, best.borrow().objective) => {
+            if let Some(observe) = observe {
+                observe(when, candidate.objective, &candidate.values);
+            }
+            best.replace(candidate);
+        }
+        Ok(_) => {}
+        Err(e) => error.set(Some(e)),
+    };
+    let prior = PresolveOutcome {
+        start,
+        deadline,
+        stats: BbStats {
+            lp_iterations: form.lp_iterations,
+            ..BbStats::default()
+        },
+        best: form.project_seed().and_then(|point| {
+            heuristics::round_and_check(
+                &form.problem,
+                &Bounds::from_problem(&form.problem),
+                &point,
+                &opts.tol,
+            )
+        }),
+        bound: None,
+        status: None,
+    };
+    // 分类冲突的两个分支常有很不相同的代价，自动模式利用已有分支的目标变化选列。
+    let mut work_opts = *opts;
+    if work_opts.bb.branch_rule_auto {
+        work_opts.bb.branch_rule_auto = false;
+        work_opts.bb.branch_rule = branch_bound::BranchRule::Pseudocost;
+    }
+    let mut result = solve_prepared(
+        &form.problem,
+        &work_opts,
+        ctrl,
+        hooks,
+        Some(&lift),
+        start,
+        Some(prior),
+    )?;
+    if let Some(e) = error.take() {
+        return Err(e);
+    }
+    let mut best = best.into_inner();
+    match (result.report.values.take(), result.report.objective) {
+        (Some(point), Some(objective)) => {
+            let candidate = restore(&point, objective)?;
+            if result.report.status == SolveStatus::Optimal
+                && best.objective + 1e-8 * (1.0 + objective.abs()) < candidate.objective
+            {
+                return Err(MilpError::Numerical("分类最优目标与已知可行解冲突".into()));
+            }
+            if better(original.sense, candidate.objective, best.objective) {
+                best = candidate;
+            }
+        }
+        (None, None) if result.report.status == SolveStatus::LimitReached => {}
+        _ => return Err(MilpError::Numerical("分类模型终态与已知可行解冲突".into())),
+    }
+    if result.report.status == SolveStatus::Optimal {
+        result.bound = Some(best.objective);
+    } else if result.bound.is_some_and(|b| b > best.objective) {
+        result.bound = None;
+    }
+    result.report.objective = Some(best.objective);
+    result.report.values = Some(best.values);
+    if deadline.is_some_and(|d| Instant::now() >= d) {
+        result.report.status = SolveStatus::LimitReached;
+    }
+    result.report.stats.time_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    Ok(result)
+}
+
+// 输入已验证，结构改写只在外层执行。已有的解、工作量和起点沿用到分支定界。
+fn solve_prepared(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    incumbent_observer: IncumbentObserver<'_>,
+    start: Instant,
+    prior: Option<PresolveOutcome>,
+) -> Result<ControlledSolveReport> {
     let num_orig_vars = problem.vars.len();
+    let mut route =
+        prior.or_else(|| structured_prelude(problem, opts, ctrl, start, incumbent_observer));
+    if let Some(r) = route.take_if(|r| r.status.is_some()) {
+        return Ok(r.report(problem, hooks, 0));
+    }
 
     // （可选）presolve → 缩减问题 + 还原映射。R4 起最前端先做问题级数值
     // 缩放（scale→presolve→solve→postsolve→unscale）：缩放使容差判定
@@ -122,8 +400,12 @@ pub fn solve_controlled(
     } else {
         (problem.clone(), None)
     };
-    let (work, map, reductions) = if opts.use_presolve {
-        let (reduced, map) = presolve::presolve(&pre_work, &opts.tol)?;
+    let (work, map, reductions, preserved) = if opts.use_presolve {
+        // 按最外层请求门控；并行小树前缀不能因临时 threads=1 捕获旧行。
+        let capture = cfg!(feature = "certified_row_fallback") && ctrl.threads == 1
+            && opts.bb.binary_row_propagation.resolve(ctrl.threads)
+                == branch_bound::BinaryPropagationMode::On;
+        let (reduced, map, preserved) = presolve::presolve_for_solve(&pre_work, &opts.tol, capture)?;
         // W5：聚合掉的重复列（组成员数 − 1）一并计入消减量。
         let reductions = map.fixed.len()
             + map.dropped_rows.len()
@@ -132,25 +414,61 @@ pub fn solve_controlled(
                 .iter()
                 .map(|(members, _, _)| members.len().saturating_sub(1))
                 .sum::<usize>();
-        (reduced, Some(map), reductions)
+        (reduced, Some(map), reductions, preserved)
     } else {
-        (pre_work, None, 0)
+        (pre_work, None, 0, crate::binary_propagation::PreservedBinaryRows::default())
     };
 
-    let bb = branch_bound::branch_and_bound_controlled(&work, &opts.bb, ctrl, opts.tol, hooks)?;
+    let restore_values = |reduced_x: Vec<f64>| -> Vec<f64> {
+        let x_pre = match &map {
+            Some(m) => presolve::postsolve(m, &reduced_x, num_orig_vars, &opts.tol),
+            None => reduced_x,
+        };
+        match &smap {
+            Some(s) => s.unscale_x(&x_pre),
+            None => x_pre,
+        }
+    };
+    let mut prelude = route
+        .as_ref()
+        .map_or_else(SearchPrelude::default, |r| SearchPrelude {
+            start: Some(r.start),
+            nodes: r.stats.nodes,
+            lp_iterations: r.stats.lp_iterations,
+            incumbent: r.best.as_ref().and_then(|incumbent| {
+                work_seed(
+                    &work, map.as_ref(), smap.as_ref(), incumbent, opts.tol, &restore_values,
+                )
+            }),
+        });
+    // 结构识别、编制选项及常规预处理已经使用的墙钟时间也在单线程总预算内。
+    if ctrl.threads == 1 && opts.use_presolve {
+        prelude.start = Some(start);
+    }
+    if let Some(mut r) = route.take_if(|r| r.time_exceeded()) {
+        r.status = Some(SolveStatus::LimitReached);
+        return Ok(r.report(problem, hooks, reductions));
+    }
+    let observe_work = |reduced_x: &[f64]| {
+        let Some(observe) = incumbent_observer else { return };
+        let accepted_at = Instant::now();
+        let x = restore_values(reduced_x.to_vec());
+        let objective = problem.obj.eval(&x) + problem.obj_offset;
+        let known = route.as_ref().and_then(|r| r.best.as_ref());
+        if known.is_none_or(|inc| !better(problem.sense, inc.objective, objective)) {
+            observe(accepted_at, objective, &x);
+        }
+    };
+    let work_observer = incumbent_observer.map(|_| &observe_work as &dyn Fn(&[f64]));
+    let mut bb = branch_bound::branch_and_bound_with_preserved(
+        &work, &opts.bb, ctrl, opts.tol, hooks, preserved, work_observer, prelude,
+    )?;
 
     // postsolve → 缩放前变量空间 →（可选）unscale → 原问题空间；B&B 未
     // 带回取值则不带解返回。
-    let (objective, values) = match bb.best_values {
+    let (mut objective, mut values) = match bb.best_values.take() {
         Some(reduced_x) => {
-            let x_pre = match &map {
-                Some(m) => presolve::postsolve(m, &reduced_x, num_orig_vars, &opts.tol),
-                None => reduced_x,
-            };
-            let mut x = match &smap {
-                Some(s) => s.unscale_x(&x_pre),
-                None => x_pre,
-            };
+            let mut x = restore_values(reduced_x);
             if x.len() != num_orig_vars {
                 return Err(MilpError::Numerical(format!(
                     "解向量维数 {} 与原始变量数 {num_orig_vars} 不符",
@@ -164,6 +482,32 @@ pub fn solve_controlled(
         }
         None => (None, None),
     };
+
+    if let Some(r) = route {
+        if let Some(inc) = r.best {
+            if objective.is_none_or(|old| better(problem.sense, inc.objective, old)) {
+                objective = Some(inc.objective);
+                values = Some(inc.values);
+                if bb.status != SolveStatus::LimitReached {
+                    // 可信的原模型候选与通用终态冲突，保留候选和独立路线界。
+                    bb.status = SolveStatus::LimitReached;
+                    bb.bound = r.bound;
+                } else if bb.bound.is_some_and(|bound| better(problem.sense, inc.objective, bound)) {
+                    bb.bound = r.bound;
+                    bb.gap_terminated = false;
+                    bb.auto_degraded = false;
+                }
+                bb.best_objective = Some(inc.objective);
+            }
+        }
+        if bb.status == SolveStatus::LimitReached && !bb.gap_terminated {
+            if let Some(bound) = r.bound {
+                if bb.bound.is_none_or(|old| better(problem.sense, old, bound)) {
+                    bb.bound = Some(bound);
+                }
+            }
+        }
+    }
 
     // gap 证据：以 (最终 incumbent, 证据 bound) 经统一 clamp 重算——
     // BbResult.bound 在 gap 终止时即触发时刻证据 db（顺序路径触发即断，最终
@@ -196,6 +540,360 @@ pub fn solve_controlled(
     })
 }
 
+fn better(sense: Sense, new: f64, old: f64) -> bool {
+    match sense {
+        Sense::Minimize => new < old,
+        Sense::Maximize => new > old,
+    }
+}
+
+struct PresolveOutcome {
+    start: Instant,
+    deadline: Option<Instant>,
+    stats: BbStats,
+    best: Option<Incumbent>,
+    bound: Option<f64>,
+    status: Option<SolveStatus>,
+}
+
+impl PresolveOutcome {
+    fn time_exceeded(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn report(
+        mut self,
+        problem: &Problem,
+        hooks: Option<&SearchHooks>,
+        reductions: usize,
+    ) -> ControlledSolveReport {
+        let (objective, values) = self
+            .best
+            .map_or((None, None), |inc| (Some(inc.objective), Some(inc.values)));
+        self.stats.time_ms = self.start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        if let Some(hooks) = hooks {
+            branch_bound::emit_progress(
+                hooks,
+                &self.start,
+                self.stats.nodes,
+                objective,
+                self.bound,
+                problem.sense,
+            );
+        }
+        ControlledSolveReport {
+            report: SolveReport {
+                status: self.status.unwrap_or(SolveStatus::LimitReached),
+                objective,
+                values,
+                stats: self.stats,
+                presolve_reductions: reductions,
+            },
+            gap_terminated: false,
+            auto_degraded: false,
+            gap_percent: None,
+            bound: self.bound,
+        }
+    }
+}
+
+fn solve_integer_structure(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    start: Instant,
+    deadline: Option<Instant>,
+    hooks: Option<&SearchHooks>,
+    observe: IncumbentObserver<'_>,
+) -> Result<Option<ControlledSolveReport>> {
+    let mut best: Option<Incumbent> = None;
+    let mut accept = |values: &[f64]| {
+        // 分解器已按原行核验赋值；所有对外目标都在原列顺序下重算。
+        let objective = problem.obj.eval(values) + problem.obj_offset;
+        if best
+            .as_ref()
+            .is_none_or(|inc| better(problem.sense, objective, inc.objective))
+        {
+            if let Some(observe) = observe {
+                observe(Instant::now(), objective, values);
+            }
+            best = Some(Incumbent {
+                objective,
+                values: values.to_vec(),
+            });
+        }
+    };
+    let mut root_result = crate::shared_demand::solve(problem, opts.tol, deadline, &mut accept)?;
+    if root_result.is_none()
+        && opts.bb.mitm_windows > 0
+        && opts.bb.branch_rule_auto
+        && opts.bb.node_rule == NodeRule::DepthFirst
+    {
+        root_result = heuristics::bucketed_equalities(problem, &opts.tol, deadline, &mut accept)?;
+    }
+    let outcome = if let Some((status, bound)) = root_result {
+        Some((
+            status,
+            bound,
+            BbStats {
+                nodes: 1,
+                ..BbStats::default()
+            },
+        ))
+    } else if opts.bb.branch_rule_auto
+        && opts.bb.node_rule == NodeRule::DepthFirst
+        && opts.bb.lp_engine == crate::simplex_sparse::LpEngineKind::Auto
+    {
+        let limit = structural_node_limit(opts, ctrl);
+        match crate::boolean_network::solve(problem, opts.tol, deadline, limit, &mut accept)? {
+            Some(result) => Some(result),
+            None => crate::packing::solve(problem, opts.tol, deadline, limit, &mut accept)?,
+        }
+    } else {
+        None
+    };
+    let Some((mut status, bound, stats)) = outcome else {
+        return Ok(None);
+    };
+    if status == SolveStatus::Optimal
+        && (best.is_none() || best.as_ref().map(|inc| inc.objective) != bound)
+    {
+        return Err(MilpError::Numerical(
+            "原模型目标与整数搜索证明不一致".into(),
+        ));
+    }
+    if deadline.is_some_and(|end| Instant::now() >= end) {
+        status = SolveStatus::LimitReached;
+    }
+    let result = PresolveOutcome {
+        start,
+        deadline,
+        best,
+        bound,
+        status: Some(status),
+        stats,
+    };
+    Ok(Some(result.report(problem, hooks, 0)))
+}
+
+// 节点上限为零表示不限。纯预算模式同时遵守墙钟参数折算的节点额度。
+fn structural_node_limit(opts: &SolveOptions, ctrl: &SearchControl) -> u64 {
+    let limit = if opts.bb.node_limit == 0 {
+        u64::MAX
+    } else {
+        opts.bb.node_limit
+    };
+    if ctrl.determinism == Determinism::Budget && opts.bb.time_limit_ms > 0 {
+        limit.min(branch_bound::budget_node_cap_of(&opts.bb))
+    } else {
+        limit
+    }
+}
+
+fn structured_prelude(
+    problem: &Problem,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    start: Instant,
+    observe: IncumbentObserver<'_>,
+) -> Option<PresolveOutcome> {
+    if !opts.use_presolve
+        || !opts.bb.heuristics
+        || ctrl.threads != 1
+        || (opts.bb.node_rule == NodeRule::HybridBestBound && opts.bb.local_cuts)
+    {
+        return None;
+    }
+    let budget_mode = ctrl.determinism == Determinism::Budget;
+    let deadline = if !budget_mode && opts.bb.time_limit_ms > 0 {
+        start.checked_add(Duration::from_millis(opts.bb.time_limit_ms))
+    } else {
+        None
+    };
+    let node_limit = structural_node_limit(opts, ctrl);
+    let mut r = PresolveOutcome {
+        start,
+        deadline,
+        stats: BbStats::default(),
+        best: None,
+        bound: None,
+        status: None,
+    };
+    let Some(model) = RouteModel::detect(problem) else {
+        let mut report_cover = |values: &[f64]| {
+            if let Some(observe) = observe {
+                observe(
+                    Instant::now(),
+                    problem.obj.eval(values) + problem.obj_offset,
+                    values,
+                );
+            }
+        };
+        if let Some((values, bound)) =
+            crate::cover_repair::search(problem, deadline, &mut report_cover)
+        {
+            r.bound = bound;
+            r.best = Some(Incumbent {
+                objective: problem.obj.eval(&values) + problem.obj_offset,
+                values,
+            });
+            if r.time_exceeded() {
+                r.status = Some(SolveStatus::LimitReached);
+            }
+            return Some(r);
+        }
+        let values = crate::periodic_equalities::seed(problem, deadline)?;
+        let objective = problem.obj.eval(&values) + problem.obj_offset;
+        if let Some(observe) = observe {
+            observe(Instant::now(), objective, &values);
+        }
+        let improved = crate::periodic_equalities::polish(
+            problem,
+            &values,
+            opts,
+            deadline,
+            &mut r.stats.lp_iterations,
+        );
+        let mut best = Incumbent { objective, values };
+        if let Some(values) = improved {
+            let new_cost = problem.obj.eval(&values) + problem.obj_offset;
+            if better(problem.sense, new_cost, objective) {
+                if let Some(observe) = observe {
+                    observe(Instant::now(), new_cost, &values);
+                }
+                best = Incumbent {
+                    objective: new_cost,
+                    values,
+                };
+            }
+        }
+        let current = best.values.clone();
+        let mut accept = |values: &[f64]| {
+            let objective = problem.obj.eval(values) + problem.obj_offset;
+            if better(problem.sense, objective, best.objective) {
+                if let Some(observe) = observe {
+                    observe(Instant::now(), objective, values);
+                }
+                best = Incumbent {
+                    objective,
+                    values: values.to_vec(),
+                };
+            }
+        };
+        r.bound = crate::periodic_equalities::improve(
+            problem,
+            &current,
+            opts,
+            deadline,
+            node_limit,
+            &mut r.stats,
+            &mut accept,
+        );
+        r.best = Some(best);
+        if r.time_exceeded() || r.stats.nodes >= node_limit {
+            r.status = Some(SolveStatus::LimitReached);
+        }
+        return Some(r);
+    };
+    if !r.time_exceeded() {
+        if let Some(values) = model.greedy_candidate(problem, deadline).or_else(|| {
+            (!r.time_exceeded())
+                .then(|| model.idle_candidate(problem))
+                .flatten()
+        }) {
+            let objective = problem.obj.eval(&values) + problem.obj_offset;
+            if let Some(observe) = observe {
+                observe(Instant::now(), objective, &values);
+            }
+            r.best = Some(Incumbent { objective, values });
+        }
+    }
+    // 有显式 gap 时保留通用搜索的证据与停机语义；贪心结果可供其使用。
+    if !r.time_exceeded() && !ctrl.mipgap_percent.is_some_and(|gap| gap > 0.0) {
+        let result = crate::route_cover::optimize(
+            problem,
+            &model,
+            opts.tol,
+            deadline,
+            node_limit,
+            r.best.as_ref().map(|inc| inc.values.as_slice()),
+        );
+        r.stats.nodes = result.nodes;
+        r.stats.lp_iterations = result.lp_iterations;
+        r.bound = result.bound.and_then(|bound| match problem.sense {
+            Sense::Minimize => sum_bounds(problem.obj_offset, bound).map(|(lower, _)| lower),
+            Sense::Maximize => sum_bounds(problem.obj_offset, -bound).map(|(_, upper)| upper),
+        });
+        if let Some(values) = result.best {
+            let objective = problem.obj.eval(&values) + problem.obj_offset;
+            // 证书对应的是精确比较选出的向量。即使浮点重算目标相同，
+            // 也必须使用证书对应的向量。
+            if result.proven_optimal
+                || r.best
+                    .as_ref()
+                    .is_none_or(|inc| better(problem.sense, objective, inc.objective))
+            {
+                if let Some(observe) = observe {
+                    if r.best.as_ref().is_none_or(|inc| inc.values != values) {
+                        observe(Instant::now(), objective, &values);
+                    }
+                }
+                r.best = Some(Incumbent { objective, values });
+            }
+            if result.proven_optimal {
+                r.status = Some(SolveStatus::Optimal);
+                r.bound = Some(objective);
+            }
+        }
+        if r.status.is_none() && (result.interrupted || r.stats.nodes >= node_limit) {
+            r.status = Some(SolveStatus::LimitReached);
+        }
+    }
+    if r.time_exceeded() {
+        r.status = Some(SolveStatus::LimitReached);
+    }
+    Some(r)
+}
+
+/// 缩放和预处理后先往返核验。原空间的候选由调用方单独保留，以防
+/// 工作映射中的舍入或交换重复列改变了已核验的向量。
+fn work_seed(
+    work: &Problem,
+    map: Option<&presolve::PostsolveMap>,
+    scale: Option<&crate::scaling::ScaleMap>,
+    incumbent: &Incumbent,
+    tol: Tolerances,
+    restore: &impl Fn(Vec<f64>) -> Vec<f64>,
+) -> Option<Incumbent> {
+    let scaled = match scale {
+        Some(scale) => incumbent
+            .values
+            .iter()
+            .zip(&scale.col)
+            .map(|(x, factor)| x * factor)
+            .collect(),
+        None => incumbent.values.clone(),
+    };
+    let reduced = if let Some(map) = map {
+        let mut reduced: Vec<_> = map
+            .var_map
+            .iter()
+            .map(|&j| scaled.get(j).copied().unwrap_or(0.0))
+            .collect();
+        for (members, j, fixed) in &map.aggregations {
+            if fixed.is_none() {
+                *reduced.get_mut(*j)? = members.iter().map(|&k| scaled[k]).sum();
+            }
+        }
+        reduced
+    } else {
+        scaled
+    };
+    let candidate = heuristics::round_and_check(work, &Bounds::from_problem(work), &reduced, &tol)?;
+    (restore(candidate.values.clone()) == incumbent.values).then_some(candidate)
+}
+
 /// 统一求解入口（签名不变；默认受控路径的薄委托——
 /// SearchControl::default + hooks=None，与原实现逐字节一致）。
 pub fn solve(problem: &Problem, opts: &SolveOptions) -> Result<SolveReport> {
@@ -212,7 +910,7 @@ pub fn solve_default(problem: &Problem) -> Result<SolveReport> {
 ///   替换为 round 值，超差即 `Err(Numerical)`；
 /// - 逐约束复核（对替换后的最终值）：violation > [`FINAL_VIOLATION_REL`]×
 ///   (1+|rhs|+‖row‖₁) 即 `Err(Numerical)`（‖row‖₁ = 行系数绝对值和）。
-fn final_check(problem: &Problem, x: &mut [f64]) -> Result<()> {
+pub(crate) fn final_check(problem: &Problem, x: &mut [f64]) -> Result<()> {
     for (i, v) in problem.vars.iter().enumerate() {
         if matches!(v.var_type, VarType::Binary | VarType::Integer) {
             let val = x[i];
@@ -281,6 +979,54 @@ mod tests {
             (a - b).abs() <= 1e-7 * (1.0 + b.abs()),
             "数值不符: {a} vs {b}"
         );
+    }
+
+    #[test]
+    fn incumbent_observer_recovers_original_columns_without_changing_result() {
+        let mut p = Problem::new("观测原尺度", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.add_var("y", VarType::Continuous).unwrap();
+        p.vars[1].lb = 4.0;
+        p.vars[1].ub = 4.0;
+        p.set_objective(vec![(0, 1.0), (1, 128.0)], 2.25).unwrap();
+        let opts = SolveOptions::default();
+        let ctrl = SearchControl::default();
+        let normal = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+        let start = Instant::now();
+        let events = std::cell::RefCell::new(Vec::new());
+        let observed = solve_controlled_with_incumbent(&p, &opts, &ctrl, None, &|time, objective, x| {
+            events.borrow_mut().push((time, objective, x.to_vec()));
+        }).unwrap();
+        let events = events.into_inner();
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|(time, _, _)| *time >= start));
+        assert_eq!(observed.report.status, normal.report.status);
+        assert_eq!(observed.report.values, normal.report.values);
+        let (_, goal, values) = events.last().unwrap();
+        assert_eq!(Some(*goal), normal.report.objective);
+        assert_eq!(values, &[1.0, 4.0]);
+    }
+
+    #[test]
+    fn binary_public_bounds_cannot_produce_out_of_domain_solution() {
+        let mut p = Problem::new("二元公开边界入口", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
+        for use_presolve in [true, false] {
+            let opts = SolveOptions { use_presolve, ..SolveOptions::default() };
+            p.vars[0].lb = 2.0;
+            p.vars[0].ub = 2.0;
+            let result = solve(&p, &opts);
+            assert!(result.is_err(), "非法二元界应在求解前拒绝，实际{result:?}");
+            p.vars[0].lb = 0.2;
+            p.vars[0].ub = 0.8;
+            assert_eq!(solve(&p, &opts).unwrap().status, SolveStatus::Infeasible);
+            p.vars[0].lb = 1.0;
+            p.vars[0].ub = 1.0;
+            let report = solve(&p, &opts).unwrap();
+            assert_eq!(report.status, SolveStatus::Optimal);
+            assert_eq!(report.objective, Some(1.0));
+        }
     }
 
     /// SolveOptions 默认值逐字段符合契约。
@@ -972,5 +1718,140 @@ mod tests {
         eprintln!(
             "revised acceptance: mknap-5x300=4762 @{mknap_secs:.1}s, setcover-300x600=144 @{setcover_secs:.1}s"
         );
+    }
+}
+
+#[cfg(all(test, feature = "certified_row_fallback"))]
+mod certified_fallback_tests {
+    use super::*;
+    use crate::binary_propagation::{CaptureAudit, TestDeadlineGuard};
+    use crate::branch_bound::{BinaryPropagationMode, BranchRule, NodeRule};
+    use crate::presolve::certified_fallback_tests::branch_model;
+    use crate::search_ctrl::Determinism;
+    use crate::simplex_sparse::LpEngineKind;
+
+    fn options(engine: LpEngineKind) -> SolveOptions {
+        SolveOptions { use_scaling: false, bb: BbOptions { lp_engine: engine,
+            binary_row_propagation: BinaryPropagationMode::Auto, branch_rule_auto: false,
+            branch_rule: BranchRule::MostFractional, heuristics: false, root_cuts: false,
+            local_cuts: false, root_rc_fixing: false, ..BbOptions::default() }, ..SolveOptions::default() }
+    }
+
+    #[test]
+    fn certified_fallback_solver_matches_known_optimum_across_engines_and_domains() {
+        let p = branch_model();
+        let mut total_fixes = 0;
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            for scaling in [false, true] {
+                for rule in [NodeRule::DepthFirst, NodeRule::HybridBestBound] {
+                    for rc in [false, true] {
+                        let mut opts = options(engine);
+                        opts.use_scaling = scaling;
+                        opts.bb.node_rule = rule;
+                        opts.bb.root_rc_fixing = rc;
+                        let auto = solve(&p, &opts).unwrap();
+                        opts.bb.binary_row_propagation = BinaryPropagationMode::On;
+                        let on = solve(&p, &opts).unwrap();
+                        opts.bb.binary_row_propagation = BinaryPropagationMode::Off;
+                        let off = solve(&p, &opts).unwrap();
+                        for report in [&auto, &on, &off] {
+                            assert_eq!(report.status, SolveStatus::Optimal);
+                            assert_eq!(report.objective, Some(2.125));
+                            let mut values = report.values.clone().unwrap();
+                            final_check(&p, &mut values).unwrap();
+                        }
+                        assert_eq!(auto.stats.nodes, on.stats.nodes);
+                        assert_eq!(auto.stats.lp_iterations, on.stats.lp_iterations);
+                        assert_eq!(auto.values, on.values);
+                        assert_eq!(auto.stats.propagation.fixes, on.stats.propagation.fixes);
+                        assert_eq!(off.stats.propagation.accepted_rows, 0);
+                        assert!(auto.stats.propagation.calls > 0);
+                        assert_eq!(auto.stats.propagation.accepted_rows, 2);
+                        assert_eq!(auto.stats.propagation.skipped_rows, 0);
+                        total_fixes += auto.stats.propagation.fixes;
+                    }
+                }
+            }
+        }
+        assert!(total_fixes > 0, "必须实际使用被救回的传播能力");
+    }
+
+    #[test]
+    fn certified_fallback_capture_gate_and_root_lazy_statistics() {
+        let p = branch_model();
+        for presolve in [false, true] {
+            for mode in [BinaryPropagationMode::Auto, BinaryPropagationMode::On, BinaryPropagationMode::Off] {
+                let mut opts = options(LpEngineKind::Tableau);
+                opts.use_presolve = presolve;
+                opts.bb.binary_row_propagation = mode;
+                opts.bb.node_limit = 1;
+                let audit = CaptureAudit::new();
+                let result = solve(&p, &opts).unwrap();
+                assert_eq!(result.status, SolveStatus::LimitReached);
+                let expected = if presolve && mode != BinaryPropagationMode::Off { 1 } else { 0 };
+                assert_eq!(audit.count(), expected);
+                assert_eq!(result.stats.propagation.calls, 0);
+                assert_eq!(result.stats.propagation.accepted_rows, 0,
+                    "未展开孩子时不能提前发布传播数据库统计");
+            }
+        }
+        let mut root_closed = p;
+        root_closed.set_objective(vec![(0, -1.0), (1, -2.0), (2, -3.0)], 0.25).unwrap();
+        let audit = CaptureAudit::new();
+        let closed = solve(&root_closed, &options(LpEngineKind::Tableau)).unwrap();
+        assert_eq!(closed.status, SolveStatus::Optimal);
+        assert_eq!(closed.objective, Some(0.25));
+        assert_eq!(audit.count(), 1, "根部闭合也已支付旧行认证成本");
+        assert_eq!(closed.stats.propagation.accepted_rows, 0);
+    }
+
+    #[test]
+    fn certified_fallback_parallel_prefix_stays_off_and_explicit_on_errors() {
+        let p = branch_model();
+        let opts = options(LpEngineKind::Tableau);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let audit = CaptureAudit::new();
+        let parallel = {
+            // 若最外层Auto被顺序前缀重开，传播会立即中断并使本断言失败。
+            let _deadline = TestDeadlineGuard::on_check(1);
+            solve_controlled(&p, &opts, &ctrl, None).unwrap()
+        };
+        assert_eq!(parallel.report.status, SolveStatus::Optimal);
+        assert_eq!(parallel.report.objective, Some(2.125));
+        assert_eq!(parallel.report.stats.propagation.calls, 0);
+        assert_eq!(audit.count(), 0);
+        let mut explicit = opts;
+        explicit.bb.binary_row_propagation = BinaryPropagationMode::On;
+        let error = solve_controlled(&p, &explicit, &ctrl, None).unwrap_err();
+        assert!(error.to_string().contains("二元静态行传播"));
+        assert_eq!(audit.count(), 0);
+    }
+
+    #[test]
+    fn certified_fallback_deadline_keeps_frontier_and_budget_run_is_deterministic() {
+        let p = branch_model();
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let opts = options(engine);
+            let interrupted = {
+                let _deadline = TestDeadlineGuard::on_check(1);
+                solve_controlled(&p, &opts, &SearchControl::default(), None).unwrap()
+            };
+            assert_eq!(interrupted.report.status, SolveStatus::LimitReached);
+            assert_eq!(interrupted.report.stats.nodes, 1);
+            assert_eq!(interrupted.report.stats.propagation.accepted_rows, 2);
+            assert_eq!(interrupted.report.stats.propagation.calls, 1);
+            assert_eq!(interrupted.report.objective, None);
+            assert!(interrupted.bound.unwrap() >= 2.125 - 1e-8);
+            let ctrl = SearchControl { determinism: Determinism::Budget, ..SearchControl::default() };
+            let a = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+            let b = solve_controlled(&p, &opts, &ctrl, None).unwrap();
+            assert_eq!(a.report.status, SolveStatus::Optimal);
+            assert_eq!(a.report.objective, Some(2.125));
+            assert_eq!(a.bound, b.bound);
+            assert_eq!(a.report.values, b.report.values);
+            assert_eq!(a.report.stats.nodes, b.report.stats.nodes);
+            assert_eq!(a.report.stats.lp_iterations, b.report.stats.lp_iterations);
+            assert_eq!(format!("{:?}", a.report.stats.propagation), format!("{:?}", b.report.stats.propagation));
+        }
     }
 }

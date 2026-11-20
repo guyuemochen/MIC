@@ -1,0 +1,3 @@
+cargo build --manifest-path milp/Cargo.toml --target-dir /tmp/mic-r11-target --release --example round_probe 
+   Compiling milp v0.1.0 (/private/tmp/mic-dense-basis-refactor/milp)
+    Finished `release` profile [optimized] target(s) in 2.28s

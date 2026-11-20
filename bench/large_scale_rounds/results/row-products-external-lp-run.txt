@@ -1,0 +1,9 @@
+lp-sparse-4000x800 mic 0 optimal 0.909274417
+lp-sparse-4000x800 highs 0 optimal 0.6075670419995731
+lp-sparse-4000x800 scip 0 optimal 1.5132212920007078
+lp-sparse-4000x800 highs 1 optimal 0.5993255419998604
+lp-sparse-4000x800 scip 1 optimal 1.4436151250001785
+lp-sparse-4000x800 mic 1 optimal 0.923814416
+lp-sparse-4000x800 scip 2 optimal 1.4444039999998495
+lp-sparse-4000x800 mic 2 optimal 0.920692583
+lp-sparse-4000x800 highs 2 optimal 0.5969198339998911

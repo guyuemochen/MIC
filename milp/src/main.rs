@@ -1,8 +1,8 @@
 //! milp CLI 入口（WP5 契约实现 + 受控搜索参数包）。
 //!
 //! 用法：`milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F]
-//! [--mipgap P] [--heuristic-mode auto|on|off] `
-//! [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]`。
+//! [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] `
+//! [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]`。
 //!
 //! 输出契约：
 //! - **Optimal**：stdout 依次 `status = optimal`、`nodes = N`（`--verbose` 时
@@ -16,10 +16,12 @@
 //!   `nodes = N`、`gap = <%.2f>`（库层触发时刻证据 + 统一 clamp 双保证为
 //!   非负有限，永不 inf/负）、`best = <数值>`（**无 objective 行**——未证明
 //!   最优，绝不冒充）；
-//! - **自动降级终止**（`--heuristic-mode auto` 且给了 `--time-limit-secs N`，
+//! - **自动降级终止**（`--heuristic-mode auto`、`--early-stop on`（默认）
+//!   且给了 `--time-limit-secs N`，
 //!   预算过半后解与对偶界双停滞时触发）：依次 `status = auto_degraded`、
 //!   `nodes = N`、`gap = <%.2f>`、`best = <数值>`（行形状同 gap 终止、
 //!   status 区分原因；同样**无 objective 行**——未证明最优）。
+//!   `--early-stop off` 仅关闭该策略，自适应启发式、硬上限与 mipgap 均保留。
 //!
 //! 错误到 stderr `error: <MilpError>`。退出码：0=最优 2=不可行 3=无界
 //! 4=上限触发与 gap 终止（均未证明最优） 1=错误/用法。
@@ -34,7 +36,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use milp::branch_bound::{BbOptions, BranchRule, NodeRule, SearchControl, SearchHooks};
+use milp::branch_bound::{BinaryPropagationMode, BbOptions, BranchRule, NodeRule, SearchControl, SearchHooks};
 use milp::instance::load_instance;
 use milp::model::{Problem, SolveStatus, Tolerances};
 use milp::search_ctrl::{format_progress_line, Determinism, ProgressInfo};
@@ -42,7 +44,8 @@ use milp::solver::{solve_controlled, ControlledSolveReport, SolveOptions, SolveR
 
 /// 用法说明（打印到 stderr）。
 const USAGE: &str = "用法：milp <算例路径> [--time-limit-secs N] [--threads N] \
-[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--branch-rule most_fractional|pseudocost] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--verbose]";
+[--log-secs F] [--mipgap P] [--heuristic-mode auto|on|off] [--early-stop on|off] [--branch-rule most_fractional|pseudocost] [--node-rule dfs|hybrid] [--local-cuts on|off] [--scaling=on|off] [--mitm=on|off] [--work-stack auto|local|global] [--determinism wall|budget] [--lp-engine auto|tableau|revised] [--root-rc-fixing=on|off] [--binary-propagation auto|on|off] [--verbose]\n\
+--early-stop 默认 on：auto 模式有时间预算时允许停滞提前退出；off 仅关闭此策略，保留自适应启发式。时间、节点、LP迭代上限与 --mipgap 仍生效。";
 
 /// `--threads` 允许的最大线程数（1..=1024；1 = 纯顺序路径）。
 const MAX_THREADS: usize = 1024;
@@ -94,12 +97,17 @@ struct Config {
     mipgap_percent: Option<f64>,
     /// 启发式模式；默认 Auto。
     heuristic_mode: HeuristicModeCli,
+    /// 是否允许停滞提前退出；默认 true。关闭不影响自适应启发式和硬限额。
+    early_stop: bool,
     /// 分支规则（`--branch-rule`）；默认 None = 类自适应（R3：求解入口按
     /// 结构类检测解析——全 Binary + 全正系数 Le 行 + 行数 ≤ 64 ⇒ Pseudocost
     /// + 可靠性冷启动 8，否则 MostFractional）；显式 most_fractional/
     /// pseudocost 覆盖优先（pseudocost 含可靠性冷启动，`--pc-probes` 仅
     /// bench 探针暴露）。
     branch_rule: Option<BranchRule>,
+    /// 节点规则与局部割独立指定，不隐式关闭局部割。
+    node_rule: NodeRule,
+    local_cuts: bool,
     /// 数值缩放（`--scaling=on|off`，R4）；默认 on（行列迭代几何均值，
     /// 2 的幂系数；目标与解还原原尺度，输出契约不变）。
     scaling: bool,
@@ -128,6 +136,8 @@ struct Config {
     ///（S12）+ incumbent 严格改进时的树内再应用（S13-A）。off ⇒ 两级全关
     ///（S12 之前的旧行为）。
     root_rc_fixing: bool,
+    /// 二元静态行传播；自动模式按外层请求线程数选择。
+    binary_row_propagation: BinaryPropagationMode,
 }
 
 fn main() -> ExitCode {
@@ -191,13 +201,17 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut log_secs: Option<f64> = None;
     let mut mipgap_percent: Option<f64> = None;
     let mut heuristic_mode: Option<HeuristicModeCli> = None;
+    let mut early_stop: Option<bool> = None;
     let mut branch_rule: Option<BranchRule> = None;
+    let mut node_rule = None;
+    let mut local_cuts = None;
     let mut scaling: Option<bool> = None;
     let mut mitm: Option<bool> = None;
     let mut work_stack: Option<WorkStackCli> = None;
     let mut determinism: Option<Determinism> = None;
     let mut lp_engine: Option<milp::simplex_sparse::LpEngineKind> = None;
     let mut root_rc_fixing: Option<bool> = None;
+    let mut binary_row_propagation: Option<BinaryPropagationMode> = None;
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -317,6 +331,45 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
             };
             heuristic_mode = Some(mode);
             index += 1; // 额外消费模式 token
+        } else if arg == "--early-stop" || arg.starts_with("--early-stop=") {
+            if early_stop.is_some() {
+                return Err(format!("`--early-stop` 重复出现（{USAGE}）"));
+            }
+            let value = if let Some(value) = arg.strip_prefix("--early-stop=") {
+                value
+            } else {
+                index += 1;
+                args.get(index)
+                    .ok_or_else(|| format!("`--early-stop` 缺少参数 on|off（{USAGE}）"))?
+                    .as_str()
+            };
+            early_stop = Some(match value {
+                "on" => true,
+                "off" => false,
+                _ => return Err(format!("未知 --early-stop 值 `{value}`（期望 on|off，{USAGE}）")),
+            });
+        } else if arg == "--node-rule" || arg.starts_with("--node-rule=") {
+            if node_rule.is_some() { return Err(format!("`--node-rule` 重复出现（{USAGE}）")); }
+            let value = if let Some(v) = arg.strip_prefix("--node-rule=") { v } else {
+                index += 1;
+                args.get(index).ok_or_else(|| format!("`--node-rule` 缺少参数 dfs|hybrid（{USAGE}）"))?.as_str()
+            };
+            node_rule = Some(match value {
+                "dfs" => NodeRule::DepthFirst,
+                "hybrid" => NodeRule::HybridBestBound,
+                _ => return Err(format!("未知 --node-rule 值 `{value}`（期望 dfs|hybrid，{USAGE}）")),
+            });
+        } else if arg == "--local-cuts" || arg.starts_with("--local-cuts=") {
+            if local_cuts.is_some() { return Err(format!("`--local-cuts` 重复出现（{USAGE}）")); }
+            let value = if let Some(v) = arg.strip_prefix("--local-cuts=") { v } else {
+                index += 1;
+                args.get(index).ok_or_else(|| format!("`--local-cuts` 缺少参数 on|off（{USAGE}）"))?.as_str()
+            };
+            local_cuts = Some(match value {
+                "on" => true,
+                "off" => false,
+                _ => return Err(format!("未知 --local-cuts 值 `{value}`（期望 on|off，{USAGE}）")),
+            });
         } else if arg == "--branch-rule" {
             if branch_rule.is_some() {
                 return Err(format!("`--branch-rule` 重复出现（{USAGE}）"));
@@ -461,6 +514,25 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             };
             lp_engine = Some(v);
+        } else if arg == "--binary-propagation" || arg.starts_with("--binary-propagation=") {
+            if binary_row_propagation.is_some() {
+                return Err(format!("`--binary-propagation` 重复出现（{USAGE}）"));
+            }
+            let value: String = if let Some(v) = arg.strip_prefix("--binary-propagation=") {
+                v.to_string()
+            } else {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!("`--binary-propagation` 缺少参数 auto|on|off（{USAGE}）"));
+                };
+                value.to_string()
+            };
+            binary_row_propagation = Some(match value.as_str() {
+                "auto" => BinaryPropagationMode::Auto,
+                "on" => BinaryPropagationMode::On,
+                "off" => BinaryPropagationMode::Off,
+                other => return Err(format!("未知 --binary-propagation 值 `{other}`（期望 auto|on|off，{USAGE}）")),
+            });
         } else if arg == "--root-rc-fixing" || arg.starts_with("--root-rc-fixing=") {
             if root_rc_fixing.is_some() {
                 return Err(format!("`--root-rc-fixing` 重复出现（{USAGE}）"));
@@ -503,6 +575,15 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
     // 但 CLI 用户应看到用法信息而非「内部错误」前缀）。
     let determinism = determinism.unwrap_or(Determinism::Wall);
     let threads = threads.unwrap_or(1);
+    let binary_row_propagation = binary_row_propagation.unwrap_or_default();
+    if binary_row_propagation == BinaryPropagationMode::On && threads != 1 {
+        return Err(format!("`--binary-propagation on` 仅支持 `--threads 1`（{USAGE}）"));
+    }
+    let node_rule = node_rule.unwrap_or(NodeRule::DepthFirst);
+    let local_cuts = local_cuts.unwrap_or(true);
+    if node_rule == NodeRule::HybridBestBound && (local_cuts || threads != 1) {
+        return Err(format!("`--node-rule hybrid` 需要显式 `--local-cuts off` 且 `--threads 1`（{USAGE}）"));
+    }
     // S3 交叉校验：显式 revised 仅 threads=1——解析层就以用法错误拒绝。
     // auto（S4 默认）不在解析层拦：算例规模未知，大算例（≥10^6 格）解析
     // 为 revised × threads≥2 由库层求解入口拒绝（消息含成因与回退方式）。
@@ -530,6 +611,9 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 auto：heuristics=true + 自适应（控制器阈值高于原 7 算例的
         // 节点数 ⇒ 原算例 auto ≡ on，见 README）。
         heuristic_mode: heuristic_mode.unwrap_or(HeuristicModeCli::Auto),
+        early_stop: early_stop.unwrap_or(true),
+        node_rule,
+        local_cuts,
         branch_rule, // None = 类自适应默认（R3）
         scaling: scaling.unwrap_or(true), // 默认 on（R4）
         mitm: mitm.unwrap_or(true),
@@ -545,6 +629,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // S13-C：默认 on（对齐 BbOptions.root_rc_fixing 库默认）；off 关闭
         // 根固定与树内再应用两级。
         root_rc_fixing: root_rc_fixing.unwrap_or(true),
+        binary_row_propagation,
     })
 }
 
@@ -563,7 +648,7 @@ fn solve_options_from(config: &Config) -> SolveOptions {
         bb: BbOptions {
             branch_rule: config.branch_rule.unwrap_or(BranchRule::MostFractional),
             branch_rule_auto: config.branch_rule.is_none(), // None ⇒ 类自适应（R3）
-            node_rule: NodeRule::DepthFirst,
+            node_rule: config.node_rule,
             node_limit: 2_000_000,
             time_limit_ms: config
                 .time_limit_secs
@@ -574,8 +659,10 @@ fn solve_options_from(config: &Config) -> SolveOptions {
             prune_abs: 1e-9,
             prune_rel: 1e-9,
             pc_reliability_probes: 8,
+            reuse_probe_evidence: false,
+            binary_row_propagation: config.binary_row_propagation,
             mitm_windows: if config.mitm { 8 } else { 0 },
-            local_cuts: true, // W6 树内局部割（库默认；CLI 不设旗标）
+            local_cuts: config.local_cuts,
             // W1 按类选栈：auto ⇒ 求解入口按结构类检测解析（未指定态）；
             // 显式 local/global ⇒ auto=false、字段逐字生效（覆盖优先）。
             global_work_stack: config.work_stack == WorkStackCli::Global,
@@ -591,13 +678,17 @@ fn solve_options_from(config: &Config) -> SolveOptions {
 }
 
 /// 由 [`Config`] 构造搜索控制（`--threads` / `--mipgap` / `--log-secs` /
-/// `--heuristic-mode auto` 直通 [`SearchControl`]）。
+/// `--heuristic-mode auto` / `--early-stop` 直通 [`SearchControl`]）。
 ///
 /// adaptive_heuristics 仅在 auto 模式开启（on/off 均为 false）；默认
 /// （threads=1、无 mipgap、无 log、auto）与升级前行为逐字节一致。
 fn search_control_from(config: &Config) -> SearchControl {
     SearchControl {
-        degrade: milp::search_ctrl::DegradePolicy::default(),
+        degrade: if config.early_stop {
+            milp::search_ctrl::DegradePolicy::default()
+        } else {
+            milp::search_ctrl::DegradePolicy::disabled()
+        },
         threads: config.threads,
         mipgap_percent: config.mipgap_percent,
         adaptive_heuristics: config.heuristic_mode == HeuristicModeCli::Auto,
@@ -796,6 +887,8 @@ mod tests {
     /// Config 便捷构造（新字段取默认值；单测内集中补齐，避免每个用例重复）。
     fn config_with(time_limit_secs: Option<u64>) -> Config {
         Config {
+            node_rule: NodeRule::DepthFirst,
+            local_cuts: true,
             instance_path: "a.milp".to_string(),
             time_limit_secs,
             verbose: false,
@@ -803,6 +896,7 @@ mod tests {
             log_secs: None,
             mipgap_percent: None,
             heuristic_mode: HeuristicModeCli::Auto,
+            early_stop: true,
             branch_rule: None,
             scaling: true,
             mitm: true,
@@ -810,12 +904,42 @@ mod tests {
             determinism: Determinism::Wall,
             lp_engine: milp::simplex_sparse::LpEngineKind::Auto,
             root_rc_fixing: true,
+            binary_row_propagation: BinaryPropagationMode::Auto,
         }
     }
 
     // —— parse_args ——
 
     /// 仅算例路径：默认无时间上限、非 verbose。
+    #[test]
+    fn hybrid_cli_requires_explicit_supported_combination() {
+        let defaults = parse_args(&args(&["a.milp"])).unwrap();
+        assert_eq!(defaults.node_rule, NodeRule::DepthFirst);
+        assert!(defaults.local_cuts);
+        for input in [
+            vec!["a.milp", "--node-rule", "hybrid", "--local-cuts", "off"],
+            vec!["a.milp", "--node-rule=hybrid", "--local-cuts=off", "--threads", "1"],
+        ] {
+            let c = parse_args(&args(&input)).unwrap();
+            let options = solve_options_from(&c);
+            assert_eq!(options.bb.node_rule, NodeRule::HybridBestBound);
+            assert!(!options.bb.local_cuts);
+        }
+        for input in [
+            vec!["a.milp", "--node-rule", "hybrid"],
+            vec!["a.milp", "--node-rule=hybrid", "--local-cuts=off", "--threads", "2"],
+            vec!["a.milp", "--node-rule=fast"],
+            vec!["a.milp", "--node-rule"],
+            vec!["a.milp", "--node-rule=dfs", "--node-rule=dfs"],
+            vec!["a.milp", "--local-cuts=maybe"],
+            vec!["a.milp", "--local-cuts"],
+            vec!["a.milp", "--local-cuts=off", "--local-cuts=on"],
+        ] { assert!(parse_args(&args(&input)).is_err(), "非法组合{input:?}"); }
+        let c = parse_args(&args(&["a.milp", "--node-rule=dfs", "--local-cuts=off"])).unwrap();
+        assert_eq!(solve_options_from(&c).bb.node_rule, NodeRule::DepthFirst);
+        assert!(!solve_options_from(&c).bb.local_cuts);
+    }
+
     #[test]
     fn parse_args_path_only() {
         let config = parse_args(&args(&["a.milp"])).unwrap();
@@ -910,6 +1034,64 @@ mod tests {
         assert_eq!(config.log_secs, None, "默认不输出任何进度行");
         assert_eq!(config.mipgap_percent, None, "默认关闭 mipgap");
         assert_eq!(config.heuristic_mode, HeuristicModeCli::Auto);
+        assert!(config.early_stop, "旧默认仍允许策略提前退出");
+        assert_eq!(search_control_from(&config).degrade, milp::search_ctrl::DegradePolicy::default());
+    }
+
+    /// 提前退出与三种启发式模式独立解析；顺序/并行、无预算/极值预算均不互相覆盖。
+    #[test]
+    fn early_stop_cli_is_independent_of_heuristics_and_argument_order() {
+        for mode in ["auto", "on", "off"] {
+            for early in ["on", "off"] {
+                for threads in ["1", "4"] {
+                    for seconds in [None, Some("0"), Some("7"), Some("18446744073709551615")] {
+                        for early_first in [false, true] {
+                            let mut input = vec!["a.milp", "--threads", threads, "--mipgap", "2.5"];
+                            if early_first {
+                                input.extend(["--early-stop", early, "--heuristic-mode", mode]);
+                            } else {
+                                input.extend(["--heuristic-mode", mode, "--early-stop", early]);
+                            }
+                            if let Some(secs) = seconds {
+                                input.extend(["--time-limit-secs", secs]);
+                            }
+                            let config = parse_args(&args(&input)).unwrap();
+                            let ctrl = search_control_from(&config);
+                            let opts = solve_options_from(&config);
+                            assert_eq!(ctrl.degrade.is_enabled(), early == "on");
+                            assert_eq!(ctrl.adaptive_heuristics, mode == "auto");
+                            assert_eq!(opts.bb.heuristics, mode != "off");
+                            assert_eq!(ctrl.threads, threads.parse::<usize>().unwrap());
+                            assert_eq!(ctrl.mipgap_percent, Some(2.5));
+                            assert_eq!(opts.bb.time_limit_ms, seconds.map_or(0, |s| s.parse::<u64>().unwrap().saturating_mul(1000)));
+                            assert_eq!(opts.bb.node_limit, 2_000_000);
+                        }
+                    }
+                }
+            }
+        }
+        let config = parse_args(&args(&["--early-stop=off", "a.milp", "--determinism", "budget"])).unwrap();
+        let ctrl = search_control_from(&config);
+        assert!(!ctrl.degrade.is_enabled());
+        assert!(ctrl.adaptive_heuristics);
+        assert_eq!(ctrl.determinism, Determinism::Budget);
+    }
+
+    /// 缺参、非法值、两种语法混用重复都报错，不静默取最后一个选项。
+    #[test]
+    fn early_stop_cli_rejects_invalid_or_duplicate_values() {
+        let bad: &[&[&str]] = &[
+            &["a.milp", "--early-stop"],
+            &["a.milp", "--early-stop="],
+            &["a.milp", "--early-stop", "auto"],
+            &["a.milp", "--early-stop", "OFF"],
+            &["a.milp", "--early-stop", "--verbose"],
+            &["a.milp", "--early-stop", "off", "--early-stop=on"],
+            &["a.milp", "--early-stop=off", "--early-stop", "off"],
+        ];
+        for input in bad {
+            assert!(parse_args(&args(input)).is_err(), "应拒绝 {input:?}");
+        }
     }
 
     // —— 新 flag 解析：合法全表 ——
@@ -1585,4 +1767,24 @@ mod tests {
         assert_eq!(problem.num_vars(), 12);
         assert_eq!(problem.constraints.len(), 1);
     }
+    #[test]
+    fn binary_propagation_parsing_mapping_and_parallel_validation() {
+        assert_eq!(parse_args(&args(&["a.milp"])).unwrap().binary_row_propagation, BinaryPropagationMode::Auto);
+        for (token, mode) in [("auto", BinaryPropagationMode::Auto), ("on", BinaryPropagationMode::On), ("off", BinaryPropagationMode::Off)] {
+            for argv in [args(&["a.milp", "--binary-propagation", token]), args(&["a.milp", &format!("--binary-propagation={token}")])] {
+                let config = parse_args(&argv).unwrap();
+                assert_eq!(config.binary_row_propagation, mode);
+                assert_eq!(solve_options_from(&config).bb.binary_row_propagation, mode);
+            }
+        }
+        for argv in [args(&["a.milp", "--binary-propagation"]), args(&["a.milp", "--binary-propagation=bad"]),
+            args(&["a.milp", "--binary-propagation", "on", "--binary-propagation=off"]),
+            args(&["a.milp", "--binary-propagation", "on", "--threads", "2"])] {
+            assert!(parse_args(&argv).is_err());
+        }
+        for token in ["auto", "off"] {
+            assert!(parse_args(&args(&["a.milp", "--binary-propagation", token, "--threads", "2"])).is_ok());
+        }
+    }
+
 }

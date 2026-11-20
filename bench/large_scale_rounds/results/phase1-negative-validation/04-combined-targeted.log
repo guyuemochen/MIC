@@ -1,0 +1,41 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-phase1-negative-guard/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.03s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-46184e3039b6af12)
+
+running 15 tests
+test simplex::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex::tests::phase1_negative_tests::rejected_entry_clone_and_new_bounds_recover ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+test simplex::tests::phase1_negative_tests::existing_deadline_and_iteration_limit_precede_negative_entry ... ok
+test simplex::tests::phase1_negative_tests::artificial_tolerance_boundaries_and_cleanup_precondition ... ok
+test simplex_sparse::tests::phase1_negative_tests::existing_deadline_and_iteration_limit_precede_negative_entry ... ok
+test simplex::tests::phase1_negative_tests::work_limit_precedes_entry_and_charges_only_executed_step ... ok
+test simplex::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_negative_tests::artificial_tolerance_boundaries_and_cleanup_precondition ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_cleaned_into_optimal ... ok
+test simplex_sparse::tests::phase1_negative_tests::rejected_entry_clone_and_new_bounds_recover ... ok
+test simplex_sparse::tests::phase1_negative_tests::old_eta_negative_entry_recovers_but_real_violation_fails_fresh ... ok
+test simplex_sparse::tests::phase1_negative_tests::work_limit_precedes_entry_and_charges_only_executed_step ... ok
+test simplex_sparse::tests::phase1_negative_tests::swapped_rows_still_prove_infeasible ... ok
+test simplex_sparse::tests::phase1_negative_tests::natural_negative_artificial_is_not_erased_by_next_zero_pivot ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 468 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-cc2b0eedfa76d024)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-5c8f8443f9e5fe71)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-f78995419e6bb99e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

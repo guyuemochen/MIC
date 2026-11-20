@@ -1,0 +1,776 @@
+diff --git a/milp/src/simplex.rs b/milp/src/simplex.rs
+index 276ca46..d149863 100644
+--- a/milp/src/simplex.rs
++++ b/milp/src/simplex.rs
+@@ -2134,6 +2134,7 @@ impl Simplex {
+         let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
+         let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
+         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
++        let mut check_initial_values = true;
+         loop {
+             if let Some(st) = work.stop_status(self.time_deadline) {
+                 return if st == LpStatus::TimeLimit {
+@@ -2158,6 +2159,15 @@ impl Simplex {
+                     }
+                 }
+             }
++            // 初始残差也可能由有限输入溢出。必须在首次定价前拒绝，不能
++            // 等零步主元/人工清理覆盖坏值，或让零主元最优出口绕过检查。
++            // 后续每步仍走原有限性检查；此处不改变既有上限/期限优先级。
++            if check_initial_values {
++                check_initial_values = false;
++                if self.rhs.iter().any(|v| !v.is_finite()) {
++                    return PhaseOutcome::Failed("阶段入口基变量值出现 NaN/Inf".to_string());
++                }
++            }
+             // 初始 false 仅在 Flip/Leave 两臂都被覆盖（其余臂直接 return），
+             // 尾部释放检查读取的是本步结果——初始值语法上必需但语义上不达。
+             #[allow(unused_assignments)]
+@@ -2344,7 +2354,15 @@ impl Simplex {
+                     return LpStatus::IterationLimit;
+                 }
+                 PhaseOutcome::Optimal => {
+-                    if self.phase1_infeasibility() > self.tol.feasibility {
++                    let infeasibility = match self.phase1_infeasibility() {
++                        Ok(value) => value,
++                        Err(msg) => {
++                            self.numerical_error = Some(msg);
++                            self.phase1_pending = true;
++                            return LpStatus::IterationLimit;
++                        }
++                    };
++                    if infeasibility > self.tol.feasibility {
+                         // 人工变量带正值留基且未清理：状态对 Phase-2 无效，
+                         // 但 snap 传播可能把基值推到容差内，必须记账强制
+                         // 下一次 resolve 重跑 Phase-1。
+@@ -2371,16 +2389,25 @@ impl Simplex {
+         }
+     }
+ 
+-    /// Phase-1 最优时的人工变量总量（残基人工变量值之和，负值按 0 计）。
+-    fn phase1_infeasibility(&self) -> f64 {
++    /// Phase-1 最优时的人工正部和，保持原有有限算术顺序和阈值。
++    /// NaN 不能被 max(0) 吞掉；单项或总和非有限时保守报告数值失败，
++    /// 即使某些正部和溢出的模型事实上不可行，也不拿非有限值作证明。
++    fn phase1_infeasibility(&self) -> std::result::Result<f64, String> {
+         let ncs = self.ncols_static();
+         let mut sum = 0.0;
+         for i in 0..self.basis.len() {
+             if self.basis[i] >= ncs {
+-                sum += self.rhs[i].max(0.0);
++                let value = self.rhs[i];
++                if !value.is_finite() {
++                    return Err(format!("Phase-1 行 {i} 人工变量值非有限"));
++                }
++                sum += value.max(0.0);
++                if !sum.is_finite() {
++                    return Err("Phase-1 人工变量正部和溢出".to_string());
++                }
+             }
+         }
+-        sum
++        Ok(sum)
+     }
+ 
+     /// Phase-1 后处理：残基人工变量值清零并尽力驱赶出基（在非人工非基列上
+@@ -2871,6 +2898,289 @@ mod tests {
+     use crate::error::MilpError;
+     use crate::model::{Constraint, LinearExpr, VarType, Variable};
+ 
++    mod phase1_finite_tests {
++        use super::*;
++
++        const BIG: f64 = 1e308;
++
++        fn overflow_problem(sense: Sense, case: usize) -> Problem {
++            if case == 0 {
++                // 全部输入有限，精确约束成立；下界按列序累加时先溢出再相消。
++                prob(sense, (0..4).map(|j| var(&format!("x{j}"), BIG, BIG)).collect(),
++                    vec![], vec![(vec![(0, 1.0), (1, 1.0), (2, -1.0), (3, -1.0)], RelOp::Eq, 0.0)])
++            } else {
++                // 两个固定量的原尺度左端为BIG，小于右端；归一化后的右端
++                // 与下界和均溢出，残差为NaN。case=2还允许零步主元覆盖它。
++                let mut vars = vec![var("x0", BIG, BIG), var("x1", BIG, BIG)];
++                let mut terms = vec![(0, 0.5), (1, 0.5)];
++                if case == 2 {
++                    vars.push(var("y", 0.0, 1.0));
++                    terms.push((2, -0.5));
++                }
++                prob(sense, vars, vec![], vec![(terms, RelOp::Eq, 1.5e308)])
++            }
++        }
++
++        fn check_finite_input_case(case: usize) {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    let p = overflow_problem(sense, case);
++                    p.validate().unwrap();
++                    assert!(p.vars.iter().all(|v| v.lb.is_finite() && v.ub.is_finite()));
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                    s.set_iter_limit_hint(Some(1234));
++                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
++                    s.set_time_deadline(Some(deadline));
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit,
++                        "有限输入载体 {case} / {sense:?} / 首次resolve={first_resolve}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending, "失败不能清除人工变量欠账");
++                    assert_eq!(s.iterations(), 0, "坏值必须在任何主元或清理之前被拒绝");
++                    assert!(s.numerical_error.is_some());
++                    assert_eq!(s.iter_limit_hint, Some(1234));
++                    assert_eq!(s.time_deadline(), Some(deadline));
++                }
++            }
++        }
++
++        #[test]
++        fn finite_input_cancellation_overflow_is_not_infeasible() {
++            check_finite_input_case(0);
++        }
++
++        #[test]
++        fn finite_input_nan_residual_is_not_cleaned_into_optimal() {
++            check_finite_input_case(1);
++        }
++
++        #[test]
++        fn finite_input_nan_residual_is_not_erased_by_zero_pivot() {
++            check_finite_input_case(2);
++        }
++
++        fn fixed_zero_artificial(sense: Sense) -> Problem {
++            prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                vec![(vec![(0, 1.0)], RelOp::Eq, 0.0)])
++        }
++
++        #[test]
++        fn first_pricing_rejects_injected_artificial_before_no_action_exit() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                    let p = fixed_zero_artificial(sense);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(matches!(s.price(1), Pricing::Optimal), "固定列使首次定价无动作");
++                    // 故障注入：只改基本值，矩阵与因子仍是健康的初始基。
++                    s.rhs[0] = value;
++                    s.has_run = true;
++                    s.start_call();
++                    let basis = s.basis.clone();
++                    let status = s.run_two_phase(true);
++                    let result = s.build_solution(status);
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{value:?}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert_eq!(s.basis, basis, "不能先清理人工列再发现坏值");
++                    assert_eq!(s.rhs[0].to_bits(), value.to_bits());
++                    assert_eq!(s.iterations(), 0);
++                    assert!(s.phase1_pending);
++                    assert!(s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值"));
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&bounds);
++                        assert_eq!(recovered.status, LpStatus::Optimal);
++                        assert_eq!(recovered.objective, 0.0);
++                        assert!(!candidate.phase1_pending);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn phase_one_sum_rejects_each_nonfinite_artificial() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                s.rhs[0] = value;
++                let error = s.phase1_infeasibility().unwrap_err();
++                assert!(error.contains("人工变量值非有限"), "{value:?}: {error}");
++            }
++        }
++
++        #[test]
++        fn finite_artificial_sum_overflow_is_conservative_and_recovers() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    // 这个模型确实不可行；改为数值限额是有意保守，不能宣称
++                    // 原Infeasible一定数学错误。每项有限，但两项相加溢出。
++                    let p = prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, BIG),
++                             (vec![(0, 1.0)], RelOp::Eq, BIG)]);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(s.rhs.iter().all(|v| v.is_finite()));
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending);
++                    assert_eq!(s.iterations(), 0);
++                    assert!(s.rhs.iter().all(|v| v.is_finite()));
++                    assert!(s.numerical_error.as_deref().unwrap().contains("正部和溢出"));
++                    let valid = Bounds { lb: vec![BIG], ub: vec![BIG] };
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&valid);
++                        assert_eq!(recovered.status, LpStatus::Optimal);
++                        assert_eq!(recovered.objective, 0.0);
++                        assert_eq!(recovered.x, vec![BIG]);
++                        assert!(!candidate.phase1_pending);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn nonartificial_bad_basic_cannot_bypass_first_pricing() {
++            for phase_one in [false, true] {
++                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                    let mut rows = vec![(vec![(0, 1.0)], RelOp::Le, 1.0)];
++                    if phase_one {
++                        rows.push((vec![(0, 1.0)], RelOp::Eq, 0.0));
++                    }
++                    let p = prob(Sense::Minimize, vec![var("x", 0.0, 0.0)], vec![], rows);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(s.basis[0] < s.ncols_static(), "注入的是普通松弛基本值");
++                    s.rhs[0] = value;
++                    s.has_run = true;
++                    s.start_call();
++                    let status = s.run_two_phase(phase_one);
++                    let result = s.build_solution(status);
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{value:?}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert_eq!(s.iterations(), 0);
++                    assert_eq!(s.phase1_pending, phase_one);
++                    assert!(s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值"));
++                    assert_eq!(s.resolve(&bounds).status, LpStatus::Optimal);
++                }
++            }
++        }
++
++        #[test]
++        fn overflow_failure_new_bounds_and_snapshot_can_recover() {
++            for first_resolve in [false, true] {
++                let p = overflow_problem(Sense::Minimize, 0);
++                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                let invalid = Bounds::from_problem(&p);
++                let result = if first_resolve { s.resolve(&invalid) } else { s.solve(&invalid) };
++                assert_eq!(result.status, LpStatus::IterationLimit);
++                let mut snapshot = s.clone();
++                let valid = Bounds { lb: vec![0.0; 4], ub: vec![0.0; 4] };
++                for candidate in [&mut s, &mut snapshot] {
++                    let recovered = candidate.resolve(&valid);
++                    assert_eq!(recovered.status, LpStatus::Optimal, "{recovered:?}");
++                    assert_eq!(recovered.objective, 0.0);
++                    assert_eq!(recovered.x, vec![0.0; 4]);
++                    assert!(!candidate.phase1_pending);
++                }
++            }
++        }
++
++        #[test]
++        fn finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                let feasible = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, 1.0)],
++                    vec![(vec![(0, 1.0)], RelOp::Eq, 1.0)]);
++                let result = Simplex::new(&feasible, Tolerances::default()).unwrap()
++                    .solve(&Bounds::from_problem(&feasible));
++                assert_eq!(result.status, LpStatus::Optimal);
++                assert_eq!(result.objective, 1.0);
++                for rhs in [1.0, 6e-10] {
++                    // 第二种每个人工值都小于容差，但总和超限，仍须不可行。
++                    let infeasible = prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, rhs),
++                             (vec![(0, 1.0)], RelOp::Eq, rhs)]);
++                    let result = Simplex::new(&infeasible, Tolerances::default()).unwrap()
++                        .solve(&Bounds::from_problem(&infeasible));
++                    assert_eq!(result.status, LpStatus::Infeasible);
++                }
++                let cost = if sense == Sense::Minimize { -1.0 } else { 1.0 };
++                let unbounded = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
++                    vec![(vec![(0, -1.0)], RelOp::Le, 0.0)]);
++                let result = Simplex::new(&unbounded, Tolerances::default()).unwrap()
++                    .solve(&Bounds::from_problem(&unbounded));
++                assert_eq!(result.status, LpStatus::Unbounded);
++            }
++        }
++
++        #[test]
++        fn existing_deadline_and_iteration_hint_keep_priority() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++            s.rhs[0] = f64::NAN;
++            let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
++            s.set_iter_limit_hint(Some(1234));
++            s.set_time_deadline(Some(past));
++            s.start_call();
++            assert_eq!(s.run_two_phase(true), LpStatus::TimeLimit);
++            assert_eq!(s.time_deadline(), Some(past));
++            assert_eq!(s.iter_limit_hint, Some(1234));
++            assert!(s.phase1_pending);
++            assert_eq!(s.iterations(), 0);
++            s.set_time_deadline(None);
++            s.start_call();
++            s.iter_call = 1234;
++            assert_eq!(s.run_two_phase(true), LpStatus::IterationLimit);
++            assert!(s.numerical_error.is_none(), "原有迭代上限先于新数值入口检查");
++        }
++
++
++        #[cfg(feature = "root_heuristic_work_limit")]
++        #[test]
++        fn zero_work_limit_precedes_nonfinite_entry() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++            s.rhs[0] = f64::NAN;
++            s.start_call();
++            let basis = s.basis.clone();
++            let matrix = s.matrix.clone();
++            let binv = s.binv.clone();
++            let mut remaining = 0;
++            let result = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut remaining));
++            assert_eq!(result, LpStatus::IterationLimit);
++            assert_eq!(remaining, 0);
++            assert_eq!(s.iterations(), 0);
++            assert!(s.numerical_error.is_none(), "工作上限必须先于数值入口检查");
++            assert!(s.phase1_pending && s.rhs[0].is_nan());
++            assert_eq!(s.basis, basis);
++            assert_eq!(s.matrix, matrix);
++            assert_eq!(s.binv, binv);
++        }
++
++        #[cfg(feature = "root_heuristic_work_limit")]
++        #[test]
++        fn rejected_basic_and_artificial_sum_do_not_charge_work_steps() {
++            for sum_overflow in [false, true] {
++                let p = if sum_overflow {
++                    prob(Sense::Minimize, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, BIG),
++                             (vec![(0, 1.0)], RelOp::Eq, BIG)])
++                } else { fixed_zero_artificial(Sense::Minimize) };
++                let mut s = Simplex::new(&p, Tolerances::default()).unwrap();
++                if !sum_overflow { s.rhs[0] = f64::NAN; }
++                s.start_call();
++                let mut remaining = 3;
++                let result = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut remaining));
++                assert_eq!(result, LpStatus::IterationLimit);
++                assert_eq!(remaining, 3, "没有执行主元/翻转，不扣工作步");
++                assert_eq!(s.iterations(), 0);
++                assert!(s.phase1_pending);
++            }
++        }
++    }
++
+     #[cfg(feature = "root_heuristic_work_limit")]
+     mod work_limit_tests {
+         use super::*;
+diff --git a/milp/src/simplex_sparse.rs b/milp/src/simplex_sparse.rs
+index 4d6f1ac..fc188cc 100644
+--- a/milp/src/simplex_sparse.rs
++++ b/milp/src/simplex_sparse.rs
+@@ -13,6 +13,8 @@
+ //!   更强且同安全）；Phase-1 后残基人工变量值清零并尽力驱赶出基（t=0 主元，
+ //!   最小下标非人工候选），整行无候选的人工变量留基值恒 0；清理中的数值
+ //!   失败保留 Phase-1 欠账并报告 IterationLimit，不得继续 Phase-2；
++//!   首次定价前基本值、Phase-1 人工单值及正部和均须有限，非有限不能
++//!   当作不可行证明，也不能先经零步主元或清理覆盖；
+ //! - **同一比值测试语义**（F7 全部点名项）：基变量上下界阻挡 + 入基变量
+ //!   自身界翻转；主元 |p| ≥ tol.pivot 才允许出基，方向阻挡但主元过小 ⇒
+ //!   FilteredBlock（数值失败）；方向非有限同样先报数值失败，不得跳过；
+@@ -4035,7 +4037,15 @@ impl SparseSimplex {
+                     unreachable!("run_phase 不向上层传播 Retry");
+                 }
+                 PhaseOutcome::Optimal => {
+-                    if self.phase1_infeasibility() > self.tol.feasibility {
++                    let infeasibility = match self.phase1_infeasibility() {
++                        Ok(value) => value,
++                        Err(msg) => {
++                            self.numerical_error = Some(msg);
++                            self.phase1_pending = true;
++                            return LpStatus::IterationLimit;
++                        }
++                    };
++                    if infeasibility > self.tol.feasibility {
+                         // 人工变量带正值留基未清理：状态不可供后续 resolve
+                         // 直接跑 Phase-2，记账强制下一次 resolve 重跑。
+                         self.phase1_pending = true;
+@@ -4084,6 +4094,7 @@ impl SparseSimplex {
+         let base_limit = 10_000.max(20u64.saturating_mul((m + n) as u64));
+         let limit: u64 = self.iter_limit_hint.map_or(base_limit, |h| h.max(1_000));
+         let bland_total: u64 = BLAND_TOTAL_FACTOR.saturating_mul((m + n) as u64);
++        let mut check_initial_values = true;
+         loop {
+             if let Some(st) = work.stop_status(self.time_deadline) {
+                 return if st == LpStatus::TimeLimit {
+@@ -4104,6 +4115,19 @@ impl SparseSimplex {
+                     }
+                 }
+             }
++            // 重构已有有限性守卫；这里仍与稠密入口对齐，防止零主元最优
++            // 或零步换基覆盖非有限基本值。旧基沿既有通道至多重构一次，
++            // 不更改原期限/上限顺序，也不取消每步后的有限性检查。
++            if check_initial_values {
++                check_initial_values = false;
++                if self.x_b.iter().any(|v| !v.is_finite()) {
++                    let msg = "阶段入口基变量值出现 NaN/Inf".to_string();
++                    if let out @ (PhaseOutcome::Failed(_) | PhaseOutcome::LimitReached | PhaseOutcome::TimedOut) = self.numerical_retry_or_fail(msg, work) {
++                        return out;
++                    }
++                    continue;
++                }
++            }
+             #[allow(unused_assignments)]
+             let mut t_nondegenerate = false;
+             let (q, delta) = match self.price(phase) {
+@@ -4302,16 +4326,25 @@ impl SparseSimplex {
+         }
+     }
+ 
+-    /// Phase-1 最优时的人工变量总量（残基人工变量值之和，负值按 0 计）。
+-    fn phase1_infeasibility(&self) -> f64 {
++    /// Phase-1 最优时的人工正部和，保持原有有限算术顺序和阈值。
++    /// NaN 不能被 max(0) 吞掉；单项或总和非有限时保守报告数值失败，
++    /// 即使某些正部和溢出的模型事实上不可行，也不拿非有限值作证明。
++    fn phase1_infeasibility(&self) -> std::result::Result<f64, String> {
+         let ncs = self.ncols_static();
+         let mut sum = 0.0;
+         for i in 0..self.basis.len() {
+             if self.basis[i] >= ncs {
+-                sum += self.x_b[i].max(0.0);
++                let value = self.x_b[i];
++                if !value.is_finite() {
++                    return Err(format!("Phase-1 行 {i} 人工变量值非有限"));
++                }
++                sum += value.max(0.0);
++                if !sum.is_finite() {
++                    return Err("Phase-1 人工变量正部和溢出".to_string());
++                }
+             }
+         }
+-        sum
++        Ok(sum)
+     }
+ 
+     /// Phase-1 后处理（与 simplex.rs 同款）：残基人工变量值清零并尽力以
+@@ -4568,6 +4601,322 @@ mod tests {
+     use crate::simplex::Simplex as DenseSimplex;
+     use std::path::PathBuf;
+ 
++    mod phase1_finite_tests {
++        use super::*;
++
++        const BIG: f64 = 1e308;
++
++        fn overflow_problem(sense: Sense, case: usize) -> Problem {
++            if case == 0 {
++                // 全部输入有限，精确约束成立；下界按列序累加时先溢出再相消。
++                prob(sense, (0..4).map(|j| var(&format!("x{j}"), BIG, BIG)).collect(),
++                    vec![], vec![(vec![(0, 1.0), (1, 1.0), (2, -1.0), (3, -1.0)], RelOp::Eq, 0.0)])
++            } else {
++                // 两个固定量的原尺度左端为BIG，小于右端；归一化后的右端
++                // 与下界和均溢出，残差为NaN。case=2还允许零步主元覆盖它。
++                let mut vars = vec![var("x0", BIG, BIG), var("x1", BIG, BIG)];
++                let mut terms = vec![(0, 0.5), (1, 0.5)];
++                if case == 2 {
++                    vars.push(var("y", 0.0, 1.0));
++                    terms.push((2, -0.5));
++                }
++                prob(sense, vars, vec![], vec![(terms, RelOp::Eq, 1.5e308)])
++            }
++        }
++
++        fn check_finite_input_case(case: usize) {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    let p = overflow_problem(sense, case);
++                    p.validate().unwrap();
++                    assert!(p.vars.iter().all(|v| v.lb.is_finite() && v.ub.is_finite()));
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                    s.set_iter_limit_hint(Some(1234));
++                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
++                    s.set_time_deadline(Some(deadline));
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit,
++                        "有限输入载体 {case} / {sense:?} / 首次resolve={first_resolve}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending, "失败不能清除人工变量欠账");
++                    assert_eq!(s.iterations(), 0, "坏值必须在任何主元或清理之前被拒绝");
++                    assert!(s.numerical_error.is_some());
++                    assert!(s.factorization_broken, "初始重算失败必须保留broken，不能进入定价");
++                    assert_eq!(s.iter_limit_hint, Some(1234));
++                    assert_eq!(s.time_deadline(), Some(deadline));
++                }
++            }
++        }
++
++        #[test]
++        fn finite_input_cancellation_overflow_is_not_infeasible() {
++            check_finite_input_case(0);
++        }
++
++        #[test]
++        fn finite_input_nan_residual_is_not_cleaned_into_optimal() {
++            check_finite_input_case(1);
++        }
++
++        #[test]
++        fn finite_input_nan_residual_is_not_erased_by_zero_pivot() {
++            check_finite_input_case(2);
++        }
++
++        fn fixed_zero_artificial(sense: Sense) -> Problem {
++            prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                vec![(vec![(0, 1.0)], RelOp::Eq, 0.0)])
++        }
++
++        #[test]
++        fn first_pricing_rejects_injected_artificial_before_no_action_exit() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                    let p = fixed_zero_artificial(sense);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(matches!(s.price(1), Pricing::Optimal), "固定列使首次定价无动作");
++                    // 故障注入：只改基本值，矩阵与因子仍是健康的初始基。
++                    s.x_b[0] = value;
++                    s.has_run = true;
++                    s.start_call();
++                    let basis = s.basis.clone();
++                    let status = s.run_two_phase(true);
++                    let result = s.build_solution(status);
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{value:?}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert_eq!(s.basis, basis, "不能先清理人工列再发现坏值");
++                    assert_eq!(s.x_b[0].to_bits(), value.to_bits());
++                    assert_eq!(s.iterations(), 0);
++                    assert!(s.phase1_pending);
++                    assert!(s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值"));
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&bounds);
++                        assert_eq!(recovered.status, LpStatus::Optimal);
++                        assert_eq!(recovered.objective, 0.0);
++                        assert!(!candidate.phase1_pending);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn phase_one_sum_rejects_each_nonfinite_artificial() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                s.x_b[0] = value;
++                let error = s.phase1_infeasibility().unwrap_err();
++                assert!(error.contains("人工变量值非有限"), "{value:?}: {error}");
++            }
++        }
++
++        #[test]
++        fn finite_artificial_sum_overflow_is_conservative_and_recovers() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                for first_resolve in [false, true] {
++                    // 这个模型确实不可行；改为数值限额是有意保守，不能宣称
++                    // 原Infeasible一定数学错误。每项有限，但两项相加溢出。
++                    let p = prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, BIG),
++                             (vec![(0, 1.0)], RelOp::Eq, BIG)]);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(s.x_b.iter().all(|v| v.is_finite()));
++                    let result = if first_resolve { s.resolve(&bounds) } else { s.solve(&bounds) };
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{result:?}");
++                    assert!(result.objective.is_nan());
++                    assert!(s.phase1_pending);
++                    assert_eq!(s.iterations(), 0);
++                    assert!(s.x_b.iter().all(|v| v.is_finite()));
++                    assert!(s.numerical_error.as_deref().unwrap().contains("正部和溢出"));
++                    assert!(!s.factorization_broken, "目标聚合失败不等于LU损坏");
++                    let valid = Bounds { lb: vec![BIG], ub: vec![BIG] };
++                    let mut snapshot = s.clone();
++                    for candidate in [&mut s, &mut snapshot] {
++                        let recovered = candidate.resolve(&valid);
++                        assert_eq!(recovered.status, LpStatus::Optimal);
++                        assert_eq!(recovered.objective, 0.0);
++                        assert_eq!(recovered.x, vec![BIG]);
++                        assert!(!candidate.phase1_pending);
++                    }
++                }
++            }
++        }
++
++        #[test]
++        fn nonartificial_bad_basic_cannot_bypass_first_pricing() {
++            for phase_one in [false, true] {
++                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                    let mut rows = vec![(vec![(0, 1.0)], RelOp::Le, 1.0)];
++                    if phase_one {
++                        rows.push((vec![(0, 1.0)], RelOp::Eq, 0.0));
++                    }
++                    let p = prob(Sense::Minimize, vec![var("x", 0.0, 0.0)], vec![], rows);
++                    let bounds = Bounds::from_problem(&p);
++                    let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                    assert!(s.basis[0] < s.ncols_static(), "注入的是普通松弛基本值");
++                    s.x_b[0] = value;
++                    s.has_run = true;
++                    s.start_call();
++                    let status = s.run_two_phase(phase_one);
++                    let result = s.build_solution(status);
++                    assert_eq!(result.status, LpStatus::IterationLimit, "{value:?}: {result:?}");
++                    assert!(result.objective.is_nan());
++                    assert_eq!(s.iterations(), 0);
++                    assert_eq!(s.phase1_pending, phase_one);
++                    assert!(s.numerical_error.as_deref().unwrap().contains("阶段入口基变量值"));
++                    assert_eq!(s.resolve(&bounds).status, LpStatus::Optimal);
++                }
++            }
++        }
++
++        #[test]
++        fn overflow_failure_new_bounds_and_snapshot_can_recover() {
++            for first_resolve in [false, true] {
++                let p = overflow_problem(Sense::Minimize, 0);
++                let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                let invalid = Bounds::from_problem(&p);
++                let result = if first_resolve { s.resolve(&invalid) } else { s.solve(&invalid) };
++                assert_eq!(result.status, LpStatus::IterationLimit);
++                assert!(s.factorization_broken);
++                let mut snapshot = s.clone();
++                let valid = Bounds { lb: vec![0.0; 4], ub: vec![0.0; 4] };
++                for candidate in [&mut s, &mut snapshot] {
++                    let recovered = candidate.resolve(&valid);
++                    assert_eq!(recovered.status, LpStatus::Optimal, "{recovered:?}");
++                    assert_eq!(recovered.objective, 0.0);
++                    assert_eq!(recovered.x, vec![0.0; 4]);
++                    assert!(!candidate.factorization_broken);
++                    assert!(!candidate.phase1_pending);
++                }
++            }
++        }
++
++        #[test]
++        fn finite_feasibility_infeasibility_and_infinite_upper_bound_are_preserved() {
++            for sense in [Sense::Minimize, Sense::Maximize] {
++                let feasible = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, 1.0)],
++                    vec![(vec![(0, 1.0)], RelOp::Eq, 1.0)]);
++                let result = SparseSimplex::new(&feasible, Tolerances::default()).unwrap()
++                    .solve(&Bounds::from_problem(&feasible));
++                assert_eq!(result.status, LpStatus::Optimal);
++                assert_eq!(result.objective, 1.0);
++                for rhs in [1.0, 6e-10] {
++                    // 第二种每个人工值都小于容差，但总和超限，仍须不可行。
++                    let infeasible = prob(sense, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, rhs),
++                             (vec![(0, 1.0)], RelOp::Eq, rhs)]);
++                    let result = SparseSimplex::new(&infeasible, Tolerances::default()).unwrap()
++                        .solve(&Bounds::from_problem(&infeasible));
++                    assert_eq!(result.status, LpStatus::Infeasible);
++                }
++                let cost = if sense == Sense::Minimize { -1.0 } else { 1.0 };
++                let unbounded = prob(sense, vec![var("x", 0.0, f64::INFINITY)], vec![(0, cost)],
++                    vec![(vec![(0, -1.0)], RelOp::Le, 0.0)]);
++                let result = SparseSimplex::new(&unbounded, Tolerances::default()).unwrap()
++                    .solve(&Bounds::from_problem(&unbounded));
++                assert_eq!(result.status, LpStatus::Unbounded);
++            }
++        }
++
++
++        #[test]
++        fn old_eta_bad_basic_keeps_one_fresh_recovery() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            let bounds = Bounds::from_problem(&p);
++            let mut reference = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++            let expected = reference.solve(&bounds);
++            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
++                let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                // 单位ETA仅模拟旧基；故障基本值不是声称正常求解自然产生。
++                s.etas.push(Eta { r: 0, pivot: 1.0, nz: Vec::new() });
++                s.just_refactored = false;
++                s.x_b[0] = value;
++                s.start_call();
++                let status = s.run_two_phase(true);
++                let recovered = s.build_solution(status);
++                assert_eq!(recovered.status, LpStatus::Optimal, "{value:?}: {recovered:?}");
++                assert_eq!(recovered.objective, expected.objective);
++                assert_eq!(recovered.x, expected.x);
++                assert_eq!(s.iterations(), reference.iterations(), "重构本身不扣主元迭代");
++                assert!(!s.phase1_pending && !s.factorization_broken);
++                assert!(s.numerical_error.is_none());
++            }
++        }
++
++        #[test]
++        fn existing_deadline_and_iteration_hint_keep_priority() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++            s.x_b[0] = f64::NAN;
++            let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
++            s.set_iter_limit_hint(Some(1234));
++            s.set_time_deadline(Some(past));
++            s.start_call();
++            assert_eq!(s.run_two_phase(true), LpStatus::TimeLimit);
++            assert_eq!(s.time_deadline(), Some(past));
++            assert_eq!(s.iter_limit_hint, Some(1234));
++            assert!(s.phase1_pending);
++            assert_eq!(s.iterations(), 0);
++            s.set_time_deadline(None);
++            s.start_call();
++            s.iter_call = 1234;
++            assert_eq!(s.run_two_phase(true), LpStatus::IterationLimit);
++            assert!(s.numerical_error.is_none(), "原有迭代上限先于新数值入口检查");
++        }
++
++
++        #[cfg(feature = "root_heuristic_work_limit")]
++        #[test]
++        fn zero_work_limit_does_not_refactor_old_eta_bad_basic() {
++            let p = fixed_zero_artificial(Sense::Minimize);
++            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++            // 旧ETA原本允许重构恢复；零工作额度必须在尝试重构之前退出。
++            s.etas.push(Eta { r: 0, pivot: 1.0, nz: Vec::new() });
++            s.just_refactored = false;
++            s.x_b[0] = f64::NAN;
++            s.start_call();
++            let basis = s.basis.clone();
++            let mut remaining = 0;
++            let result = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut remaining));
++            assert_eq!(result, LpStatus::IterationLimit);
++            assert_eq!(remaining, 0);
++            assert_eq!(s.iterations(), 0);
++            assert!(s.numerical_error.is_none(), "未开始数值检查，不应新增错误");
++            assert!(s.phase1_pending && s.x_b[0].is_nan());
++            assert_eq!(s.basis, basis);
++            assert_eq!(s.etas.len(), 1, "重构会清空ETA，不得偷偷执行");
++            assert_eq!(s.etas[0].r, 0);
++            assert_eq!(s.etas[0].pivot, 1.0);
++            assert!(s.etas[0].nz.is_empty());
++            assert!(!s.just_refactored && !s.factorization_broken);
++        }
++
++        #[cfg(feature = "root_heuristic_work_limit")]
++        #[test]
++        fn rejected_basic_and_artificial_sum_do_not_charge_work_steps() {
++            for sum_overflow in [false, true] {
++                let p = if sum_overflow {
++                    prob(Sense::Minimize, vec![var("x", 0.0, 0.0)], vec![],
++                        vec![(vec![(0, 1.0)], RelOp::Eq, BIG),
++                             (vec![(0, 1.0)], RelOp::Eq, BIG)])
++                } else { fixed_zero_artificial(Sense::Minimize) };
++                let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
++                if !sum_overflow { s.x_b[0] = f64::NAN; }
++                s.start_call();
++                let mut remaining = 3;
++                let result = s.run_two_phase_with_limit(true, &mut LpWorkLimit::limited(&mut remaining));
++                assert_eq!(result, LpStatus::IterationLimit);
++                assert_eq!(remaining, 3, "没有执行主元/翻转，不扣工作步");
++                assert_eq!(s.iterations(), 0);
++                assert!(s.phase1_pending);
++            }
++        }
++    }
++
+     #[cfg(feature = "root_heuristic_work_limit")]
+     mod work_limit_tests {
+         use super::*;

@@ -1,0 +1,331 @@
+{
+  "binary_columns": 11025,
+  "fractional": 126,
+  "bins": {
+    "1e-6_to_1e-3": 3,
+    "1e-3_to_0.1": 81,
+    "above_0.1": 42
+  },
+  "max_integrality_deviation": 0.31022903245290134,
+  "largest_fractional": [
+    {
+      "deviation": 0.31022903245290134,
+      "column": "x5051",
+      "value": 0.6897709675470987
+    },
+    {
+      "deviation": 0.1946461781819664,
+      "column": "x221",
+      "value": 0.1946461781819664
+    },
+    {
+      "deviation": 0.1946461781819664,
+      "column": "x313",
+      "value": 0.8053538218180336
+    },
+    {
+      "deviation": 0.18266770629882678,
+      "column": "x5754",
+      "value": 0.8173322937011732
+    },
+    {
+      "deviation": 0.18266770629882678,
+      "column": "x5762",
+      "value": 0.18266770629882678
+    },
+    {
+      "deviation": 0.18266770629882678,
+      "column": "x6859",
+      "value": 0.8173322937011732
+    },
+    {
+      "deviation": 0.18266770629882678,
+      "column": "x6909",
+      "value": 0.18266770629882678
+    },
+    {
+      "deviation": 0.18266770629882678,
+      "column": "x7127",
+      "value": 0.8173322937011732
+    },
+    {
+      "deviation": 0.12888884277343682,
+      "column": "x2279",
+      "value": 0.8711111572265632
+    },
+    {
+      "deviation": 0.12888884277343682,
+      "column": "x2552",
+      "value": 0.8711111572265632
+    },
+    {
+      "deviation": 0.12888884277343682,
+      "column": "x2594",
+      "value": 0.12888884277343682
+    },
+    {
+      "deviation": 0.11776952387491846,
+      "column": "x1399",
+      "value": 0.11776952387491846
+    }
+  ],
+  "groups_per_fraction_count": {
+    "0": 102,
+    "2": 77,
+    "3": 27,
+    "4": 3,
+    "5": 1
+  },
+  "rounded_selected_per_group": {
+    "1": 210
+  },
+  "original_lp_point": {
+    "violating_rows": 0,
+    "by_type": {},
+    "max_bound_violation": 0.0,
+    "worst": []
+  },
+  "rounded_point": {
+    "violating_rows": 28,
+    "by_type": {
+      "time_order": 28
+    },
+    "max_bound_violation": 0.0,
+    "worst": [
+      {
+        "violation": 10960.062377929607,
+        "row": "r1229l",
+        "family": "time_order",
+        "activity": -53301.53118896481,
+        "rhs": -42341.4688110352,
+        "nonzeros": [
+          {
+            "column": "x5754",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11039",
+            "coefficient": -1.0,
+            "value": 25718.531188964807
+          },
+          {
+            "column": "x11069",
+            "coefficient": 1.0,
+            "value": 32417.0
+          }
+        ]
+      },
+      {
+        "violation": 7066.171432495103,
+        "row": "r3612l",
+        "family": "time_order",
+        "activity": -53011.0,
+        "rhs": -45944.8285675049,
+        "nonzeros": [
+          {
+            "column": "x9617",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11047",
+            "coefficient": 1.0,
+            "value": 18023.0
+          },
+          {
+            "column": "x11076",
+            "coefficient": -1.0,
+            "value": 11034.0
+          }
+        ]
+      },
+      {
+        "violation": 6990.799377441399,
+        "row": "r1576l",
+        "family": "time_order",
+        "activity": -55598.0,
+        "rhs": -48607.2006225586,
+        "nonzeros": [
+          {
+            "column": "x6341",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11026",
+            "coefficient": 1.0,
+            "value": 22225.0
+          },
+          {
+            "column": "x11045",
+            "coefficient": -1.0,
+            "value": 17823.0
+          }
+        ]
+      },
+      {
+        "violation": 6934.9712562561035,
+        "row": "r3326l",
+        "family": "time_order",
+        "activity": -54360.0,
+        "rhs": -47425.0287437439,
+        "nonzeros": [
+          {
+            "column": "x9131",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11071",
+            "coefficient": -1.0,
+            "value": 23100.0
+          },
+          {
+            "column": "x11086",
+            "coefficient": 1.0,
+            "value": 28740.0
+          }
+        ]
+      },
+      {
+        "violation": 6785.555343627901,
+        "row": "r4170l",
+        "family": "time_order",
+        "activity": -50110.0,
+        "rhs": -43324.4446563721,
+        "nonzeros": [
+          {
+            "column": "x10495",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11084",
+            "coefficient": -1.0,
+            "value": 12725.0
+          },
+          {
+            "column": "x11085",
+            "coefficient": 1.0,
+            "value": 22615.0
+          }
+        ]
+      },
+      {
+        "violation": 6628.799377441399,
+        "row": "r2890l",
+        "family": "time_order",
+        "activity": -55236.0,
+        "rhs": -48607.2006225586,
+        "nonzeros": [
+          {
+            "column": "x8455",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11040",
+            "coefficient": 1.0,
+            "value": 26793.0
+          },
+          {
+            "column": "x11065",
+            "coefficient": -1.0,
+            "value": 22029.0
+          }
+        ]
+      },
+      {
+        "violation": 6452.971313476599,
+        "row": "r1450l",
+        "family": "time_order",
+        "activity": -53083.0,
+        "rhs": -46630.0286865234,
+        "nonzeros": [
+          {
+            "column": "x6135",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11030",
+            "coefficient": 1.0,
+            "value": 18485.0
+          },
+          {
+            "column": "x11043",
+            "coefficient": -1.0,
+            "value": 11568.0
+          }
+        ]
+      },
+      {
+        "violation": 6445.385284423799,
+        "row": "r4420l",
+        "family": "time_order",
+        "activity": -49410.0,
+        "rhs": -42964.6147155762,
+        "nonzeros": [
+          {
+            "column": "x10905",
+            "coefficient": -60000.0,
+            "value": 1.0
+          },
+          {
+            "column": "x11075",
+            "coefficient": 1.0,
+            "value": 17336.0
+          },
+          {
+            "column": "x11088",
+            "coefficient": -1.0,
+            "value": 6746.0
+          }
+        ]
+      }
+    ]
+  },
+  "retimed_rounded_arcs": {
+    "status": "infeasible_positive_cycle",
+    "total_gap": 8601.398132324197,
+    "total_gap_exact": "1182167157702653/137438953472",
+    "cycle": [
+      {
+        "source": "x11040",
+        "target": "时间原点",
+        "gap": -33993.0,
+        "gap_exact": "-33993",
+        "row": "r4580u"
+      },
+      {
+        "source": "时间原点",
+        "target": "x11036",
+        "gap": 8416.0,
+        "gap_exact": "8416",
+        "row": "r4511l"
+      },
+      {
+        "source": "x11036",
+        "target": "x11066",
+        "gap": 11392.799377441399,
+        "gap_exact": "1565814423551999/137438953472",
+        "row": "r1031l"
+      },
+      {
+        "source": "x11066",
+        "target": "x11065",
+        "gap": 11392.799377441399,
+        "gap_exact": "1565814423551999/137438953472",
+        "row": "r2980l"
+      },
+      {
+        "source": "x11065",
+        "target": "x11040",
+        "gap": 11392.799377441399,
+        "gap_exact": "1565814423551999/137438953472",
+        "row": "r2890l"
+      }
+    ]
+  }
+}

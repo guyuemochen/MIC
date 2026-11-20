@@ -331,6 +331,7 @@ impl Problem {
     /// - 全部系数/右端/obj_offset 有限（`is_finite`）；
     /// - 每个变量 lb 有限（`is_finite`）、ub 为有限数或 `f64::INFINITY`
     ///   （其余 ±∞ 均非法）、lb ≤ ub；
+    /// - Binary 的上下界必须在 [0,1] 内，与 set_var_bounds 一致；
     /// - terms 规范化（升序、无重复、无零系数）。
     ///
     /// 注意：不因默认 ub=+∞ 报错——无 bounds 节的 Continuous/Integer 变量
@@ -361,6 +362,12 @@ impl Problem {
                 return Err(MilpError::InvalidModel(format!(
                     "变量 `{}`（下标 {i}）lb = {} > ub = {}",
                     v.name, v.lb, v.ub
+                )));
+            }
+            // 公开字段也可被直接修改，不能只依赖setter保证二元域。
+            if v.var_type == VarType::Binary && !(0.0 <= v.lb && v.ub <= 1.0) {
+                return Err(MilpError::InvalidModel(format!(
+                    "Binary 变量 `{}` 的界 [{}, {}] 超出 [0,1]", v.name, v.lb, v.ub
                 )));
             }
         }
@@ -717,6 +724,22 @@ mod tests {
         p.add_constraint(None, vec![(0, 1.0), (1, 1.0)], RelOp::Le, 4.0)
             .unwrap();
         assert!(p.validate().is_ok(), "默认 ub=+∞ 不得报错");
+    }
+
+    #[test]
+    fn binary_public_bounds_are_validated() {
+        let mut p = Problem::new("二元公开边界", Sense::Maximize);
+        p.add_var("x", VarType::Binary).unwrap();
+        for (lb, ub) in [(-1.0, 1.0), (0.0, 2.0), (0.0, f64::INFINITY), (2.0, 2.0)] {
+            p.vars[0].lb = lb;
+            p.vars[0].ub = ub;
+            assert!(matches!(p.validate(), Err(MilpError::InvalidModel(_))), "非法二元界[{lb}, {ub}]");
+        }
+        for (lb, ub) in [(0.0, 0.0), (1.0, 1.0), (0.2, 0.8)] {
+            p.vars[0].lb = lb;
+            p.vars[0].ub = ub;
+            assert!(p.validate().is_ok(), "域内边界由求解器判断整数可行性");
+        }
     }
 
     /// validate 拒绝各类非法状态（直接改 pub 字段构造）。

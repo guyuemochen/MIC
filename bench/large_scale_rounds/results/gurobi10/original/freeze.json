@@ -1,0 +1,32 @@
+{
+  "source_commit": "855127c028c61d77fbea865f1e8b14b2038fd7d6",
+  "bench_tree": "f2779129dfba0f3f11b248d7420bf2751931bba8",
+  "library": "/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib",
+  "library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14 (main, Jun 10 2026, 12:24:04) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "command": [
+    "/opt/homebrew/bin/python3.13",
+    "/private/tmp/mic-gurobi10-prep/bench/large_scale_rounds/compare_gurobi10.py",
+    "run",
+    "--library",
+    "/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib",
+    "--legacy-baseline",
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl",
+    "--modern-baseline",
+    "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-baseline.jsonl",
+    "--output",
+    "/private/tmp/mic-gurobi10-evidence/gurobi10.jsonl"
+  ],
+  "frozen_before_measurement_utc": "2026-11-19T08:54:26.549662+00:00",
+  "inputs_sha256": {
+    "external-baseline.jsonl": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292",
+    "miplib2017-baseline.jsonl": "d084c6b5a972d27686ddee7d5efa698c8eb5879a56b84ae39c26808c75d545b6",
+    "miplib2017-sources.json": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6"
+  },
+  "tools_sha256": {
+    "compare_gurobi10.py": "5e1442ec4db066552c642e65b06c10e9f1ea7632b149539b25f4388981a27747",
+    "check_results.py": "b56ddf3ed181e952f958e9bfd88ffbcd3c2c1562912f275e6163d1be1c7a464a",
+    "compare.py": "0bf001d5baf3113f5d1e750392ffc59f2a1860a369623682bc2a5dc69aaaecdd"
+  }
+}

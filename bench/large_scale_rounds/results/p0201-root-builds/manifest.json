@@ -1,0 +1,40 @@
+[
+  {
+    "label": "r8",
+    "source": "/tmp/mic-feature-r8-r9",
+    "commit": "07f4d2341e9ab86d1b78007467c8f2dbda81a44b",
+    "milp_tree": "75bbd260424ecfc5c59485661acc14ef459830a9",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--example",
+      "round_probe",
+      "--features",
+      "binary_coefficient_strengthening,proof_profile"
+    ],
+    "binary": "/tmp/mic-p0201-root-binaries/round_probe_r8",
+    "binary_sha256": "946f5d5a1d82bbbfcd31dff25e36bc47c51daaa5d74b08be7723d26063e9490d"
+  },
+  {
+    "label": "safe",
+    "source": "/tmp/mic-safe-ratio-baseline",
+    "commit": "ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4",
+    "milp_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "milp/Cargo.toml",
+      "--release",
+      "--example",
+      "round_probe",
+      "--features",
+      "proof_profile"
+    ],
+    "binary": "/tmp/mic-p0201-root-binaries/round_probe_safe",
+    "binary_sha256": "1ae87f2b52f31a18873d6ff52fa7e7d329308d65078b539bb4193901b8cc70d6"
+  }
+]

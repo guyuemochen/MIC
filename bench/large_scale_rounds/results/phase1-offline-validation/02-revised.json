@@ -1,0 +1,584 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "candidate_conclusion": "primal_and_augmented_pass",
+  "issues": [],
+  "snapshots": [
+    {
+      "kind": "entry",
+      "call_iterations": 0,
+      "iterations": 0,
+      "state_revision": 0,
+      "factorization_broken": false,
+      "failed_recomputed_values": null,
+      "failed_refresh_row_value": null,
+      "x_unclipped_bits": [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      "x_bit_mismatches": [],
+      "nonfinite_reconstructed_columns": [],
+      "invalid_bounds": [],
+      "artificial": {
+        "positive_sum": 2000.0,
+        "negative_sum": 0.0,
+        "absolute_sum": 2000.0,
+        "positive_sum_exact": null,
+        "minimum": 1000.0,
+        "maximum": 1000.0,
+        "nonfinite": [],
+        "sum_overflow": [],
+        "near_zero": false,
+        "each_within_tolerance": false,
+        "summary_comparable": true,
+        "saved_summary_bits": {
+          "positive_sum": "409f400000000000",
+          "negative_sum": "0000000000000000",
+          "minimum": "408f400000000000",
+          "maximum": "408f400000000000"
+        },
+        "summary_differences": []
+      },
+      "issues": [],
+      "saved_basic_bound_violation_bits": "0000000000000000",
+      "reconstructed_column_bits": [
+        "0000000000000000",
+        "0000000000000000",
+        "408f400000000000",
+        "408f400000000000"
+      ],
+      "current_structural_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "0000000000000000"
+        }
+      },
+      "current_augmented_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "0000000000000000"
+        }
+      },
+      "construction_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "0000000000000000"
+        },
+        "tightened_columns": 0,
+        "relaxed_columns": 0
+      },
+      "rows": {
+        "normalized": {
+          "passed": false,
+          "violations": 2,
+          "max_violation": 1000.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          }
+        },
+        "cuts": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": null
+        },
+        "augmented": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          },
+          "max_relative_backward_error": 0.0,
+          "rows": [
+            {
+              "row": 0,
+              "source": {
+                "kind": "constraint",
+                "index": 0
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            },
+            {
+              "row": 1,
+              "source": {
+                "kind": "constraint",
+                "index": 1
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            }
+          ]
+        },
+        "engine_input": {
+          "raw_max_violation": 1000.0,
+          "raw_worst": {
+            "constraint": 0,
+            "normalized_row": 0
+          },
+          "scaled": {
+            "passed": false,
+            "violations": 2,
+            "max_violation": 1000.0,
+            "worst": {
+              "constraint": 0,
+              "normalized_row": 0
+            }
+          },
+          "dropped_near_zero": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": null
+          },
+          "rows": [
+            {
+              "constraint": 0,
+              "normalized_row": 0,
+              "raw_violation": 1000.0,
+              "scaled_violation": 1000.0,
+              "passed": false,
+              "exact_recheck": false
+            },
+            {
+              "constraint": 1,
+              "normalized_row": 1,
+              "raw_violation": 1000.0,
+              "scaled_violation": 1000.0,
+              "passed": false,
+              "exact_recheck": false
+            }
+          ]
+        },
+        "exact_recheck_count": 2,
+        "binary64_arithmetic_issues": []
+      },
+      "conclusion": "artificial_not_near_zero"
+    },
+    {
+      "kind": "first_candidate",
+      "call_iterations": 1,
+      "iterations": 1,
+      "state_revision": 1,
+      "factorization_broken": false,
+      "failed_recomputed_values": null,
+      "failed_refresh_row_value": null,
+      "x_unclipped_bits": [
+        "408f400000000000",
+        "0000000000000000"
+      ],
+      "x_bit_mismatches": [],
+      "nonfinite_reconstructed_columns": [],
+      "invalid_bounds": [],
+      "artificial": {
+        "positive_sum": 0.0,
+        "negative_sum": 0.0,
+        "absolute_sum": 0.0,
+        "positive_sum_exact": null,
+        "minimum": 0.0,
+        "maximum": 0.0,
+        "nonfinite": [],
+        "sum_overflow": [],
+        "near_zero": true,
+        "each_within_tolerance": true,
+        "summary_comparable": true,
+        "saved_summary_bits": {
+          "positive_sum": "0000000000000000",
+          "negative_sum": "0000000000000000",
+          "minimum": "0000000000000000",
+          "maximum": "0000000000000000"
+        },
+        "summary_differences": []
+      },
+      "issues": [],
+      "saved_basic_bound_violation_bits": "0000000000000000",
+      "reconstructed_column_bits": [
+        "408f400000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      "current_structural_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        }
+      },
+      "current_augmented_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        }
+      },
+      "construction_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        },
+        "tightened_columns": 0,
+        "relaxed_columns": 0
+      },
+      "rows": {
+        "normalized": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          }
+        },
+        "cuts": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": null
+        },
+        "augmented": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          },
+          "max_relative_backward_error": 0.0,
+          "rows": [
+            {
+              "row": 0,
+              "source": {
+                "kind": "constraint",
+                "index": 0
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            },
+            {
+              "row": 1,
+              "source": {
+                "kind": "constraint",
+                "index": 1
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            }
+          ]
+        },
+        "engine_input": {
+          "raw_max_violation": 0.0,
+          "raw_worst": {
+            "constraint": 0,
+            "normalized_row": 0
+          },
+          "scaled": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": {
+              "constraint": 0,
+              "normalized_row": 0
+            }
+          },
+          "dropped_near_zero": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": null
+          },
+          "rows": [
+            {
+              "constraint": 0,
+              "normalized_row": 0,
+              "raw_violation": 0.0,
+              "scaled_violation": 0.0,
+              "passed": true,
+              "exact_recheck": true
+            },
+            {
+              "constraint": 1,
+              "normalized_row": 1,
+              "raw_violation": 0.0,
+              "scaled_violation": 0.0,
+              "passed": true,
+              "exact_recheck": true
+            }
+          ]
+        },
+        "exact_recheck_count": 6,
+        "binary64_arithmetic_issues": []
+      },
+      "conclusion": "primal_and_augmented_pass"
+    },
+    {
+      "kind": "before_cleanup",
+      "call_iterations": 1,
+      "iterations": 1,
+      "state_revision": 1,
+      "factorization_broken": false,
+      "failed_recomputed_values": null,
+      "failed_refresh_row_value": null,
+      "x_unclipped_bits": [
+        "408f400000000000",
+        "0000000000000000"
+      ],
+      "x_bit_mismatches": [],
+      "nonfinite_reconstructed_columns": [],
+      "invalid_bounds": [],
+      "artificial": {
+        "positive_sum": 0.0,
+        "negative_sum": 0.0,
+        "absolute_sum": 0.0,
+        "positive_sum_exact": null,
+        "minimum": 0.0,
+        "maximum": 0.0,
+        "nonfinite": [],
+        "sum_overflow": [],
+        "near_zero": true,
+        "each_within_tolerance": true,
+        "summary_comparable": true,
+        "saved_summary_bits": {
+          "positive_sum": "0000000000000000",
+          "negative_sum": "0000000000000000",
+          "minimum": "0000000000000000",
+          "maximum": "0000000000000000"
+        },
+        "summary_differences": []
+      },
+      "issues": [],
+      "saved_basic_bound_violation_bits": "0000000000000000",
+      "reconstructed_column_bits": [
+        "408f400000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      "current_structural_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        }
+      },
+      "current_augmented_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        }
+      },
+      "construction_bounds": {
+        "passed": true,
+        "violations": 0,
+        "max_violation": 0.0,
+        "worst": {
+          "column": 0,
+          "value": "408f400000000000"
+        },
+        "tightened_columns": 0,
+        "relaxed_columns": 0
+      },
+      "rows": {
+        "normalized": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          }
+        },
+        "cuts": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": null
+        },
+        "augmented": {
+          "passed": true,
+          "violations": 0,
+          "max_violation": 0.0,
+          "worst": {
+            "row": 0,
+            "source": {
+              "kind": "constraint",
+              "index": 0
+            }
+          },
+          "max_relative_backward_error": 0.0,
+          "rows": [
+            {
+              "row": 0,
+              "source": {
+                "kind": "constraint",
+                "index": 0
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            },
+            {
+              "row": 1,
+              "source": {
+                "kind": "constraint",
+                "index": 1
+              },
+              "absolute_residual": 0.0,
+              "relative_backward_error": 0.0,
+              "exact_recheck": true
+            }
+          ]
+        },
+        "engine_input": {
+          "raw_max_violation": 0.0,
+          "raw_worst": {
+            "constraint": 0,
+            "normalized_row": 0
+          },
+          "scaled": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": {
+              "constraint": 0,
+              "normalized_row": 0
+            }
+          },
+          "dropped_near_zero": {
+            "passed": true,
+            "violations": 0,
+            "max_violation": 0.0,
+            "worst": null
+          },
+          "rows": [
+            {
+              "constraint": 0,
+              "normalized_row": 0,
+              "raw_violation": 0.0,
+              "scaled_violation": 0.0,
+              "passed": true,
+              "exact_recheck": true
+            },
+            {
+              "constraint": 1,
+              "normalized_row": 1,
+              "raw_violation": 0.0,
+              "scaled_violation": 0.0,
+              "passed": true,
+              "exact_recheck": true
+            }
+          ]
+        },
+        "exact_recheck_count": 6,
+        "binary64_arithmetic_issues": []
+      },
+      "conclusion": "primal_and_augmented_pass"
+    }
+  ],
+  "capture": {
+    "engine": "Revised",
+    "terminal": "phase1_cleaned",
+    "first_failure_detail": null,
+    "terminal_detail": null,
+    "source_id": 1,
+    "events_omitted": 0,
+    "objects_omitted": 0,
+    "omitted_estimated_bytes": 0,
+    "estimated_bytes": 838418,
+    "byte_limit": 268435456,
+    "source_unavailable": false,
+    "artificial_mapping_unavailable": false,
+    "slots": {
+      "entry": {
+        "attempt_iteration": 0,
+        "state": "captured"
+      },
+      "first_candidate": {
+        "attempt_iteration": 1,
+        "state": "captured"
+      },
+      "first_failure": {
+        "attempt_iteration": null,
+        "state": "not_triggered"
+      },
+      "before_cleanup": {
+        "attempt_iteration": 1,
+        "state": "captured"
+      }
+    },
+    "tolerances_bits": {
+      "feasibility": "3e112e0be826d695",
+      "optimality": "3e112e0be826d695",
+      "pivot": "3e112e0be826d695",
+      "zero": "3d719799812dea11",
+      "integrality": "3eb0c6f7a0b5ed8d"
+    },
+    "skipped_cut_indices": [],
+    "mapping_mismatches": []
+  },
+  "external_input_coordinates_used": false,
+  "probe_result": {
+    "status": "Optimal",
+    "nodes": 1,
+    "lp_iterations": 2
+  },
+  "same_state_candidate_pricing": [
+    {
+      "kind": "optimal",
+      "column": null,
+      "evaluated_revision": 1,
+      "direction": null
+    }
+  ],
+  "feasible_candidate_with_entering_column": false,
+  "provenance": {
+    "capture_sha256": "8b70f69ad5794e80308322f08a4e9cdc7569206965ba72a5082b6ee75911d9a5",
+    "solver_commit": "c0bc5e8498a2f7cd43ee2c26bda32b45b7cdf34e",
+    "build_options": "debug，默认特性 + phase1_progress_diagnostics",
+    "probe_args": "two-equalities.milp 06-capture-revised.json 30 revised",
+    "input_sha256": "fef837678a3f055e7b744315db7933ff4645e4f690bf1a0672c85ba1a1e2b46d"
+  }
+}

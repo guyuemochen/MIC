@@ -1,0 +1,6 @@
+{
+  "raw_sha256": "31a3e7bb5d3209ce85c18415369bf0fd396b68ecbadd8fa80cbebe3b4c9e3fa8",
+  "repo_relative_sha256": "91a1e47ea93e013a77d0b34a0f575ff001fa36a6511f13a206ddb84823af54f4",
+  "changed_field": "model",
+  "destination": "bench/large_scale_rounds/results/certified-row-fallback-screen"
+}

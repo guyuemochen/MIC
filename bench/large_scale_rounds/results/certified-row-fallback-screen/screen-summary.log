@@ -1,0 +1,40 @@
+/opt/homebrew/bin/python3.13 /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/summarize_feature_trial.py /tmp/mic-r11-screen/certified_row_fallback-screen.jsonl --legacy-baseline /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl --modern-baseline /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-baseline.jsonl --public-truth /Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/miplib2017-sources.json --output /tmp/mic-r11-screen/certified_row_fallback-screen-summary.json 
+{
+  "correctness_passed": true,
+  "variants": {
+    "base": {
+      "binary": "/private/tmp/mic-r11-binaries/round_probe_base",
+      "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+      "features": [],
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7
+    },
+    "candidate": {
+      "binary": "/private/tmp/mic-r11-binaries/round_probe_candidate",
+      "binary_sha256": "ab829e786415f8fcac6cb4b262a8036e3b0be266962ddcc3703488cb386e23f3",
+      "features": [
+        "certified_row_fallback"
+      ],
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7
+    }
+  },
+  "timing": {
+    "common_optimal_models": 7,
+    "eligible_models": 6,
+    "min_base_median_secs": 0.05,
+    "geometric_candidate_over_base": 0.9124825236723588,
+    "max_case_ratio": 1.25,
+    "models_over_case_ratio": []
+  },
+  "paired_proof_losses": 0,
+  "rss_failures": 0
+}

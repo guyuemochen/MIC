@@ -1,0 +1,29 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (/tmp/mic-auto-selector-review/milp/target/debug/deps/milp-9902ccbad09493e3)
+
+running 4 tests
+test branch_bound::tests::auto_configuration_rejects_invalid_public_model_fields ... ok
+test branch_bound::tests::auto_configuration_explicit_overrides_and_defaults ... ok
+test branch_bound::tests::auto_configuration_boundaries_and_negative_controls ... ok
+test branch_bound::tests::auto_configuration_is_deterministic_and_keeps_limit_contract ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 342 filtered out; finished in 0.04s
+
+     Running unittests src/main.rs (/tmp/mic-auto-selector-review/milp/target/debug/deps/milp-0bb0010cc9d32f34)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (/tmp/mic-auto-selector-review/milp/target/debug/deps/acceptance-9cc11cae4693781c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (/tmp/mic-auto-selector-review/milp/target/debug/deps/warm_cold_parity-e2383a1b7053e5f4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

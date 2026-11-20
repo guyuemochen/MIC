@@ -1,0 +1,3 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+   Compiling milp-ffi v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp-ffi)
+    Finished `release` profile [optimized] target(s) in 2.22s

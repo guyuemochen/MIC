@@ -1,0 +1,181 @@
+{
+  "proof_losses": [
+    {
+      "phase": "screen",
+      "instance": "packing_many_rows_s12017",
+      "rep": 0
+    },
+    {
+      "phase": "paired",
+      "instance": "packing_many_rows_s12043",
+      "rep": 1
+    }
+  ],
+  "comparable_instances": 1,
+  "geo_time_ratio": 0.8221524757526476,
+  "full_acceptance_established": false,
+  "tested_gates_passed": false,
+  "summary": [
+    {
+      "instance": "packing_correlated_s12017",
+      "existing": {
+        "runs": 3,
+        "median_secs": 9.801495709,
+        "min_secs": 9.751209791,
+        "max_secs": 9.811344166,
+        "peak_rss_bytes": 3637248,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          1737.0
+        ]
+      },
+      "auto": {
+        "runs": 3,
+        "median_secs": 5.019987708,
+        "min_secs": 5.01941375,
+        "max_secs": 5.02015025,
+        "peak_rss_bytes": 207683584,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          1741.0
+        ]
+      },
+      "time_ratio": null,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": false
+    },
+    {
+      "instance": "packing_correlated_s12043",
+      "existing": {
+        "runs": 3,
+        "median_secs": 5.00024325,
+        "min_secs": 5.000169417,
+        "max_secs": 5.000510458,
+        "peak_rss_bytes": 3522560,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          1736.0
+        ]
+      },
+      "auto": {
+        "runs": 3,
+        "median_secs": 6.94095125,
+        "min_secs": 6.880205167,
+        "max_secs": 6.966609459,
+        "peak_rss_bytes": 185663488,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          1748.0
+        ]
+      },
+      "time_ratio": null,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": false
+    },
+    {
+      "instance": "packing_many_rows_s12017",
+      "existing": {
+        "runs": 3,
+        "median_secs": 3.173916125,
+        "min_secs": 3.16393425,
+        "max_secs": 3.182885709,
+        "peak_rss_bytes": 4210688,
+        "statuses": [
+          "Optimal"
+        ],
+        "objectives": [
+          3009.0
+        ]
+      },
+      "auto": {
+        "runs": 3,
+        "median_secs": 2.6094429999999997,
+        "min_secs": 2.602087708,
+        "max_secs": 2.693811708,
+        "peak_rss_bytes": 6848512,
+        "statuses": [
+          "Optimal"
+        ],
+        "objectives": [
+          3009.0
+        ]
+      },
+      "time_ratio": 0.8221524757526476,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "packing_many_rows_s12043",
+      "existing": {
+        "runs": 3,
+        "median_secs": 3.355718,
+        "min_secs": 3.334715583,
+        "max_secs": 3.3792195,
+        "peak_rss_bytes": 4390912,
+        "statuses": [
+          "Optimal"
+        ],
+        "objectives": [
+          2904.0
+        ]
+      },
+      "auto": {
+        "runs": 3,
+        "median_secs": 4.986911125,
+        "min_secs": 4.9441215,
+        "max_secs": 5.000235625,
+        "peak_rss_bytes": 11370496,
+        "statuses": [
+          "LimitReached",
+          "Optimal"
+        ],
+        "objectives": [
+          2904.0
+        ]
+      },
+      "time_ratio": null,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    },
+    {
+      "instance": "sparse_packing",
+      "existing": {
+        "runs": 3,
+        "median_secs": 5.000611875,
+        "min_secs": 5.00023775,
+        "max_secs": 5.001081875,
+        "peak_rss_bytes": 3981312,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          8087.0
+        ]
+      },
+      "auto": {
+        "runs": 3,
+        "median_secs": 5.003794459,
+        "min_secs": 5.003405334,
+        "max_secs": 5.004223584,
+        "peak_rss_bytes": 39501824,
+        "statuses": [
+          "LimitReached"
+        ],
+        "objectives": [
+          8130.0
+        ]
+      },
+      "time_ratio": null,
+      "rss_limit_bytes": 67108864,
+      "rss_passed": true
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+   Compiling milp v0.1.0 (/private/tmp/mic-safe-primal-ratio/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.16s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-867c43ac5ede36f4)
+
+running 12 tests
+test simplex::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex_sparse::tests::safe_primal_ratio_tests::flip_and_bland_keep_their_original_ties ... ok
+test simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... FAILED
+test simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct ... FAILED
+test simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... FAILED
+test simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot ... FAILED
+test simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again ... FAILED
+test simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates ... FAILED
+
+failures:
+
+---- simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct' (1154839) panicked at src/simplex.rs:3034:13:
+有限界差溢出不能返回无限步长
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates' (1154847) panicked at src/simplex_sparse.rs:4699:13:
+assertion failed: matches!(s.ratio_test(0, 1.0), Step::FilteredBlock(_))
+
+---- simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction' (1154843) panicked at src/simplex.rs:2956:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction' (1154849) panicked at src/simplex_sparse.rs:4664:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot' (1154846) panicked at src/simplex_sparse.rs:4664:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct' (1154845) panicked at src/simplex_sparse.rs:4742:13:
+有限界差溢出不能返回无限步长
+
+---- simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again stdout ----
+
+thread 'simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again' (1154848) panicked at src/simplex_sparse.rs:4664:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot' (1154840) panicked at src/simplex.rs:2956:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again' (1154842) panicked at src/simplex.rs:2956:21:
+assertion `left == right` failed
+  left: 1
+ right: 0
+
+---- simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates stdout ----
+
+thread 'simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates' (1154841) panicked at src/simplex.rs:2991:13:
+assertion failed: matches!(s.ratio_test(0, 1.0), Step::FilteredBlock(_))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    simplex::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct
+    simplex::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot
+    simplex::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates
+    simplex::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again
+    simplex::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction
+    simplex_sparse::tests::safe_primal_ratio_tests::nonfinite_overflow_and_true_unbounded_are_distinct
+    simplex_sparse::tests::safe_primal_ratio_tests::old_safe_tie_and_unsafe_large_pivot
+    simplex_sparse::tests::safe_primal_ratio_tests::small_pivot_still_limits_other_candidates
+    simplex_sparse::tests::safe_primal_ratio_tests::spent_tolerance_is_not_granted_again
+    simplex_sparse::tests::safe_primal_ratio_tests::upper_bound_and_negative_entering_direction
+
+test result: FAILED. 2 passed; 10 failed; 0 ignored; 0 measured; 446 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

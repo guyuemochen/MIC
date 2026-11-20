@@ -1,0 +1,113 @@
+{
+  "source": "/tmp/mic-feature-r10",
+  "commit": "099e545ddc7dfb985b013560f7c5b97a7d285380",
+  "tree": "073990a459ae989a9bd7b6bd9c6af573690115a7",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "common_default_features": [
+    "sparse_row_products",
+    "binary_coefficient_strengthening"
+  ],
+  "builds": {
+    "base": {
+      "binary": "/tmp/mic-r10-binaries/round_probe_base",
+      "sha256": "e9370de693077dcec2b736149a6a63d16de84f1f115fc7db2527ff66f9825f29",
+      "features": [],
+      "enabled_features": [
+        "binary_coefficient_strengthening",
+        "sparse_row_products"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r10/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r10-target"
+      ]
+    },
+    "candidate": {
+      "binary": "/tmp/mic-r10-binaries/round_probe_candidate",
+      "sha256": "85c5a5a430ec27fcb0cf469522b9e01643d8ababc2d0b100199223807eb2374c",
+      "features": [
+        "root_heuristic_work_limit"
+      ],
+      "enabled_features": [
+        "binary_coefficient_strengthening",
+        "root_heuristic_work_budget",
+        "root_heuristic_work_limit",
+        "sparse_row_products"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r10/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r10-target",
+        "--features",
+        "root_heuristic_work_limit"
+      ]
+    },
+    "diagnostic_old": {
+      "binary": "/tmp/mic-r10-binaries/round_probe_diagnostic_old",
+      "sha256": "8523dacbfc3a1cba9dc6f4ad35783257e72e829ac6840ddad4b1334735eb0ea2",
+      "features": [
+        "root_heuristic_work_budget",
+        "proof_profile"
+      ],
+      "enabled_features": [
+        "binary_coefficient_strengthening",
+        "proof_profile",
+        "root_heuristic_work_budget",
+        "sparse_row_products"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r10/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r10-target",
+        "--features",
+        "root_heuristic_work_budget,proof_profile"
+      ]
+    },
+    "diagnostic_new": {
+      "binary": "/tmp/mic-r10-binaries/round_probe_diagnostic_new",
+      "sha256": "2108dae6dbe18620ea27e4cc220f4fe1c3b27545f681814a1abc403709b0d841",
+      "features": [
+        "root_heuristic_work_limit",
+        "proof_profile"
+      ],
+      "enabled_features": [
+        "binary_coefficient_strengthening",
+        "proof_profile",
+        "root_heuristic_work_budget",
+        "root_heuristic_work_limit",
+        "sparse_row_products"
+      ],
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        "/tmp/mic-feature-r10/milp/Cargo.toml",
+        "--example",
+        "round_probe",
+        "--target-dir",
+        "/tmp/mic-r10-target",
+        "--features",
+        "root_heuristic_work_limit,proof_profile"
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/tmp/mic-primal-ratio-repro-debug"
+  ],
+  "cwd": "/Users/guyuemochen/Desktop/projects/MIC",
+  "source_commit": "c88c47e1aa69cab5743a8fcdea884c03d1b60b49",
+  "exit_code": 0,
+  "seconds": 0.46712303161621094
+}

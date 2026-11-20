@@ -1,0 +1,537 @@
+{
+  "correctness_passed": true,
+  "correctness_errors": [],
+  "independent_check": {
+    "passed": true,
+    "runs": 212,
+    "instances": 20,
+    "solutions_checked": 181,
+    "mic_with_external_optimum": 99,
+    "mic_bounds_checked": 96,
+    "errors": [],
+    "public_truth": {
+      "manifest": "bench/large_scale_rounds/results/miplib2017-sources.json",
+      "manifest_sha256": "ea28f54283dfce36d1443f69458a39f7b4f7e124d734e45c6732e204c7866fc6",
+      "source": "https://miplib.zib.de/",
+      "solution_file": {
+        "url": "https://miplib.zib.de/downloads/miplib2017-v37.solu",
+        "file": "miplib2017-v37.solu",
+        "sha256": "04250ce7597bdc14f6341b323c8b4be42416102e370f93102fab1ff1f85aa977",
+        "release_date": "2026-09-24"
+      },
+      "matched_runs": 56,
+      "hashes_checked": 56,
+      "checked_runs": 56,
+      "optimal_runs": 49,
+      "infeasible_runs": 7,
+      "optimal_claims_checked": 6,
+      "bounds_checked": 45,
+      "feasible_objectives_checked": 30,
+      "skipped": {}
+    }
+  },
+  "models": 20,
+  "repetitions": 1,
+  "time_limit_secs": 10,
+  "source_commit": "3c70943e865bc1f3488d3fcc6b5d5adb4b4dcf47",
+  "source_tree": "0430a5c1da6cfb4767d5a9ab299e72df2623ff18",
+  "binary_manifest_sha256": "9286e6ad308987571c27affd21a2acb60e6ca692d4525fa7ea19eab07acc3b31",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "variants": {
+    "base": {
+      "features": [],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_base",
+      "binary_sha256": "674d4108ea43347031997d87efcb5e95b0fd3fe71076697f0b3955c923a5b336",
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7,
+      "missing_rss_runs": 0
+    },
+    "snapshot": {
+      "features": [
+        "root_snapshot_restore"
+      ],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_snapshot",
+      "binary_sha256": "4c1e84b96d5e6ac1c6c11e51ce5efb86360c2e0496f11591a3561e75d2077d86",
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7,
+      "missing_rss_runs": 0
+    },
+    "budget": {
+      "features": [
+        "root_heuristic_work_budget"
+      ],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_budget",
+      "binary_sha256": "5ad2e24884ee780300100ed943c7e23af7414162a5b038ad3e8350c3f1d0eccb",
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7,
+      "missing_rss_runs": 0
+    },
+    "both": {
+      "features": [
+        "root_snapshot_restore",
+        "root_heuristic_work_budget"
+      ],
+      "binary": "/private/tmp/mic-r7-binaries/round_probe_both",
+      "binary_sha256": "f95d1182b14ffe0245021d14196417b525f2ae52bbd5022e0985aa253a1ef383",
+      "status_counts": {
+        "optimal": 7,
+        "limit_reached": 13
+      },
+      "proof_runs": 7,
+      "proved_models_in_all_reps": 7,
+      "missing_rss_runs": 0
+    }
+  },
+  "comparisons_to_base": {
+    "snapshot": {
+      "common_optimal_models": 7,
+      "times": {
+        "knapsack-5000": {
+          "base_median_secs": 0.0132525,
+          "candidate_median_secs": 0.012846583,
+          "candidate_over_base": 0.9693705338615355
+        },
+        "mknap-5x300": {
+          "base_median_secs": 4.425047208,
+          "candidate_median_secs": 4.398583875,
+          "candidate_over_base": 0.9940196495639285
+        },
+        "lp-sparse-4000x800": {
+          "base_median_secs": 0.955281208,
+          "candidate_median_secs": 0.957603875,
+          "candidate_over_base": 1.0024313960963
+        },
+        "p0033": {
+          "base_median_secs": 0.136256875,
+          "candidate_median_secs": 0.13626025,
+          "candidate_over_base": 1.00002476939237
+        },
+        "enigma": {
+          "base_median_secs": 7.739420792,
+          "candidate_median_secs": 7.819179041,
+          "candidate_over_base": 1.010305454522184
+        },
+        "stein27": {
+          "base_median_secs": 3.317136375,
+          "candidate_median_secs": 3.306640959,
+          "candidate_over_base": 0.9968360010522631
+        },
+        "air03": {
+          "base_median_secs": 1.320481292,
+          "candidate_median_secs": 1.488151792,
+          "candidate_over_base": 1.1269768083923752
+        }
+      },
+      "excluded_from_timing": {
+        "setcover-300x600": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0201": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0282": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0548": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "lseu": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "bnatt500": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "seymour": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos17": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos-4954672-berkel": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "gen-ip054": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "icir97_tension": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-100-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-25-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        }
+      }
+    },
+    "budget": {
+      "common_optimal_models": 7,
+      "times": {
+        "knapsack-5000": {
+          "base_median_secs": 0.0132525,
+          "candidate_median_secs": 0.013169583,
+          "candidate_over_base": 0.9937432937181664
+        },
+        "mknap-5x300": {
+          "base_median_secs": 4.425047208,
+          "candidate_median_secs": 4.431300583,
+          "candidate_over_base": 1.0014131770139525
+        },
+        "lp-sparse-4000x800": {
+          "base_median_secs": 0.955281208,
+          "candidate_median_secs": 0.957160584,
+          "candidate_over_base": 1.0019673536800067
+        },
+        "p0033": {
+          "base_median_secs": 0.136256875,
+          "candidate_median_secs": 0.13388275,
+          "candidate_over_base": 0.9825761085449817
+        },
+        "enigma": {
+          "base_median_secs": 7.739420792,
+          "candidate_median_secs": 7.717297417,
+          "candidate_over_base": 0.9971414689038658
+        },
+        "stein27": {
+          "base_median_secs": 3.317136375,
+          "candidate_median_secs": 3.016187583,
+          "candidate_over_base": 0.9092745193510471
+        },
+        "air03": {
+          "base_median_secs": 1.320481292,
+          "candidate_median_secs": 1.481289708,
+          "candidate_over_base": 1.1217801546862052
+        }
+      },
+      "excluded_from_timing": {
+        "setcover-300x600": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0201": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0282": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0548": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "lseu": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "bnatt500": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "seymour": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos17": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos-4954672-berkel": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "gen-ip054": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "icir97_tension": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-100-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-25-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        }
+      }
+    },
+    "both": {
+      "common_optimal_models": 7,
+      "times": {
+        "knapsack-5000": {
+          "base_median_secs": 0.0132525,
+          "candidate_median_secs": 0.012802291,
+          "candidate_over_base": 0.966028372005282
+        },
+        "mknap-5x300": {
+          "base_median_secs": 4.425047208,
+          "candidate_median_secs": 4.486802292,
+          "candidate_over_base": 1.0139558022993187
+        },
+        "lp-sparse-4000x800": {
+          "base_median_secs": 0.955281208,
+          "candidate_median_secs": 0.954695542,
+          "candidate_over_base": 0.9993869177001542
+        },
+        "p0033": {
+          "base_median_secs": 0.136256875,
+          "candidate_median_secs": 0.133556167,
+          "candidate_over_base": 0.9801792900358239
+        },
+        "enigma": {
+          "base_median_secs": 7.739420792,
+          "candidate_median_secs": 7.791075,
+          "candidate_over_base": 1.0066741697328816
+        },
+        "stein27": {
+          "base_median_secs": 3.317136375,
+          "candidate_median_secs": 3.017111792,
+          "candidate_over_base": 0.9095531358731068
+        },
+        "air03": {
+          "base_median_secs": 1.320481292,
+          "candidate_median_secs": 1.152990875,
+          "candidate_over_base": 0.8731595683977323
+        }
+      },
+      "excluded_from_timing": {
+        "setcover-300x600": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0201": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0282": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "p0548": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "lseu": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "bnatt500": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "seymour": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos17": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "neos-4954672-berkel": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "gen-ip054": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "icir97_tension": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-100-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        },
+        "drayage-25-23": {
+          "base_statuses": [
+            "limit_reached"
+          ],
+          "candidate_statuses": [
+            "limit_reached"
+          ]
+        }
+      }
+    }
+  }
+}

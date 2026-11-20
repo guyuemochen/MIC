@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "milp/Cargo.toml",
+    "--release",
+    "--example",
+    "round_probe",
+    "--locked",
+    "--target-dir",
+    "/tmp/mic-all-gurobi10-release"
+  ],
+  "started_at_utc": "2026-11-19T10:08:23.962398+00:00",
+  "finished_at_utc": "2026-11-19T10:08:23.979659+00:00",
+  "process_elapsed_secs": 0.01717454200843349,
+  "returncode": 0,
+  "timeout": false,
+  "spawn_error": null,
+  "stdout": "",
+  "stderr": "    Finished `release` profile [optimized] target(s) in 0.00s\n"
+}

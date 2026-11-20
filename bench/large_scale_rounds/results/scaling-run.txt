@@ -1,0 +1,252 @@
+scale-1000-continuous baseline 0 0.023267 10911744
+scale-1000-continuous candidate 0 0.0002 2637824
+scale-1000-integer baseline 0 0.001542 10846208
+scale-1000-integer candidate 0 8.7e-05 2621440
+scale-1000-mixed baseline 0 0.007053 10862592
+scale-1000-mixed candidate 0 0.000198 2637824
+scale-3000-continuous baseline 0 0.154797 82870272
+scale-3000-continuous candidate 0 0.000491 3981312
+scale-3000-integer baseline 0 0.011824 82853888
+scale-3000-integer candidate 0 0.000238 3883008
+scale-3000-mixed baseline 0 0.13177 82853888
+scale-3000-mixed candidate 0 0.000555 3997696
+scale-8000-continuous baseline 0 1.147687 533282816
+scale-8000-continuous candidate 0 0.001313 7127040
+scale-8000-integer baseline 0 0.084388 533266432
+scale-8000-integer candidate 0 0.000564 6848512
+scale-8000-mixed baseline 0 1.013899 533250048
+scale-8000-mixed candidate 0 0.001413 7110656
+lp-wide-1000x2000 baseline 0 0.021322 165085184
+lp-wide-1000x2000 candidate 0 0.01681 148652032
+lp-sparse-4000x800 baseline 0 0.02579 56459264
+lp-sparse-4000x800 candidate 0 0.002224 30097408
+milp-mixed-250i40c baseline 0 4.8e-05 3047424
+milp-mixed-250i40c candidate 0 6e-05 2998272
+setcover-300x600 baseline 0 0.000362 5472256
+setcover-300x600 candidate 0 7.8e-05 3915776
+solve-1000 baseline 0 0.003693 11042816
+solve-1000 candidate 0 0.000277 2834432
+solve-8000 baseline 0 0.520453 532529152
+solve-8000 candidate 0 0.001582 6701056
+capacity-25000 candidate 0 0.004443 18432000
+capacity-50000 candidate 0 0.010056 35864576
+capacity-100000 candidate 0 0.018963 67469312
+solve-100000 candidate 0 0.019194 61669376
+scale-1000-continuous candidate 1 0.000178 2621440
+scale-1000-continuous baseline 1 0.00649 10846208
+scale-1000-integer candidate 1 8.7e-05 2605056
+scale-1000-integer baseline 1 0.001373 10846208
+scale-1000-mixed candidate 1 0.000195 2621440
+scale-1000-mixed baseline 1 0.006098 10862592
+scale-3000-continuous candidate 1 0.000487 3981312
+scale-3000-continuous baseline 1 0.150959 82870272
+scale-3000-integer candidate 1 0.000242 3899392
+scale-3000-integer baseline 1 0.013185 82870272
+scale-3000-mixed candidate 1 0.000548 3997696
+scale-3000-mixed baseline 1 0.140649 82903040
+scale-8000-continuous candidate 1 0.001286 7110656
+scale-8000-continuous baseline 1 1.225324 533266432
+scale-8000-integer candidate 1 0.000573 6864896
+scale-8000-integer baseline 1 0.083284 533250048
+scale-8000-mixed candidate 1 0.001424 7127040
+scale-8000-mixed baseline 1 1.205717 533282816
+lp-wide-1000x2000 candidate 1 0.01573 148684800
+lp-wide-1000x2000 baseline 1 0.021912 165085184
+lp-sparse-4000x800 candidate 1 0.002036 30097408
+lp-sparse-4000x800 baseline 1 0.025248 56377344
+milp-mixed-250i40c candidate 1 4.8e-05 2932736
+milp-mixed-250i40c baseline 1 4.5e-05 3031040
+setcover-300x600 candidate 1 7.9e-05 3948544
+setcover-300x600 baseline 1 0.000346 5472256
+solve-1000 candidate 1 0.000212 2818048
+solve-1000 baseline 1 0.003549 11059200
+solve-8000 candidate 1 0.001606 6701056
+solve-8000 baseline 1 0.517493 532332544
+capacity-25000 candidate 1 0.004411 18432000
+capacity-50000 candidate 1 0.00885 35880960
+capacity-100000 candidate 1 0.018602 67469312
+solve-100000 candidate 1 0.018835 61652992
+scale-1000-continuous baseline 2 0.006566 10846208
+scale-1000-continuous candidate 2 0.00018 2637824
+scale-1000-integer baseline 2 0.00136 10846208
+scale-1000-integer candidate 2 8.3e-05 2588672
+scale-1000-mixed baseline 2 0.006112 10829824
+scale-1000-mixed candidate 2 0.000196 2637824
+scale-3000-continuous baseline 2 0.148496 82853888
+scale-3000-continuous candidate 2 0.000499 3997696
+scale-3000-integer baseline 2 0.012424 82870272
+scale-3000-integer candidate 2 0.000246 3899392
+scale-3000-mixed baseline 2 0.130506 82870272
+scale-3000-mixed candidate 2 0.000536 3981312
+scale-8000-continuous baseline 2 1.139618 533250048
+scale-8000-continuous candidate 2 0.001264 7110656
+scale-8000-integer baseline 2 0.082422 533250048
+scale-8000-integer candidate 2 0.000609 6848512
+scale-8000-mixed baseline 2 1.074737 533266432
+scale-8000-mixed candidate 2 0.001381 7110656
+lp-wide-1000x2000 baseline 2 0.02012 165134336
+lp-wide-1000x2000 candidate 2 0.016504 148652032
+lp-sparse-4000x800 baseline 2 0.025807 56377344
+lp-sparse-4000x800 candidate 2 0.001965 30097408
+milp-mixed-250i40c baseline 2 4.5e-05 3031040
+milp-mixed-250i40c candidate 2 4.7e-05 2949120
+setcover-300x600 baseline 2 0.000346 5472256
+setcover-300x600 candidate 2 7.2e-05 3899392
+solve-1000 baseline 2 0.003463 11059200
+solve-1000 candidate 2 0.000212 2818048
+solve-8000 baseline 2 0.505466 531939328
+solve-8000 candidate 2 0.00155 6733824
+capacity-25000 candidate 2 0.004307 18432000
+capacity-50000 candidate 2 0.008703 35880960
+capacity-100000 candidate 2 0.018467 67452928
+solve-100000 candidate 2 0.018948 61652992
+{
+  "passed": true,
+  "runs": 102,
+  "summary": [
+    {
+      "case": "scale-1000-continuous",
+      "candidate_secs": 0.000180125,
+      "candidate_rss": 2637824,
+      "baseline_secs": 0.00656625,
+      "baseline_rss": 10846208,
+      "time_ratio": 0.027431943651246907
+    },
+    {
+      "case": "scale-1000-integer",
+      "candidate_secs": 8.6708e-05,
+      "candidate_rss": 2605056,
+      "baseline_secs": 0.00137275,
+      "baseline_rss": 10846208,
+      "time_ratio": 0.06316372245492624
+    },
+    {
+      "case": "scale-1000-mixed",
+      "candidate_secs": 0.000196209,
+      "candidate_rss": 2637824,
+      "baseline_secs": 0.006111708,
+      "baseline_rss": 10862592,
+      "time_ratio": 0.032103791607845135
+    },
+    {
+      "case": "scale-3000-continuous",
+      "candidate_secs": 0.000491042,
+      "candidate_rss": 3981312,
+      "baseline_secs": 0.1509595,
+      "baseline_rss": 82870272,
+      "time_ratio": 0.0032528062162368054
+    },
+    {
+      "case": "scale-3000-integer",
+      "candidate_secs": 0.000242125,
+      "candidate_rss": 3899392,
+      "baseline_secs": 0.01242425,
+      "baseline_rss": 82870272,
+      "time_ratio": 0.01948809787311105
+    },
+    {
+      "case": "scale-3000-mixed",
+      "candidate_secs": 0.00054825,
+      "candidate_rss": 3997696,
+      "baseline_secs": 0.131769667,
+      "baseline_rss": 82870272,
+      "time_ratio": 0.004160669238088004
+    },
+    {
+      "case": "scale-8000-continuous",
+      "candidate_secs": 0.00128625,
+      "candidate_rss": 7110656,
+      "baseline_secs": 1.14768675,
+      "baseline_rss": 533266432,
+      "time_ratio": 0.001120732638936539
+    },
+    {
+      "case": "scale-8000-integer",
+      "candidate_secs": 0.000573041,
+      "candidate_rss": 6848512,
+      "baseline_secs": 0.083284125,
+      "baseline_rss": 533250048,
+      "time_ratio": 0.006880554967708432
+    },
+    {
+      "case": "scale-8000-mixed",
+      "candidate_secs": 0.001413167,
+      "candidate_rss": 7110656,
+      "baseline_secs": 1.074736792,
+      "baseline_rss": 533266432,
+      "time_ratio": 0.0013148958987160085
+    },
+    {
+      "case": "lp-wide-1000x2000",
+      "candidate_secs": 0.016504458,
+      "candidate_rss": 148652032,
+      "baseline_secs": 0.021321875,
+      "baseline_rss": 165085184,
+      "time_ratio": 0.7740622248277883
+    },
+    {
+      "case": "lp-sparse-4000x800",
+      "candidate_secs": 0.002035625,
+      "candidate_rss": 30097408,
+      "baseline_secs": 0.02579,
+      "baseline_rss": 56377344,
+      "time_ratio": 0.07893078712679333
+    },
+    {
+      "case": "milp-mixed-250i40c",
+      "candidate_secs": 4.85e-05,
+      "candidate_rss": 2949120,
+      "baseline_secs": 4.5417e-05,
+      "baseline_rss": 3031040,
+      "time_ratio": 1.0678820705903076
+    },
+    {
+      "case": "setcover-300x600",
+      "candidate_secs": 7.8e-05,
+      "candidate_rss": 3915776,
+      "baseline_secs": 0.000345792,
+      "baseline_rss": 5472256,
+      "time_ratio": 0.22556912826207662
+    },
+    {
+      "case": "solve-1000",
+      "candidate_secs": 0.000211958,
+      "candidate_rss": 2818048,
+      "baseline_secs": 0.003549416,
+      "baseline_rss": 11059200,
+      "time_ratio": 0.05971630262555868
+    },
+    {
+      "case": "solve-8000",
+      "candidate_secs": 0.001581791,
+      "candidate_rss": 6701056,
+      "baseline_secs": 0.517492542,
+      "baseline_rss": 532332544,
+      "time_ratio": 0.003056645017311186
+    },
+    {
+      "case": "capacity-25000",
+      "candidate_secs": 0.004411125,
+      "candidate_rss": 18432000
+    },
+    {
+      "case": "capacity-50000",
+      "candidate_secs": 0.008849917,
+      "candidate_rss": 35880960
+    },
+    {
+      "case": "capacity-100000",
+      "candidate_secs": 0.018602209,
+      "candidate_rss": 67469312
+    },
+    {
+      "case": "solve-100000",
+      "candidate_secs": 0.018947708,
+      "candidate_rss": 61652992
+    }
+  ],
+  "binaries": {
+    "baseline": "218be536cdb3104c3531abb9c6625c97f216fb09b1aa842cde1538c501372b7b",
+    "candidate": "1504a53e47e13c61089c2c0902323b51bb8ccec04d816e5c6b5f58b9fd6275c3"
+  }
+}

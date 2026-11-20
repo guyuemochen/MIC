@@ -26,7 +26,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 use std::sync::Arc;
 
-use milp::branch_bound::{BbOptions, SearchControl, SearchHooks};
+use milp::branch_bound::{BbOptions, BinaryPropagationMode, SearchControl, SearchHooks};
 use milp::error::MilpError;
 use milp::model::{RelOp, Sense, SolveStatus, Tolerances, VarType};
 use milp::search_ctrl::{format_number, format_progress_line, ProgressInfo};
@@ -729,14 +729,14 @@ pub extern "C" fn milp_ffi_set_param_real(model: *mut c_void, name: *const c_cha
                 mb.params.log_period_secs = if value == 0.0 { None } else { Some(value) };
                 MILP_FFI_OK
             }
-            "Threads" | "HeuristicMode" => set_error(
+            "Threads" | "HeuristicMode" | "BinaryPropagation" => set_error(
                 ERR_ARG,
                 &format!("参数 `{name_str}` 不是 real 类型入口（请用对应类型的 setter）"),
             ),
             _ => set_error(
                 ERR_UNKNOWN_PARAM,
                 &format!(
-                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
                 ),
             ),
         }
@@ -764,21 +764,23 @@ pub extern "C" fn milp_ffi_set_param_int(model: *mut c_void, name: *const c_char
                 mb.params.threads = value as usize;
                 MILP_FFI_OK
             }
-            "TimeLimit" | "MIPGap" | "LogPeriodSecs" | "HeuristicMode" => set_error(
-                ERR_ARG,
-                &format!("参数 `{name_str}` 不是 int 类型入口（请用对应类型的 setter）"),
-            ),
+            "TimeLimit" | "MIPGap" | "LogPeriodSecs" | "HeuristicMode" | "BinaryPropagation" => {
+                set_error(
+                    ERR_ARG,
+                    &format!("参数 `{name_str}` 不是 int 类型入口（请用对应类型的 setter）"),
+                )
+            }
             _ => set_error(
                 ERR_UNKNOWN_PARAM,
                 &format!(
-                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
                 ),
             ),
         }
     })
 }
 
-/// str 型参数：HeuristicMode（auto|on|off，大小写敏感）；未知值→9；
+/// str 型参数：HeuristicMode、BinaryPropagation（auto|on|off，大小写敏感）；未知值→9；
 /// 类型不符→9；名字不存在→10。
 #[no_mangle]
 pub extern "C" fn milp_ffi_set_param_str(
@@ -812,6 +814,19 @@ pub extern "C" fn milp_ffi_set_param_str(
                     )
                 }
             },
+            "BinaryPropagation" => {
+                mb.params.binary_row_propagation = match value_str {
+                    "auto" => BinaryPropagationMode::Auto,
+                    "on" => BinaryPropagationMode::On,
+                    "off" => BinaryPropagationMode::Off,
+                    _ => {
+                        return set_error(
+                            ERR_ARG,
+                            "BinaryPropagation 非法（合法值：auto|on|off，大小写敏感）",
+                        )
+                    }
+                };
+            }
             "TimeLimit" | "Threads" | "MIPGap" | "LogPeriodSecs" => {
                 return set_error(
                     ERR_ARG,
@@ -822,7 +837,7 @@ pub extern "C" fn milp_ffi_set_param_str(
                 return set_error(
                     ERR_UNKNOWN_PARAM,
                     &format!(
-                        "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/LogPeriodSecs）"
+                        "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
                     ),
                 )
             }
@@ -837,9 +852,9 @@ pub extern "C" fn milp_ffi_set_param_str(
 
 /// 求解。选项组装纪律（镜像 main.rs:294-327）：
 /// - `SolveOptions`：Tolerances::default + BbOptions::default（FFI 固定
-///   root_cuts=true、use_presolve=true，无关闭入口），仅按 HeuristicMode
-///   覆盖 `heuristics`、按 TimeLimit 覆盖 `time_limit_ms`（秒→毫秒按
-///   [`secs_to_limit_ms`] 四舍五入 + 下限 1ms，0=不限）；
+///   root_cuts=true、use_presolve=true），按 HeuristicMode 覆盖 `heuristics`，
+///   按 BinaryPropagation 覆盖 `binary_row_propagation`，按 TimeLimit 覆盖
+///   `time_limit_ms`（秒→毫秒按 [`secs_to_limit_ms`] 四舍五入 + 下限 1ms，0=不限）；
 /// - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=
 ///   (mode==Auto) / log_period_secs / degrade=default；
 /// - LogPeriodSecs 开启时注入 hooks（stdout 进度行，镜像 main.rs:334-341，
@@ -864,6 +879,7 @@ pub extern "C" fn milp_ffi_solve(model: *mut c_void) -> i32 {
             tol: Tolerances::default(),
             bb: BbOptions {
                 heuristics: !matches!(params.heuristic_mode, HMode::Off),
+                binary_row_propagation: params.binary_row_propagation,
                 time_limit_ms,
                 ..BbOptions::default()
             },

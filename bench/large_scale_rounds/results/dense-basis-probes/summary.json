@@ -1,0 +1,112 @@
+{
+  "performance_promotion_evidence": false,
+  "source_difference": {
+    "baseline": {
+      "commit": "ba8f06f23dfd570b2d197a9fe4907e1a06ce1da4",
+      "milp_tree": "c289c77c675f0797b7ff80aa94e21e48dfd476ef",
+      "tree": "f2fb4aaaaa46036027e34861451786fa52bfb604",
+      "binary_sha256": "8fc4745aec9448bbe24e8da2e65207cbe7d45166acd03898dfe65a59f21f1522",
+      "default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "candidate": {
+      "commit": "ad7b4dfa009cae2136903b87bbdcdc809aade526",
+      "milp_tree": "23d628b71db35e3e5b846dcc66457842e5926402",
+      "tree": "55ea71223799ee517cfbda3bcd151c1ead4b9c49",
+      "binary_sha256": "3bf659f6c61c8f9688495bb2d6beb22062377ef569a146de984f3f41ff9280cb",
+      "default_features": [
+        "sparse_row_products",
+        "binary_coefficient_strengthening"
+      ]
+    },
+    "milp_changes": [
+      "M\tmilp/Cargo.toml",
+      "A\tmilp/examples/phase1_progress_probe.rs",
+      "A\tmilp/examples/phase1_trajectory_probe.rs",
+      "A\tmilp/src/phase1_progress_diagnostics.rs",
+      "M\tmilp/src/simplex.rs",
+      "M\tmilp/src/simplex_sparse.rs",
+      "A\tmilp/tests/data/dense_refresh_state_1.txt",
+      "A\tmilp/tests/data/dense_refresh_state_2.txt"
+    ]
+  },
+  "case_order": [
+    "p0033",
+    "p0201",
+    "lseu"
+  ],
+  "baseline": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/safe-primal-ratio-default.jsonl",
+  "baseline_sha256": "302b1bf966aeb7c360592c941d2ea02cc156fada41beeabd059302a5b79fa493",
+  "external": "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/external-baseline.jsonl",
+  "external_sha256": "12168b212ced6ab525fcd559d6a25561e72ab88c511aa16c530bac64ab46d292",
+  "cases": {
+    "p0033": {
+      "baseline_status": "optimal",
+      "status": "optimal",
+      "objective": 3089.0,
+      "bound": 3089.0,
+      "nodes": 634,
+      "lp_iterations": 26319,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": true,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    },
+    "p0201": {
+      "baseline_status": "limit_reached",
+      "status": "limit_reached",
+      "objective": 7615.0,
+      "bound": 7227.000000639117,
+      "nodes": 7450,
+      "lp_iterations": 956661,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": false,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    },
+    "lseu": {
+      "baseline_status": "limit_reached",
+      "status": "optimal",
+      "objective": 1120.0,
+      "bound": 1120.0,
+      "nodes": 49476,
+      "lp_iterations": 1560614,
+      "correctness_passed": true,
+      "correctness_errors": [],
+      "proof_completed": true,
+      "rss_passed": true,
+      "independent_check": {
+        "passed": true,
+        "runs": 3,
+        "instances": 1,
+        "solutions_checked": 3,
+        "mic_with_external_optimum": 1,
+        "mic_bounds_checked": 1,
+        "errors": []
+      }
+    }
+  },
+  "correctness_passed": true,
+  "proofs_completed": 2,
+  "rss_passed": true
+}

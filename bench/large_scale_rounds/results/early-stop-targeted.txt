@@ -1,0 +1,33 @@
+   Compiling milp v0.1.0 (/Users/guyuemochen/Desktop/projects/MIC/milp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.97s
+     Running unittests src/lib.rs (milp/target/debug/deps/milp-9902ccbad09493e3)
+
+running 5 tests
+test parallel_bb::tests::early_stop_disabled_keeps_parallel_adaptive_and_gap_decisions ... ok
+test branch_bound::tests::early_stop_disabled_keeps_sequential_adaptive_decisions ... ok
+test branch_bound::tests::early_stop_disabled_preserves_sequential_completion_and_limits ... ok
+test branch_bound::tests::early_stop_disabled_keeps_budget_time_limit_and_determinism ... ok
+test parallel_bb::tests::early_stop_disabled_preserves_parallel_completion_and_limits ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 347 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (milp/target/debug/deps/milp-0bb0010cc9d32f34)
+
+running 2 tests
+test tests::early_stop_cli_rejects_invalid_or_duplicate_values ... ok
+test tests::early_stop_cli_is_independent_of_heuristics_and_argument_order ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (milp/target/debug/deps/acceptance-9cc11cae4693781c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/warm_cold_parity.rs (milp/target/debug/deps/warm_cold_parity-e2383a1b7053e5f4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

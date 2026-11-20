@@ -1,6 +1,6 @@
 //! 保守预处理与还原（WP3 实现）。
 //!
-//! 规则五类且可证明安全，每轮严格按 R1→R2→R3→R4→R5 顺序施加，禁止重排
+//! 五条生产规则每轮按 R1→R2→R3→R4→R5 顺序施加，禁止重排
 //! （反例：整数变量的非整数单点区间 [2.3,2.3] 若先被 R2 固定列规则处理，
 //! 会把整数变量固定在非整数值 2.3，终检报 `Err(Numerical)` 而非正确的
 //! Infeasible；先 R1 取整则 lb←3 > ub←2 得空界，Simplex 判 Infeasible）：
@@ -16,6 +16,8 @@
 //!   Infeasible。
 //! - R4：单系数行 a·x_j (op) rhs：换算为 x_j 的界（a<0 时翻转 op，Eq 双侧），
 //!   与现界取交集（只收紧）后删行；整数变量交集后再按 R1 取整。
+//!   默认关闭的 `binary_mutex_row_fixing` 在此之后用认证互斥组和短行
+//!   活动度排除二元变量取 1，批量替换被固定为 0 的列。
 //! - R5（W5）：等价二元列聚合——全部存活行中系数向量相同**且目标系数相等**
 //!   的 m 个 Binary 列聚合为单个 Integer 变量 x'∈[0,m]（行/目标只看组内
 //!   总和，双射保最优；postsolve 把 x'=t 还原为组内前 t 个成员置 1）。
@@ -26,10 +28,20 @@
 //!   （最优解可同时取多个同权物品，knapsack 族目标全面错误）——详见
 //!   docs/parallel-profiling.md §14。
 //!
+//! binary_coefficient_strengthening 在完整 R1..R5 结束后，
+//! 仅加强 Le/Ge 行归一化后的自由二元负系数；不改右端，不重启界传播，
+//! 不处理等式或聚合 Integer 变量。活动度区间不能认证时保持原行。
+//! certified_row_fallback 另行默认关闭：只为实际强化且原可精确认证的行，
+//! 保存整数传播载荷与强化后稀疏见证；不向 LP 加行，不重启 R1..R5。
+//!
 //! 最多迭代 5 轮，无 reductions 即停。数值防御：代入/换算产生非有限右端、
 //! 目标常数溢出或无穷收紧界时返回 `Err(MilpError::Numerical)`。
 
 use crate::error::{MilpError, Result};
+use crate::binary_propagation::PreservedBinaryRows;
+
+#[cfg(feature = "binary_mutex_row_fixing")]
+mod binary_mutex;
 use crate::model::{Constraint, LinearExpr, Problem, RelOp, Tolerances, VarType, Variable};
 
 /// 预处理轮数上限（轮内无 reductions 即提前停止）。
@@ -66,6 +78,136 @@ struct WorkRow {
     rhs: f64,
     /// 是否仍在缩减问题中。
     alive: bool,
+}
+
+/// 最后一次 R5 后执行；不重启传播，不触碰右端、目标或还原映射。
+/// 对归一化行 a·x≤b，M 是全局盒上最大活动度。若 D≥M−b>0 且 D<−a_j，
+/// 将自由二元列的负系数改成 −D：所有修改列都为 0 时原行不变；至少一个
+/// 为 1 时，新行左端至多 M−D≤b。新系数增大且 x_j≥0，故也不会新增可行点。
+#[cfg(feature = "binary_coefficient_strengthening")]
+fn strengthen_negative_binary_coefficients(
+    p: &mut Problem,
+    tol: &Tolerances,
+    #[allow(unused_variables)] capture: bool,
+) -> PreservedBinaryRows {
+    #[allow(unused_mut)]
+    let mut preserved = {
+        #[cfg(feature = "certified_row_fallback")]
+        { if capture { PreservedBinaryRows::for_problem(p, *tol) } else { PreservedBinaryRows::default() } }
+        #[cfg(not(feature = "certified_row_fallback"))]
+        { PreservedBinaryRows::default() }
+    };
+    // 当前预处理尺度上的保守跳过门槛，宁可放弃微小系数或微小加强。
+    // 后续 LP 仍会按行归一化，因此这里不保证归一化后的系数大于主元阈值。
+    // 此门槛只影响是否尝试，有效性完全由下方的向外舍入区间证明。
+    let floor = 16.0 * tol.zero.max(tol.pivot).max(tol.feasibility);
+    if !floor.is_finite() || floor <= 0.0 {
+        return preserved;
+    }
+    if !p.vars.iter().any(|v| v.var_type == VarType::Binary && v.lb == 0.0 && v.ub == 1.0) {
+        return preserved;
+    }
+    for (_index, row) in p.constraints.iter_mut().enumerate() {
+        let sign = match row.op {
+            RelOp::Le => 1.0,
+            RelOp::Ge => -1.0,
+            RelOp::Eq => continue,
+        };
+        let rhs = sign * row.rhs;
+        if !rhs.is_finite() {
+            continue;
+        }
+        let mut lower = 0.0_f64;
+        let mut upper = 0.0_f64;
+        let mut valid = true;
+        for &(j, original) in &row.expr.terms {
+            let var = &p.vars[j];
+            let a = sign * original;
+            // 空界或 NaN 界保守跳过；最大活动度只需要系数最大化方向的界。
+            // 未使用一侧允许无穷，不借机判断不可行或传播新界。
+            if !a.is_finite() || !(var.lb <= var.ub) {
+                valid = false;
+                break;
+            }
+            let bound = if a >= 0.0 { var.ub } else { var.lb };
+            if !bound.is_finite() {
+                valid = false;
+                break;
+            }
+            // 乘积及每次求和向外扩，包含真实实数活动度。
+            let Some((lo, hi)) = outward_product(a, bound) else {
+                valid = false;
+                break;
+            };
+            lower = next_down(lower + lo);
+            upper = next_up(upper + hi);
+            if !lower.is_finite() || !upper.is_finite() {
+                valid = false;
+                break;
+            }
+        }
+        if !valid || lower <= rhs {
+            continue;
+        }
+        let delta = next_up(upper - rhs);
+        if !delta.is_finite() || delta <= floor {
+            continue;
+        }
+        #[cfg(feature = "certified_row_fallback")]
+        let captured = if capture && row.expr.terms.iter().any(|&(j, original)| {
+            let var = &p.vars[j];
+            let a = sign * original;
+            var.var_type == VarType::Binary && var.lb == 0.0 && var.ub == 1.0
+                && a < -delta && -a - delta > floor
+        }) {
+            // 已确定实际会改系数，且尚未写入；只保存严格认证成功的旧行。
+            // 此时最终列号已确定。少量认证前移到此处，根部闭合也支付此成本。
+            preserved.capture(_index, &p.vars, row, *tol)
+        } else { false };
+        for (j, original) in &mut row.expr.terms {
+            let var = &p.vars[*j];
+            let a = sign * *original;
+            if var.var_type == VarType::Binary && var.lb == 0.0 && var.ub == 1.0
+                && a < -delta && -a - delta > floor
+            {
+                *original = sign * -delta;
+            }
+        }
+        #[cfg(feature = "certified_row_fallback")]
+        if captured { preserved.seal_last(_index, row); }
+    }
+    preserved
+}
+
+/// 有限双精度数的相邻外侧浮点数；兼容尚未提供 next_up/down 的工具链。
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
+fn next_up(value: f64) -> f64 {
+    if value.is_nan() || value == f64::INFINITY {
+        value
+    } else if value == 0.0 {
+        f64::from_bits(1)
+    } else {
+        f64::from_bits(if value > 0.0 { value.to_bits() + 1 } else { value.to_bits() - 1 })
+    }
+}
+
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
+fn next_down(value: f64) -> f64 {
+    -next_up(-value)
+}
+
+/// 乘零精确。其它有限乘积包在相邻浮点数之间。
+#[cfg(any(feature = "binary_coefficient_strengthening", feature = "binary_mutex_row_fixing"))]
+fn outward_product(a: f64, b: f64) -> Option<(f64, f64)> {
+    let rounded = a * b;
+    if !rounded.is_finite() {
+        return None;
+    }
+    if a == 0.0 || b == 0.0 {
+        Some((0.0, 0.0))
+    } else {
+        Some((next_down(rounded), next_up(rounded)))
+    }
 }
 
 /// 变量类型是否要求取整（Integer/Binary）。
@@ -107,6 +249,17 @@ fn sig_cmp(a: &[(usize, f64)], b: &[(usize, f64)]) -> std::cmp::Ordering {
 /// 空界（lb>ub）会原样保留在缩减问题里，由 Simplex 判 Infeasible——预处理
 /// 自身不直接下不可行结论（与 R1/R3 的“交给 Simplex”语义一致）。
 pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)> {
+    let (reduced, map, _) = presolve_for_solve(p, tol, false)?;
+    Ok((reduced, map))
+}
+
+/// 内部求解入口；公开 presolve 始终不捕获载荷，LP 输出与本入口逐位相同。
+/// capture 由最外层线程数与传播模式控制，不能因并行顺序前缀而重开。
+pub(crate) fn presolve_for_solve(
+    p: &Problem,
+    tol: &Tolerances,
+    #[allow(unused_variables)] capture: bool,
+) -> Result<(Problem, PostsolveMap, PreservedBinaryRows)> {
     let n = p.vars.len();
     let mut lb: Vec<f64> = p.vars.iter().map(|v| v.lb).collect();
     let mut ub: Vec<f64> = p.vars.iter().map(|v| v.ub).collect();
@@ -267,6 +420,32 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
             row.alive = false;
             dropped_rows.push(row.origin);
             reductions += 1;
+        }
+
+        #[cfg(feature = "binary_mutex_row_fixing")]
+        {
+            let zero_fixes = binary_mutex::zero_fixes(&rows, &types, &var_alive, &lb, &ub, *tol);
+            let mut fixed_this_round = 0;
+            for (j, is_fixed) in zero_fixes.iter().copied().enumerate() {
+                if is_fixed {
+                    var_alive[j] = false;
+                    fixed.push((j, 0.0));
+                    fixed_this_round += 1;
+                }
+            }
+            if fixed_this_round > 0 {
+                // 零代入不改变右端或目标常数。共享一次行和目标扫描，沿用 R2 的还原记录。
+                for row in rows.iter_mut().filter(|row| row.alive) {
+                    row.terms.retain(|&(j, _)| !zero_fixes[j]);
+                }
+                obj_terms.retain(|&(j, _)| !zero_fixes[j]);
+                reductions += fixed_this_round;
+                #[cfg(feature = "proof_profile")]
+                crate::proof_profile::record("presolve_binary_mutex", vec![
+                    ("round", _round.into()),
+                    ("fixed_zero", fixed_this_round.into()),
+                ]);
+            }
         }
 
         // —— R5（W5）：等价二元列聚合（duplicate column aggregation）——
@@ -459,7 +638,8 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
             rhs: row.rhs,
         })
         .collect();
-    let reduced = Problem {
+    #[allow(unused_mut)]
+    let mut reduced = Problem {
         name: p.name.clone(),
         sense: p.sense,
         vars,
@@ -467,6 +647,10 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
         obj_offset,
         constraints,
     };
+    #[cfg(feature = "binary_coefficient_strengthening")]
+    let preserved = strengthen_negative_binary_coefficients(&mut reduced, tol, capture);
+    #[cfg(not(feature = "binary_coefficient_strengthening"))]
+    let preserved = PreservedBinaryRows::default();
     Ok((
         reduced,
         PostsolveMap {
@@ -475,6 +659,7 @@ pub fn presolve(p: &Problem, tol: &Tolerances) -> Result<(Problem, PostsolveMap)
             var_map,
             aggregations,
         },
+        preserved,
     ))
 }
 
@@ -961,5 +1146,283 @@ mod tests {
         // 维度不符：缺失分量 NaN（示警而非 panic）。
         let bad = postsolve(&map, &[1.0], 3, &tol());
         assert!(bad[1].is_nan());
+    }
+}
+
+#[cfg(all(test, feature = "binary_coefficient_strengthening"))]
+mod binary_strengthening_tests {
+    use super::*;
+    use crate::model::Sense;
+
+    fn toy(op: RelOp) -> Problem {
+        let sign = if op == RelOp::Ge { -1.0 } else { 1.0 };
+        let mut p = Problem::new("负二元加强", Sense::Minimize);
+        p.vars = vec![
+            Variable { name: "x".into(), var_type: VarType::Binary, lb: 0.0, ub: 1.0 },
+            Variable { name: "y".into(), var_type: VarType::Continuous, lb: 0.0, ub: 4.0 },
+        ];
+        p.constraints.push(Constraint {
+            name: None, expr: LinearExpr { terms: vec![(0, -10.0 * sign), (1, sign)] },
+            op, rhs: 0.0,
+        });
+        p
+    }
+
+    fn feasible(p: &Problem, x: &[f64]) -> bool {
+        p.constraints.iter().all(|row| {
+            let lhs = row.expr.eval(x);
+            match row.op { RelOp::Le => lhs <= row.rhs, RelOp::Ge => lhs >= row.rhs,
+                RelOp::Eq => lhs == row.rhs }
+        })
+    }
+
+    fn bits(p: &Problem) -> Vec<u64> {
+        p.constraints.iter().flat_map(|r| std::iter::once(r.rhs.to_bits())
+            .chain(r.expr.terms.iter().map(|(_, a)| a.to_bits()))).collect()
+    }
+
+    #[test]
+    fn binary_both_branches_preserved_and_fractional_point_removed() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let original = toy(op);
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+            let a = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(a >= 4.0 && a < 4.0 + 1e-12);
+            assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+            for x in [0.0, 1.0] {
+                for k in 0..=64 {
+                    let point = [x, k as f64 / 16.0];
+                    assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+                }
+            }
+            assert!(feasible(&original, &[0.4, 4.0]));
+            assert!(!feasible(&changed, &[0.4, 4.0]));
+        }
+    }
+
+    #[test]
+    fn several_negative_columns_preserve_every_binary_assignment() {
+        let mut original = toy(RelOp::Le);
+        original.vars.push(Variable { name: "z".into(), var_type: VarType::Binary, lb: 0.0, ub: 1.0 });
+        original.constraints[0].expr.terms.push((2, -9.0));
+        let mut changed = original.clone();
+        strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+        assert!(changed.constraints[0].expr.terms[0].1 > -5.0);
+        assert!(changed.constraints[0].expr.terms[2].1 > -5.0);
+        for x in [0.0, 1.0] { for z in [0.0, 1.0] { for k in 0..=32 {
+            let point = [x, k as f64 / 8.0, z];
+            assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+        } } }
+    }
+
+    #[test]
+    fn unsupported_or_uncertain_cases_are_bitwise_unchanged() {
+        let mut cases = Vec::new();
+        let mut eq = toy(RelOp::Eq);
+        eq.constraints[0].expr.terms[0].1 = 10.0;
+        eq.constraints[0].rhs = 10.0;
+        cases.push(eq);
+        for kind in [VarType::Integer, VarType::Continuous] {
+            let mut p = toy(RelOp::Le); p.vars[0].var_type = kind; cases.push(p);
+        }
+        for (lb, ub) in [(0.0, 2.0), (0.5, 1.0), (1.0, 1.0), (2.0, 1.0)] {
+            let mut p = toy(RelOp::Le); p.vars[0].lb = lb; p.vars[0].ub = ub; cases.push(p);
+        }
+        for ub in [f64::INFINITY, f64::MAX] {
+            let mut p = toy(RelOp::Le); p.vars[1].ub = ub;
+            p.constraints[0].expr.terms[1].1 = 2.0; cases.push(p);
+        }
+        for rhs in [4.0, 5.0, -6.0] {
+            let mut p = toy(RelOp::Le); p.constraints[0].rhs = rhs; cases.push(p);
+        }
+        let mut tiny = toy(RelOp::Le); tiny.vars[1].ub = 1e-9; cases.push(tiny);
+        // 大量取消使 M 的区间跨过 rhs，必须放弃，而非以舍入中值假认证。
+        let mut cancellation = toy(RelOp::Le);
+        for j in 2..66 {
+            cancellation.vars.push(Variable { name: format!("c{j}"), var_type: VarType::Continuous,
+                lb: 1.0, ub: 1.0 });
+            cancellation.constraints[0].expr.terms.push((j, if j % 2 == 0 { 1e20 } else { -1e20 }));
+        }
+        cases.push(cancellation);
+        for mut p in cases {
+            let before = bits(&p);
+            strengthen_negative_binary_coefficients(&mut p, &Tolerances::default(), false);
+            assert_eq!(before, bits(&p));
+        }
+    }
+
+    #[test]
+    fn deterministic_and_postsolve_mapping_unchanged() {
+        let p = toy(RelOp::Le);
+        let (a, map_a) = presolve(&p, &Tolerances::default()).unwrap();
+        let (b, map_b) = presolve(&p, &Tolerances::default()).unwrap();
+        assert_eq!(bits(&a), bits(&b));
+        assert_eq!(map_a.var_map, map_b.var_map);
+        assert_eq!(map_a.fixed, map_b.fixed);
+        assert_eq!(map_a.var_map, vec![0, 1]);
+        assert!(map_a.dropped_rows.is_empty() && map_a.aggregations.is_empty());
+        assert_eq!(a.obj.terms, p.obj.terms);
+        assert_eq!(a.obj_offset.to_bits(), p.obj_offset.to_bits());
+    }
+
+    #[test]
+    fn nonzero_rhs_negative_bounds_and_underflow_are_conservative() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let mut original = toy(op);
+            original.vars[1].lb = -2.0;
+            original.vars[1].ub = 3.0;
+            original.constraints[0].expr.terms[1].1 *= -1.0;
+            original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+            let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+            for x in [0.0, 1.0] { for k in -16..=24 {
+                let point = [x, k as f64 / 8.0];
+                assert_eq!(feasible(&original, &point), feasible(&changed, &point));
+            } }
+        }
+        let mut p = toy(RelOp::Le);
+        p.vars.push(Variable { name: "下溢项".into(), var_type: VarType::Continuous,
+            lb: 0.0, ub: f64::MIN_POSITIVE });
+        p.constraints[0].expr.terms.push((2, f64::MIN_POSITIVE));
+        strengthen_negative_binary_coefficients(&mut p, &Tolerances::default(), false);
+        // 正的真实乘积虽然下溢为零，但外舍入仍覆盖它，不能低估 4。
+        assert!(p.constraints[0].expr.terms[0].1 < -4.0);
+    }
+
+    #[test]
+    fn unused_infinite_bound_preserves_both_binary_branches() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            let mut original = toy(op);
+            original.vars[1].lb = -2.0;
+            original.vars[1].ub = f64::INFINITY;
+            original.constraints[0].expr.terms[1].1 *= -1.0;
+            original.constraints[0].rhs = if op == RelOp::Le { -1.0 } else { 1.0 };
+            let mut changed = original.clone();
+            strengthen_negative_binary_coefficients(&mut changed, &Tolerances::default(), false);
+            let magnitude = changed.constraints[0].expr.terms[0].1.abs();
+            assert!(magnitude >= 3.0 && magnitude < 3.0 + 1e-12);
+            assert_eq!(original.constraints[0].rhs.to_bits(), changed.constraints[0].rhs.to_bits());
+            // x=0 时均要求 y≥1；x=1 时均允许整个 [−2,+∞)。
+            for x in [0.0, 1.0] {
+                for y in [-2.0, -1.0, 0.0, 0.5, 1.0, 2.0, 1e20, f64::MAX] {
+                    assert_eq!(feasible(&original, &[x, y]), feasible(&changed, &[x, y]));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn directed_neighbors_cover_zero_and_extremes() {
+        assert!(next_down(0.0) < 0.0 && next_up(-0.0) > 0.0);
+        for x in [-f64::MAX, -1.0, -f64::MIN_POSITIVE, 0.0, f64::MIN_POSITIVE, 1.0, f64::MAX] {
+            assert!(next_down(x) < x && next_up(x) > x);
+        }
+        assert_eq!(next_down(f64::from_bits(1)), 0.0);
+        assert_eq!(next_up(-f64::from_bits(1)), -0.0);
+        assert_eq!(next_up(f64::MAX), f64::INFINITY);
+        assert_eq!(next_down(-f64::MAX), f64::NEG_INFINITY);
+    }
+}
+
+#[cfg(all(test, feature = "certified_row_fallback"))]
+pub(crate) mod certified_fallback_tests {
+    use super::*;
+    use crate::binary_propagation::{BinaryPropagation, CaptureAudit};
+    use crate::model::Sense;
+
+    pub(crate) fn branch_model() -> Problem {
+        let mut p = Problem::new("认证回退分支模型", Sense::Maximize);
+        for name in ["x", "y", "z"] { p.add_var(name, VarType::Binary).unwrap(); }
+        p.set_objective(vec![(0, -0.125), (1, 2.0), (2, 1.0)], 0.25).unwrap();
+        p.add_constraint(None, vec![(0, -10.0), (1, 2.0), (2, 1.0)], RelOp::Le, 0.0).unwrap();
+        p.add_constraint(None, vec![(1, 1.0), (2, 1.0)], RelOp::Le, 1.5).unwrap();
+        p
+    }
+
+    fn all_float_bits(p: &Problem) -> Vec<u64> {
+        p.vars.iter().flat_map(|v| [v.lb.to_bits(), v.ub.to_bits()])
+            .chain(std::iter::once(p.obj_offset.to_bits()))
+            .chain(p.obj.terms.iter().map(|&(_, a)| a.to_bits()))
+            .chain(p.constraints.iter().flat_map(|row| std::iter::once(row.rhs.to_bits())
+                .chain(row.expr.terms.iter().map(|&(_, a)| a.to_bits())))).collect()
+    }
+
+    #[test]
+    fn certified_fallback_leaves_lp_and_postsolve_bitwise_unchanged() {
+        for op in [RelOp::Le, RelOp::Ge] {
+            for tol in [Tolerances::default(), Tolerances { feasibility: 1e-8,
+                integrality: 1e-7, ..Tolerances::default() }] {
+                let mut p = branch_model();
+                if op == RelOp::Ge {
+                    p.constraints[0].op = op;
+                    for (_, a) in &mut p.constraints[0].expr.terms { *a = -*a; }
+                }
+                let (plain, plain_map) = presolve(&p, &tol).unwrap();
+                let (saved_model, saved_map, saved) = presolve_for_solve(&p, &tol, true).unwrap();
+                assert_eq!(saved.len(), 1);
+                assert_eq!(all_float_bits(&plain), all_float_bits(&saved_model));
+                assert_eq!(format!("{plain:?}"), format!("{saved_model:?}"));
+                assert_eq!(format!("{plain_map:?}"), format!("{saved_map:?}"));
+                let x = vec![1.0, 1.0, 0.0];
+                let a = postsolve(&plain_map, &x, p.vars.len(), &tol);
+                let b = postsolve(&saved_map, &x, p.vars.len(), &tol);
+                assert_eq!(a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    b.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+                assert_eq!(BinaryPropagation::new(&saved_model, tol).stats.accepted_rows, 1);
+                let restored = BinaryPropagation::with_preserved(&saved_model, tol, saved).unwrap();
+                assert_eq!((restored.stats.accepted_rows, restored.stats.skipped_rows), (2, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn certified_fallback_uses_final_columns_after_fixing_and_r5_aggregation() {
+        let tol = Tolerances::default();
+        let mut p = Problem::new("固定删列及聚合后的认证回退", Sense::Maximize);
+        for name in ["fixed", "a", "b", "x", "y", "z"] { p.add_var(name, VarType::Binary).unwrap(); }
+        p.vars[0].lb = 1.0;
+        p.set_objective(vec![(0, 3.0), (1, 7.0), (2, 7.0), (3, -0.125), (4, 2.0), (5, 1.0)], 0.25).unwrap();
+        p.add_constraint(None, vec![(0, 1.0), (3, -10.0), (4, 2.0), (5, 1.0)], RelOp::Le, 1.0).unwrap();
+        p.add_constraint(None, vec![(1, 1.0), (2, 1.0), (3, -10.0)], RelOp::Le, 0.0).unwrap();
+        let (plain, plain_map) = presolve(&p, &tol).unwrap();
+        let (reduced, map, saved) = presolve_for_solve(&p, &tol, true).unwrap();
+        assert_eq!(map.var_map, vec![3, 4, 5, usize::MAX]);
+        assert_eq!(map.fixed, vec![(0, 1.0)]);
+        assert_eq!(map.aggregations, vec![(vec![1, 2], 3, None)]);
+        assert_eq!(all_float_bits(&plain), all_float_bits(&reduced));
+        assert_eq!(format!("{plain_map:?}"), format!("{map:?}"));
+        assert_eq!(saved.len(), 1, "含聚合Integer的改动行不得作为二元认证回退来源");
+        let mut state = BinaryPropagation::with_preserved(&reduced, tol, saved).unwrap();
+        let mut bounds = crate::simplex::Bounds::from_problem(&reduced);
+        bounds.ub[0] = 0.0;
+        assert_eq!(state.propagate(&mut bounds, true, [], None, |_, _, _| {}),
+            crate::binary_propagation::Outcome::Complete);
+        assert_eq!((bounds.ub[1], bounds.ub[2]), (0.0, 0.0));
+        assert_eq!(bounds.ub[3], 2.0, "不把聚合列误当成原二元列传播");
+        let restored = postsolve(&map, &[1.0, 1.0, 0.0, 2.0], p.vars.len(), &tol);
+        assert_eq!(restored, vec![1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn certified_fallback_only_attempts_actual_changes_and_public_entry_keeps_empty() {
+        let tol = Tolerances::default();
+        let p = branch_model();
+        let audit = CaptureAudit::new();
+        let (public, _) = presolve(&p, &tol).unwrap();
+        assert_eq!(audit.count(), 0);
+        let (_, _, empty) = presolve_for_solve(&p, &tol, false).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(audit.count(), 0);
+        let (internal, _, saved) = presolve_for_solve(&p, &tol, true).unwrap();
+        assert_eq!(audit.count(), 1, "正系数行未强化，不得尝试捕获");
+        assert_eq!(all_float_bits(&public), all_float_bits(&internal));
+        assert_eq!(saved.len(), 1);
+        let mut mixed = p;
+        mixed.vars[2].var_type = VarType::Continuous;
+        let (_, _, rejected) = presolve_for_solve(&mixed, &tol, true).unwrap();
+        assert!(rejected.is_empty(), "混合行被改动也必须拒绝旧行认证");
     }
 }
