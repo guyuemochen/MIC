@@ -1,0 +1,151 @@
+{
+  "baseline_commit": "31fbb74786f20a8d00a16ea65d9db77f7b2addbc",
+  "threads": 1,
+  "seconds": 60,
+  "node_limit": 2000000,
+  "previous_and_current_seconds": {
+    "current": 0.351871875,
+    "baseline": 1.050674208
+  },
+  "baseline_nodes": 1,
+  "current_nodes": 24069,
+  "baseline_lp_iterations": 3904,
+  "current_lp_iterations": 0,
+  "current_paired_with_gurobi_seconds": 0.35226525,
+  "gurobi_version": "10.0.3",
+  "gurobi_status": "TIME_LIMIT",
+  "gurobi_seconds": 60.00018837499374,
+  "necessary_screen_on_frozen_79": [
+    "bnatt500"
+  ],
+  "fresh_benchmark_cases": [
+    "p0282",
+    "p0548",
+    "bnatt500"
+  ],
+  "milliseconds": [
+    {
+      "limit_ms": 1,
+      "elapsed_secs": 0.0010715,
+      "nodes": 0,
+      "bound": null,
+      "status": "limit_reached"
+    },
+    {
+      "limit_ms": 40,
+      "elapsed_secs": 0.040124458,
+      "nodes": 3621,
+      "bound": 0,
+      "status": "limit_reached"
+    }
+  ],
+  "full_size_variants": [
+    {
+      "case": "反转行序",
+      "status": "infeasible",
+      "objective": null
+    },
+    {
+      "case": "重排行列",
+      "status": "infeasible",
+      "objective": null
+    },
+    {
+      "case": "改一条输出关系求最小",
+      "status": "optimal",
+      "objective": 0.0
+    },
+    {
+      "case": "改一条输出关系求最大",
+      "status": "optimal",
+      "objective": 1.0
+    }
+  ],
+  "small_models": 80,
+  "unlimited_statuses": {
+    "optimal": 48,
+    "infeasible": 32
+  },
+  "one_node_statuses": {
+    "limit_reached": 58,
+    "infeasible": 17,
+    "optimal": 5
+  },
+  "small_runs": 160,
+  "checked_small_callbacks": 60,
+  "tests": {
+    "milp": {
+      "passed": 583,
+      "failed": 0,
+      "ignored": 6
+    },
+    "planner": {
+      "passed": 127,
+      "failed": 0,
+      "ignored": 2
+    },
+    "milp-ffi": {
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    },
+    "release_acceptance_including_ignored": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "python_tests": 65,
+  "source_hashes": {
+    "bench/large_scale_rounds/check_results.py": "b56ddf3ed181e952f958e9bfd88ffbcd3c2c1562912f275e6163d1be1c7a464a",
+    "bench/large_scale_rounds/compare.py": "0bf001d5baf3113f5d1e750392ffc59f2a1860a369623682bc2a5dc69aaaecdd",
+    "bench/large_scale_rounds/compare_all_timing.py": "416a01823c16ca4dc5156d0860b4b97525c053c0c995045833dceb09ea5bd197",
+    "bench/large_scale_rounds/compare_drayage_timing.py": "b151d16bc7b5ec88331ae7554cf4e33ccbaf455145f3e1bf56f403a0c400f9f2",
+    "bench/large_scale_rounds/compare_gurobi10.py": "4b56e2d9c18f31ce4a4d0716e0e50ad7b236e24ec3ad1baa1f0d3be3d8c6ec86",
+    "bench/large_scale_rounds/run_probe.py": "eba14f74d391adffe13b0bb5662ae14a116854c71eec8f81891218886db25ed9",
+    "bench/large_scale_rounds/run_proof_diagnostics.py": "1360249121e1bf6590ce8c7607d900623998bc6d67221a7ea82ecafffe030454",
+    "bench/large_scale_rounds/run_root_work.py": "1a11a45988e74cfeaa315a89075f61c29529b7c13850adc2aefbf9e08fe98d62",
+    "milp/Cargo.lock": "485ae25775c89334423538a03c60486d4787e5e5a463524b65a624fa24239564",
+    "milp/Cargo.toml": "ebb033f8b89fe8470592d9198627c8a880aebef386236514795e9a5404c4c5fe",
+    "milp/examples/round_probe.rs": "bbc92b14234bd72f29a7ca677dd1763daaa3a9a51d811ad16a500014622a952d",
+    "milp/src/binary_propagation.rs": "26a51f848abd35f1b6a5698e0fe5c3f83d5910f77fd2c19784fa4a1ab023fe93",
+    "milp/src/block_cover.rs": "58d66dbc87b33faeec8cd1da6baa314c51ecf1168fbdc3369a59b1036d6fb635",
+    "milp/src/boolean_network/encoding.rs": "cc5dfc7e8c306660c991c466e08ca2749502bd9ac9621a815ee75541759c4b96",
+    "milp/src/boolean_network/search.rs": "2711cc16f322f237d8f5b7b36f1b3b0ac8a9d50302692239531efe7223fd2e78",
+    "milp/src/boolean_network.rs": "ff4e50aa598d21b0954899c786e34f36fe6655b3d0769366a4080ab5bce6d3bf",
+    "milp/src/branch_bound.rs": "6ee07765759684b3437ff7501c284d56a9a9ed67f3d04f27235be87e0315e464",
+    "milp/src/classification_conflicts.rs": "f965b234d985bd8c83739263d98fc7b170f50d9565a70222075e02867e82d03e",
+    "milp/src/conditional_rows.rs": "1bd575db401a6be021b507f1479ea82e59c895b1d35c6efd053f3531a0ea5e43",
+    "milp/src/cover_repair/bound.rs": "e31607b64f0ce74504c48da1ca52305a605d90961f366659e7c875c005ba411b",
+    "milp/src/cover_repair.rs": "6fb9d372119c6ed83f76d5e8825d22331166c4d3e1e0fef1a358674980759f18",
+    "milp/src/cuts.rs": "92debc6790a5d203c4540dcfc386d9a34f0c0d61396fc75f7091825c774324d9",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/heuristics.rs": "033efdc2618a01c841850ec57bcfdb1aa7b633c526865438249a6bd708aa7782",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "36330266b00cbae417bc2f7f7ca5adde443631d08dc5319f452df3d1ce2c8c7b",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/packing.rs": "558f07d49a36209e0da98cf2832e5e887c21f0e58f5966194c537a4efef7bc71",
+    "milp/src/packing_core.rs": "3a03ee0c22c8656aa945c82cc4f74b6519180ec713e91b24eb557b8c2bd32780",
+    "milp/src/parallel_bb.rs": "a686a17f4d3ab0ea831459e0b525e54b741f1bdf31a24591ba21a844211dc286",
+    "milp/src/periodic_equalities.rs": "f7ff847870b617d282760ec86e8099ab6a7a243c10e09800b8158b9f5617d5fd",
+    "milp/src/periodic_projection.rs": "c4a18096e00d573f06efb5dd1d6d98fc0594a7d0b3b7e10f3e7dfe883f627316",
+    "milp/src/phase1_progress_diagnostics.rs": "0b31160f3faf612234983677ee981d0e79b09bb6449c7327038d73fb63d016f9",
+    "milp/src/presolve/binary_mutex.rs": "3d609c3f780cd465f4738c13186056e4a2480f14d48700d2fb201b743e809c5c",
+    "milp/src/presolve.rs": "8a3e8d6d0edaf592a429208ab1cedb407c40e370887d165dfe0c4735475858b1",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/route_cover.rs": "68bf4103d952ba28e840b1f34ba5760cb301758c36850bb7edbf813a73da85aa",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/shared_demand.rs": "4db8f49a985d92e07f843fc6d97a746f0a2414a25f8bcc87023e288d9bf74374",
+    "milp/src/simplex.rs": "ee8bcbeea3ebf38aec55f96be84d853b96ed46cf64c7d50275d14b006dbe3eb9",
+    "milp/src/simplex_sparse.rs": "22ae28f2f63feeceab5cd2417e350757f0b6b584b576b123985697dce4da3ee2",
+    "milp/src/solver.rs": "c05a71c573e80daf3c7828eb055eab2267face3551fc2974d7cd1b0bd18a8348",
+    "milp/src/time_window_routes.rs": "e49ef0e683f711ea6b87fc77748bb06eca3b35bee3ddb0409e9c8c7b07c4e204"
+  },
+  "baseline_executable_sha256": "de54fa524abad9afee95a33e1b61c649578230dce5bfeb0ca50b901daedf37a8",
+  "current_executable_sha256": "fe5b0d050463a7384e59b3cdde7eea7f3d546de7c45e133ab9381a1799978d1d",
+  "audited_proof_sha256": "8c95cc337eca934d5129c3da0ad45f959ebadcd8f880f64cd7613e98cbe828a0",
+  "reproduced_trace": true,
+  "reproduced_cnf": true
+}

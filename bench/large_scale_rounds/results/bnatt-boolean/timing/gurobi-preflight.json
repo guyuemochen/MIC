@@ -1,0 +1,62 @@
+{
+  "2": {
+    "version": "10.0.3",
+    "final_objective": 3.75,
+    "parameters": {
+      "OutputFlag": 0,
+      "Threads": 1,
+      "TimeLimit": 3.0,
+      "NodeLimit": 2000000.0,
+      "MIPGap": 0.0,
+      "MIPGapAbs": 0.0,
+      "IntFeasTol": 1e-06,
+      "DualReductions": 1,
+      "FeasibilityTol": 1e-06,
+      "OptimalityTol": 1e-06
+    },
+    "verified": {
+      "first": {
+        "event": 1,
+        "elapsed_secs": 0.00011770801211241633,
+        "objective": 3.75,
+        "tasks_served": null
+      },
+      "first_route": null,
+      "final_vector_event": 1,
+      "final_tasks_served": null,
+      "accepted": 1,
+      "rejected": [],
+      "errors": []
+    }
+  },
+  "2001": {
+    "version": "10.0.3",
+    "final_objective": 3.75,
+    "parameters": {
+      "OutputFlag": 0,
+      "Threads": 1,
+      "TimeLimit": 3.0,
+      "NodeLimit": 2000000.0,
+      "MIPGap": 0.0,
+      "MIPGapAbs": 0.0,
+      "IntFeasTol": 1e-06,
+      "DualReductions": 1,
+      "FeasibilityTol": 1e-06,
+      "OptimalityTol": 1e-06
+    },
+    "verified": {
+      "first": {
+        "event": 1,
+        "elapsed_secs": 6.391700298991054e-05,
+        "objective": 3.75,
+        "tasks_served": null
+      },
+      "first_route": null,
+      "final_vector_event": 1,
+      "final_tasks_served": null,
+      "accepted": 1,
+      "rejected": [],
+      "errors": []
+    }
+  }
+}

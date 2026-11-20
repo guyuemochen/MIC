@@ -4260,3 +4260,27 @@ MIC 在 79 例中证优 70 例，保住上轮的 69 例，新证优 `marketsplit
 共复核 158 次运行、151 个终解，MIC 和 Gurobi 的可行解回调各通过 300、377 次。另按原行验解，并用独立枚举、整数动态规划及 Gurobi 对生成模型的解、界和限额状态进行对账。
 
 [79 例逐项对比](../bench/large_scale_rounds/results/all-gurobi10-remaining-60s/comparison.md) · [全量核验](../bench/large_scale_rounds/results/all-gurobi10-remaining-60s/verification.json) · [独立对账与限额检查](../bench/large_scale_rounds/results/all-gurobi10-remaining-60s/structural-checks.json)。
+
+## 48. bnatt500 在原模型上证得不可行
+
+MIC 用 0.352 秒证明 `bnatt500` 无可行解。上一版在根节点因数值问题停止，无法作出判定。正式对照使用同一台 Apple M4，单线程、60 秒、200 万节点、零目标间隙。时间从模型载入完毕开始，包含约束识别、编码和搜索。
+
+| 求解器 | 结果 | 返回用时 | 搜索节点 |
+|---|---|---:|---:|
+| 上一版 MIC（`31fbb74`，三次中位数） | 触限，无结论 | 1.051 秒 | 1 |
+| 本轮 MIC（三次中位数） | 已证不可行 | 0.352 秒 | 24069 |
+| Gurobi 10.0.3（本轮单次） | 时间触限，无结论 | 60.000 秒 | 1059 |
+
+原模型有 4500 个二元变量、7029 条约束。逐组枚举原行的二元取值，可以识别 1971 个固定列和 2029 个可由输入唯一决定的列。消去它们后，500 个主变量上的 2423 条布尔子句完整描述原网络。搜索发现冲突时，记录导致冲突的取值组合，再回到仍有其他选择的层。三次运行的节点数一致，均未调用单纯形。布尔决策节点与两个求解器的线性松弛分支节点计数口径不同。识别依赖原行真值和变量之间的依赖关系。若容差可能改变一个禁配的判定，或者有原行无法解释，仍走通用求解流程。
+
+独立检查器读取冻结的原始输入，对照每个门的真值表和投影后的每个局部取值；随后从无额外假设的公式开始，逐条核验 20076 步推导。最后一步导出空子句，表示任何取值都会矛盾。正式代码重新生成的两个证明文件与归档逐字节一致。节点限额为 24068 时返回 `LimitReached`，提高到 24069 才返回 `Infeasible`。1 毫秒和 40 毫秒的时限测试也都返回触限。
+
+80 个小网络在两档节点限额下与完整穷举对账。足额时 48 例证优、32 例证不可行。两个原规模的行列重排仍证不可行；另两个原规模的可行变体分别证得最小值 0、最大值 1，回填的终解和回调逐条通过原约束。冻结的 79 例中，仅 `bnatt500` 满足新增入口的必要条件。本轮正式计时复测 3 例，另外两例为 `p0282` 和 `p0548`，原最优值 258411、8691 均通过复核。
+
+[正式对照及回归汇总](../bench/large_scale_rounds/results/bnatt-boolean/summary.json) · [编码与不可行证明的独立复核](../bench/large_scale_rounds/results/bnatt-boolean/verification.json) · [实测记录与回调](../bench/large_scale_rounds/results/bnatt-boolean/timing/timings.jsonl.gz) · [真实规模变体](../bench/large_scale_rounds/results/bnatt-boolean/real-variants.json)。
+
+在仓库根目录运行以下命令即可从原输入重放归档证明。
+
+```sh
+python3 bench/large_scale_rounds/results/bnatt-boolean/verify.py
+```

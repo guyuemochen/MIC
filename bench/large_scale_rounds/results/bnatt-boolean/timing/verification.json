@@ -1,0 +1,281 @@
+{
+  "passed": true,
+  "issues": [],
+  "raw_records": 6,
+  "expected_records": 6,
+  "stats": {
+    "cases": 3,
+    "lp": 0,
+    "milp": 3,
+    "by_solver": {
+      "mic": {
+        "optimal": 2,
+        "verified_optimal": 2,
+        "verified_optimal_within_budget": 2,
+        "checked_final_vectors": 2,
+        "callback": 2,
+        "rejected_callbacks": 0,
+        "infeasible": 1,
+        "no_solution": 1
+      },
+      "gurobi": {
+        "optimal": 2,
+        "verified_optimal": 2,
+        "verified_optimal_within_budget": 2,
+        "checked_final_vectors": 2,
+        "callback": 2,
+        "rejected_callbacks": 0,
+        "limit_reached": 1,
+        "no_solution": 1
+      }
+    },
+    "proof": {
+      "pairs": 2,
+      "mic_faster": 2,
+      "gurobi_faster": 0,
+      "equal": 0,
+      "ratio_count": 2,
+      "median_ratio": 0.41807692621852294,
+      "geometric_mean_ratio": 0.36095448236662075
+    },
+    "proof_at_least_one_ms": {
+      "pairs": 2,
+      "mic_faster": 2,
+      "gurobi_faster": 0,
+      "equal": 0,
+      "ratio_count": 2,
+      "median_ratio": 0.41807692621852294,
+      "geometric_mean_ratio": 0.36095448236662075
+    },
+    "first_callback": {
+      "pairs": 2,
+      "mic_faster": 0,
+      "gurobi_faster": 2,
+      "equal": 0,
+      "ratio_count": 2,
+      "median_ratio": 16.59243542246308,
+      "geometric_mean_ratio": 7.48455904364373
+    }
+  },
+  "cases": [
+    {
+      "case_id": "public/p0282",
+      "instance": "p0282",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0282.mps.gz",
+        "status": "optimal",
+        "objective": 258411.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 258411.0,
+          "bound": 258411.0,
+          "objective_recomputed": 258411.0,
+          "return_secs": 0.00546425,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.001673416
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.001673416,
+            "objective": 1096212.0
+          },
+          "events_accepted": 29,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 2,
+          "proof_return_upper_secs": 0.00546425,
+          "conclusion_return_upper_secs": 0.00546425,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 258411.0,
+          "bound": 258411.0,
+          "objective_recomputed": 258411.0,
+          "return_secs": 0.02638124999066349,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.329199484549463e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.329199484549463e-05,
+            "objective": 457129.0
+          },
+          "events_accepted": 11,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 1,
+          "proof_return_upper_secs": 0.02638124999066349,
+          "conclusion_return_upper_secs": 0.02638124999066349,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/p0548",
+      "instance": "p0548",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0548.mps.gz",
+        "status": "optimal",
+        "objective": 8691.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 8691.0,
+          "bound": 8691.0,
+          "objective_recomputed": 8691.0,
+          "return_secs": 0.007589375,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.004982291
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.004982291,
+            "objective": 8763.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 3,
+          "proof_return_upper_secs": 0.007589375,
+          "conclusion_return_upper_secs": 0.007589375,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 8691.0,
+          "bound": 8691.0,
+          "objective_recomputed": 8691.0,
+          "return_secs": 0.012065250004525296,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0027927920018555596
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0027927920018555596,
+            "objective": 30762.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 4,
+          "proof_return_upper_secs": 0.012065250004525296,
+          "conclusion_return_upper_secs": 0.012065250004525296,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/bnatt500",
+      "instance": "bnatt500",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "infeasible",
+        "objective": null,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "infeasible",
+          "raw_status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 0.35226525,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 6,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": 0.35226525,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": null,
+          "bound": 0.0,
+          "objective_recomputed": null,
+          "return_secs": 60.00018837499374,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 5,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    }
+  ],
+  "raw_sha256": "b07ce2b527b54b2061254ac9790b23502a8b4ba86aa38a4e848e7cf6d569fd81",
+  "manifest_sha256": "82eb8fc678c59ff128ceb6b56a7102f5a8b7596326a0a44b9e8afd4b5f61b54a",
+  "freeze_sha256": "faa917542b71bf4f7f631aac432e409f5959cf2c446f7719e9b98eac0fdcae6c"
+}

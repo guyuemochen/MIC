@@ -23,6 +23,7 @@
 //! - 若固定共享决策后各条需求可独立求解，可在根节点用整数成本表直接证优。
 //! - 少量整数容量的二元装载可用单行背包上界精确搜索。非负特征分类可从冲突费用
 //!   推出固定开关；周期等式可先修出一个原模型可行解，交给后续分支定界。
+//! - 可由二层逻辑门完整解释的二元网络只搜索主列。每个可行赋值回填原列后终检。
 //! - presolve 关闭时不做约束化简（`values` 仍在原列顺序）；
 //!   开启时 `presolve_reductions` = 被固定删除的列数 + 被删除的行数 +
 //!   被聚合合并的重复列数（W5）。
@@ -644,13 +645,11 @@ fn solve_integer_structure(
         && opts.bb.node_rule == NodeRule::DepthFirst
         && opts.bb.lp_engine == crate::simplex_sparse::LpEngineKind::Auto
     {
-        crate::packing::solve(
-            problem,
-            opts.tol,
-            deadline,
-            structural_node_limit(opts, ctrl),
-            &mut accept,
-        )?
+        let limit = structural_node_limit(opts, ctrl);
+        match crate::boolean_network::solve(problem, opts.tol, deadline, limit, &mut accept)? {
+            Some(result) => Some(result),
+            None => crate::packing::solve(problem, opts.tol, deadline, limit, &mut accept)?,
+        }
     } else {
         None
     };
@@ -911,7 +910,7 @@ pub fn solve_default(problem: &Problem) -> Result<SolveReport> {
 ///   替换为 round 值，超差即 `Err(Numerical)`；
 /// - 逐约束复核（对替换后的最终值）：violation > [`FINAL_VIOLATION_REL`]×
 ///   (1+|rhs|+‖row‖₁) 即 `Err(Numerical)`（‖row‖₁ = 行系数绝对值和）。
-fn final_check(problem: &Problem, x: &mut [f64]) -> Result<()> {
+pub(crate) fn final_check(problem: &Problem, x: &mut [f64]) -> Result<()> {
     for (i, v) in problem.vars.iter().enumerate() {
         if matches!(v.var_type, VarType::Binary | VarType::Integer) {
             let val = x[i];

@@ -1,0 +1,23 @@
+{
+  "primary_variables": 500,
+  "fixed_variables": 1971,
+  "restored_variables": 2029,
+  "private_input_tuples": 16232,
+  "checked_output_tuples": 7968,
+  "forbidden_output_tuples": 3985,
+  "entailed_clauses": 2423,
+  "milp_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+  "model_sha256": "7d48f7d203013102ca06fca727c334b200c32d5cbbbfe87ccaa35a265bbd7359",
+  "original_rows": 7029,
+  "original_variables": 4500,
+  "cnf_sha256": "79a087267f6f7de0f5ade662fdbe62fb4fb4063467d45e9efde4e28412caea9c",
+  "proofs": [
+    {
+      "proof": "full.rup.gz",
+      "proof_sha256": "8c95cc337eca934d5129c3da0ad45f959ebadcd8f880f64cd7613e98cbe828a0",
+      "assumption": 0,
+      "verified_steps_including_empty": 20076
+    }
+  ],
+  "conclusion": "infeasible"
+}

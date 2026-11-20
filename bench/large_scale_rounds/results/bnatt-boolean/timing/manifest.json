@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "case_id": "public/p0282",
+      "instance": "p0282",
+      "suite": "public",
+      "source_path": "/tmp/mic-rounds-public/p0282.milp",
+      "milp_sha256": "fe34c7cf574f2027cc9e40a6e813f61b1db07144f8f2bb837225eed6272400a0",
+      "input": "inputs/p0282.milp.gz",
+      "mps": "mps/p0282.mps.gz",
+      "mps_sha256": "3bf907c6aa3cbf80de7c48ca8e71dc29f5d70f6e5fffb716502bfc5c513196a1",
+      "model": "../../models/c0cb3c736ee5432d5f5e1e9630f4b5d2c5448bcff66c1925df20568a6e65f53d.json",
+      "model_sha256": "c0cb3c736ee5432d5f5e1e9630f4b5d2c5448bcff66c1925df20568a6e65f53d",
+      "variables": 282,
+      "rows": 241,
+      "integer_variables": 282,
+      "export_command": [
+        "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/round_probe",
+        "export",
+        "/tmp/mic-rounds-public/p0282.milp"
+      ]
+    },
+    {
+      "case_id": "public/p0548",
+      "instance": "p0548",
+      "suite": "public",
+      "source_path": "/tmp/mic-rounds-public/p0548.milp",
+      "milp_sha256": "0012146521dfec56f5efeafcb3f464b52c656787715ced8723a479ea17bdd0e6",
+      "input": "inputs/p0548.milp.gz",
+      "mps": "mps/p0548.mps.gz",
+      "mps_sha256": "81fa3fb1e071cac0b72649c38196c18bca7ff6d7f2f6639776dcb0daf6bcab15",
+      "model": "../../models/ef203853327a54572e24b2a08334a56df8c4214f5be74b1ce49d657f254f88c0.json",
+      "model_sha256": "ef203853327a54572e24b2a08334a56df8c4214f5be74b1ce49d657f254f88c0",
+      "variables": 548,
+      "rows": 176,
+      "integer_variables": 548,
+      "export_command": [
+        "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/round_probe",
+        "export",
+        "/tmp/mic-rounds-public/p0548.milp"
+      ]
+    },
+    {
+      "case_id": "miplib2017/bnatt500",
+      "instance": "bnatt500",
+      "suite": "miplib2017",
+      "source_path": "/tmp/mic-rounds-miplib2017/bnatt500.milp",
+      "milp_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+      "input": "inputs/bnatt500.milp.gz",
+      "mps": "mps/bnatt500.mps.gz",
+      "mps_sha256": "682c0ade4b2092598bf219b8ac8cabb01884ea21d94efb912581fb35b970280c",
+      "model": "../../models/7d48f7d203013102ca06fca727c334b200c32d5cbbbfe87ccaa35a265bbd7359.json",
+      "model_sha256": "7d48f7d203013102ca06fca727c334b200c32d5cbbbfe87ccaa35a265bbd7359",
+      "variables": 4500,
+      "rows": 7029,
+      "integer_variables": 4500,
+      "export_command": [
+        "/Users/guyuemochen/Desktop/projects/MIC/milp/target/release/examples/round_probe",
+        "export",
+        "/tmp/mic-rounds-miplib2017/bnatt500.milp"
+      ]
+    }
+  ],
+  "first_pair_order": [
+    "gurobi",
+    "mic"
+  ],
+  "model_sha256_scope": "uncompressed_bytes",
+  "expected_runs": 6
+}

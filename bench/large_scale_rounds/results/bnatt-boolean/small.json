@@ -1,0 +1,2082 @@
+[
+  {
+    "seed": 21000,
+    "sense": "min",
+    "sha256": "525ebb640454406e0d5194f84130f3809601ce021c26f05fa7a41cc2dfd93a2b",
+    "feasible_assignments": 3,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21001,
+    "sense": "max",
+    "sha256": "bc0c37022a06325d35291be5d76e27c42c9351c4e8077cc2a1baa95a26bb6831",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 1.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 6,
+        "lp_iterations": 0,
+        "objective": 1.0,
+        "bound": 1.0,
+        "node_limit": 2000000,
+        "callbacks": 2
+      }
+    ]
+  },
+  {
+    "seed": 21002,
+    "sense": "min",
+    "sha256": "cff2a9e25d1df775cb0f6ff95fc56e45495f46e1ac27ed879c60f079cd348083",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21003,
+    "sense": "max",
+    "sha256": "4a6e811c3c4238f99b78327365a82f493d14ffce4b0b95df44b0e54ee0b422a9",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21004,
+    "sense": "min",
+    "sha256": "4672c33830f2430674872fc4e03c5311e279bf430429ca751ee8a0977a994029",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21005,
+    "sense": "max",
+    "sha256": "8b4fa437cb7bfa1303cd43e5e3b38b38a91f42c11dd5eefe12cca0e2fa1e72d4",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21006,
+    "sense": "min",
+    "sha256": "ae4a9652ae0f2ffacf7219051334c7a4ddc4b2374c72046d367a96b397623136",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21007,
+    "sense": "max",
+    "sha256": "28c93a9389cc6dc80348445f8e507f57abdea6b5bcdc75b11e79147906db8b0b",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21008,
+    "sense": "min",
+    "sha256": "8580ecbd48072c02824866f841379715042107ccbf71f21cf23eb69ea9abfc17",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21009,
+    "sense": "max",
+    "sha256": "44c2d21269b9904b92b316dfd784f8a7c07c7f5f42b8b7febf32d32c766bfc9d",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21010,
+    "sense": "min",
+    "sha256": "e26f083bb4e749ec4c26cbe4720fa1baaf39b77d93513979694959bc9b51bc3d",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21011,
+    "sense": "max",
+    "sha256": "9c83b3c1202865517dc3f2f1c8619044baf304ea40c5efa87b7f98cff995f3ca",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21012,
+    "sense": "min",
+    "sha256": "2a7f780378c8652c3bcec9df3228c5a85c929bc1aea5abe840b8d6b8cd30f17d",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21013,
+    "sense": "max",
+    "sha256": "33b554dda92f139402b8379615c6d5077b922de5f112253e37f4a12cf1be6530",
+    "feasible_assignments": 5,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21014,
+    "sense": "min",
+    "sha256": "d7f90d4c9b5ad21c80bf85e9a11c01a3e6c5f848d6f6b725d6c4755d3ad1634a",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21015,
+    "sense": "max",
+    "sha256": "8bf55fdfeba30aa91d1cd78f828b9e68dccd84dca498f0787c1882fa5b2eabde",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21016,
+    "sense": "min",
+    "sha256": "39befa15fdc0071d4e08241ce17120519de1c97f24e882faae82229a4db7a184",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21017,
+    "sense": "max",
+    "sha256": "422ea975223772f08251d93f815bb650a20e5a126faf1d7173c0e629067145c0",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21018,
+    "sense": "min",
+    "sha256": "daedbbdde45c0daab7744567ddeec73c324b8682455096e09217500ad6a73feb",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21019,
+    "sense": "max",
+    "sha256": "02184aa3eb42b401093a1c02c40f2f007982011302de366e75abc4f6bab9112f",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21020,
+    "sense": "min",
+    "sha256": "b1efded5daaea2bc2c5a332a3e250abe554f3717ef535b32504f69119e4854fa",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21021,
+    "sense": "max",
+    "sha256": "5c857dd3a595f99974718378921209664269f9aea9c595622d31fe399df5784e",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21022,
+    "sense": "min",
+    "sha256": "16bda208d8aa782c4dd3851bb4f691de062a5d2637ee97946dd5580528712fbd",
+    "feasible_assignments": 4,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 6,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21023,
+    "sense": "max",
+    "sha256": "d0750210b3cb1afd4218a6f4d6425d8ce480c18a4a7c001474dbc6f754124087",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21024,
+    "sense": "min",
+    "sha256": "cd48fb876fa07be827c926960fbb797f7f5eaf2b3b61b2da6f97a2726bbb02bc",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21025,
+    "sense": "max",
+    "sha256": "619350782cc31178140c0576dfe3fd27479521d35146db045d897abf199e1ed0",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21026,
+    "sense": "min",
+    "sha256": "b821fd406a024f60cbab6913d96a3381d1b6f8ffb5bbf8705e005e39f88cdbde",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -2.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21027,
+    "sense": "max",
+    "sha256": "d7313324d60a1a5f202342de867760594026ac7d2ff660e3286cb6803932141c",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21028,
+    "sense": "min",
+    "sha256": "e6cc4370a1fe41b4106984d2ad7ae046fa62cbf4a9ebd9c2b8bd17dea8c50a93",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21029,
+    "sense": "max",
+    "sha256": "32d493971a3844e1a6b3bafc93e042b8f140e9e550b52daa7d547df3613ba4b8",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 1.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21030,
+    "sense": "min",
+    "sha256": "9ae4c0a6f81fa0894ef68896e95f1f8a68ab0da7b939511d40b40c820dcd7eb2",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21031,
+    "sense": "max",
+    "sha256": "2a96b97f4ea6858a1722281907f350bbba4d6e9c68f15417cfce907359a13149",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21032,
+    "sense": "min",
+    "sha256": "3e32f96ad2697994c1b67140f6332d4e6a891340f453d733af2451d5896a0143",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21033,
+    "sense": "max",
+    "sha256": "38256c78a7ea413487e8823792b2f19bdf95de4a3f5c365ef7244021478c17fc",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21034,
+    "sense": "min",
+    "sha256": "65c4e803ec1bac4e4bdff92cc90ac94be9477f46f8bd90e38926fc2beb782292",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21035,
+    "sense": "max",
+    "sha256": "9b35acd857f24a4990d347422d32395a56e8eb4597b023f417cac0a13aa53c59",
+    "feasible_assignments": 4,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21036,
+    "sense": "min",
+    "sha256": "403c43f048e50d4c6742bc96f3b919cd9343c5ce176ed045a884b30b2cdbc59a",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21037,
+    "sense": "max",
+    "sha256": "0275da7ad2474c949f85301f72b76de89d47589a2d13d7216901e8a39cdc92b6",
+    "feasible_assignments": 3,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 5,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21038,
+    "sense": "min",
+    "sha256": "2b2c10079917b18d06f0eca7a9ed0329f857dda5b0a9bc692eb4c845612a45f6",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21039,
+    "sense": "max",
+    "sha256": "20a12d9bffb9b0c2db9135872df7754ecf968cd3373fcb1f0eb47e90b9ec5a8f",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21040,
+    "sense": "min",
+    "sha256": "f890d859148ccd67caea73e5b640f88c215f8496e231012c7ad31d490f3f1d54",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21041,
+    "sense": "max",
+    "sha256": "fd41f290daa03270be319e01fd5382269fa7f410cb0dad925c06329776c0e5a7",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21042,
+    "sense": "min",
+    "sha256": "4f2416ced88673cc10b4c2c515bbc69142a93817bda3999f5569c61849fc2be3",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21043,
+    "sense": "max",
+    "sha256": "cd06e3ba2c5a3f664c82c8cc19f40d29ada3621fe74016a70cbfbeb4caa95c7f",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21044,
+    "sense": "min",
+    "sha256": "e488942be5349368b1bc442de11c21d9972efec45463df12a9372b3b9311e93e",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21045,
+    "sense": "max",
+    "sha256": "f62889757d31e1326eff663c87057f3750f1a0f3537f99c6be3cf97ce40ae9da",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21046,
+    "sense": "min",
+    "sha256": "64fc61ee78543e563af5d8e1e9cd862f25a4969870288290c18eb97478609b4d",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -2.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 6,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21047,
+    "sense": "max",
+    "sha256": "226e5583b5d34624a5f917f173b6b0c37b73f6b812fd037bae4fa5440bd4974d",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 1.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": 1.0,
+        "bound": 1.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21048,
+    "sense": "min",
+    "sha256": "bf51ddfd7e55c70264f36883d6b73f1abe83f40bea4c5447f8bf4139911e0ed7",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -2.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21049,
+    "sense": "max",
+    "sha256": "46841330ca777f71ab87b428ea31867d65f7fae1078b00cc4ff5f1d239bd41ff",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21050,
+    "sense": "min",
+    "sha256": "decb6fa4f6dd5fe889ad5a692931160509336f12fefa97805f13e54018489504",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21051,
+    "sense": "max",
+    "sha256": "69870ffedca1c5e8727818e68ce9020b77cfeb66d95923e4a2f0c9759f9c5ebe",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21052,
+    "sense": "min",
+    "sha256": "b033305a2be1453c61ea6f40eb83501c776e26e58e1147b239646254784409f5",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21053,
+    "sense": "max",
+    "sha256": "a75c546a336e5c75505ca15a58c59f6feb46b3bca66839c8de93259a99a0a89e",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21054,
+    "sense": "min",
+    "sha256": "ab7f1256401ffb41826036ce65fbb37f2e3345e049100aa1982992c381674ec7",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21055,
+    "sense": "max",
+    "sha256": "c0b92ba1ed4a97d132ccb47078a42514e56f7a9e02af618a735083026e99678e",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 5,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 2
+      }
+    ]
+  },
+  {
+    "seed": 21056,
+    "sense": "min",
+    "sha256": "5e3d555aeeb51755eae39ced33d3a6c18a5eaa00cca23416a5d74d0d9703f48b",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21057,
+    "sense": "max",
+    "sha256": "db33bf0f9779211db7f55e12eebcfb4c2ae217b331faef77e7c90c6f2c478531",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 4,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21058,
+    "sense": "min",
+    "sha256": "bd6ce031abc9d6f4e3a626a759e00776bd070cc46bc83b4489854e5178b04975",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -7.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 6,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21059,
+    "sense": "max",
+    "sha256": "522a9c8a5b503ad2c974bed2a13ba03392e8a08da1f218132a07c1b6a814d602",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21060,
+    "sense": "min",
+    "sha256": "920bee060e46b2d2c79c87a0ca2ec2929d9c28513d8d1165decd2639d7f2dd13",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21061,
+    "sense": "max",
+    "sha256": "8f1aefe063fe4e32fb41009f7993fb36cad8a8f263961a7ecb71a94ef10619fb",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21062,
+    "sense": "min",
+    "sha256": "6ee14dd7ca40bc465fe615fce36a4e892fe87fb38a2d6c9a89384dddd4079320",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21063,
+    "sense": "max",
+    "sha256": "a87c6c61df7a09dc44ed44116b458cc65579e0d0f97283d3cc0b7a073ea0a385",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21064,
+    "sense": "min",
+    "sha256": "d40416f9a2415f37e0b10c896effe24e17afeda7209d2eb21eded6ded41177ae",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21065,
+    "sense": "max",
+    "sha256": "9a7c75df58790d7e6b1017ea19857ce7db9457fc16175657e25daaee0e5a3026",
+    "feasible_assignments": 3,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 6,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 2
+      }
+    ]
+  },
+  {
+    "seed": 21066,
+    "sense": "min",
+    "sha256": "f3451baaaaa22e4e95cbaca4fff49ca7dda650c7dbeaac56085005f5fddce488",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -2.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21067,
+    "sense": "max",
+    "sha256": "b09fb874bbcf34b537110926e5304a279e08f2c61f8f668ad94d63b5b018fd63",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21068,
+    "sense": "min",
+    "sha256": "0ed38d896b1bd013d0a5f88753c1a68bbf1f6163fbc0eccb3b03cd66b58c8196",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21069,
+    "sense": "max",
+    "sha256": "4c1d2fbaee749af1916de3cecea9073c818fee1a9a07d2893e0c1c666861028c",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21070,
+    "sense": "min",
+    "sha256": "0f977147cca0a071484b94e36d7a1ee6a5dfd4f9689b439ab7651f4707ce098d",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21071,
+    "sense": "max",
+    "sha256": "09187d489aab76e86965ae8e4ca72da66bd288086ee079493d9e2adc7abbc7d0",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 1.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 1.0,
+        "bound": 1.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21072,
+    "sense": "min",
+    "sha256": "98a9f090662babf2535ef85952a3e02d1079a6f94c56f2e379a81d0dd841fccb",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21073,
+    "sense": "max",
+    "sha256": "9fc4a0265ae9e7bae4b2e0d558ceaacfe41f5c6d5f59e4d80be003b6725c986c",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 3,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21074,
+    "sense": "min",
+    "sha256": "298d369ecf75fb12eefdeecab2c23ee6d03d5c8850863b565f1b9a469b4a62d1",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21075,
+    "sense": "max",
+    "sha256": "628634cdf632d2583d67334c81c459080d5d4e497a2cbeb7f3c23b727646598f",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": 5.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": 5.0,
+        "bound": 5.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  },
+  {
+    "seed": 21076,
+    "sense": "min",
+    "sha256": "d3e3f5c42323f08a16f184eae8f74f127594b413ab4bc79cda9bf04bf5f395fa",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21077,
+    "sense": "max",
+    "sha256": "cc1c90b821e4bc3649004046b45763730b7d3a65018d8c121c06e21f38dce7fb",
+    "feasible_assignments": 0,
+    "runs": [
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "infeasible",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": null,
+        "node_limit": 2000000,
+        "callbacks": 0
+      }
+    ]
+  },
+  {
+    "seed": 21078,
+    "sense": "min",
+    "sha256": "2fb1c2d79ddc7cae67710a631db8923392abeb5064e9199ff2783f6af49f5f17",
+    "feasible_assignments": 2,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": null,
+        "bound": -2.0,
+        "node_limit": 1,
+        "callbacks": 0
+      },
+      {
+        "status": "optimal",
+        "nodes": 5,
+        "lp_iterations": 0,
+        "objective": -2.0,
+        "bound": -2.0,
+        "node_limit": 2000000,
+        "callbacks": 2
+      }
+    ]
+  },
+  {
+    "seed": 21079,
+    "sense": "max",
+    "sha256": "f6c6778a741149abaee625243e80c8c99ccd7b2c1a40065b1fef5aa70b07616b",
+    "feasible_assignments": 1,
+    "runs": [
+      {
+        "status": "limit_reached",
+        "nodes": 1,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": 0.0,
+        "node_limit": 1,
+        "callbacks": 1
+      },
+      {
+        "status": "optimal",
+        "nodes": 2,
+        "lp_iterations": 0,
+        "objective": -7.0,
+        "bound": -7.0,
+        "node_limit": 2000000,
+        "callbacks": 1
+      }
+    ]
+  }
+]
