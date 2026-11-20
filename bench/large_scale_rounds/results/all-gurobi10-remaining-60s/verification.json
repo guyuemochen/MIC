@@ -1,0 +1,5595 @@
+{
+  "passed": true,
+  "issues": [],
+  "raw_records": 158,
+  "expected_records": 158,
+  "stats": {
+    "cases": 79,
+    "lp": 17,
+    "milp": 62,
+    "by_solver": {
+      "mic": {
+        "optimal": 70,
+        "verified_optimal": 70,
+        "verified_optimal_within_budget": 70,
+        "checked_final_vectors": 76,
+        "callback": 60,
+        "rejected_callbacks": 0,
+        "infeasible": 1,
+        "no_solution": 2,
+        "lp_return_upper": 16,
+        "unbounded": 1,
+        "lp_not_applicable": 1,
+        "limit_reached": 7
+      },
+      "gurobi": {
+        "optimal": 70,
+        "verified_optimal": 70,
+        "verified_optimal_within_budget": 70,
+        "checked_final_vectors": 75,
+        "callback": 59,
+        "rejected_callbacks": 0,
+        "infeasible": 1,
+        "no_solution": 3,
+        "lp_return_upper": 16,
+        "infeasible_or_unbounded": 1,
+        "lp_not_applicable": 1,
+        "limit_reached": 7
+      }
+    },
+    "proof": {
+      "pairs": 69,
+      "mic_faster": 33,
+      "gurobi_faster": 36,
+      "equal": 0,
+      "ratio_count": 69,
+      "median_ratio": 1.6226611606527397,
+      "geometric_mean_ratio": 1.0804584713852863
+    },
+    "proof_at_least_one_ms": {
+      "pairs": 56,
+      "mic_faster": 24,
+      "gurobi_faster": 32,
+      "equal": 0,
+      "ratio_count": 56,
+      "median_ratio": 2.15866192165788,
+      "geometric_mean_ratio": 1.3054507000567115
+    },
+    "first_callback": {
+      "pairs": 59,
+      "mic_faster": 11,
+      "gurobi_faster": 48,
+      "equal": 0,
+      "ratio_count": 59,
+      "median_ratio": 6.809407834323347,
+      "geometric_mean_ratio": 7.790566767412413
+    }
+  },
+  "cases": [
+    {
+      "case_id": "repository/assign-4x4",
+      "instance": "assign-4x4",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 10.0,
+          "bound": 10.0,
+          "objective_recomputed": 10.0,
+          "return_secs": 0.000281542,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000218333
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000218333,
+            "objective": 10.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 2,
+          "proof_return_upper_secs": 0.000281542,
+          "conclusion_return_upper_secs": 0.000281542,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 10.0,
+          "bound": 10.0,
+          "objective_recomputed": 10.0,
+          "return_secs": 0.00032979200477711856,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.441699664108455e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.441699664108455e-05,
+            "objective": 20.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 1,
+          "proof_return_upper_secs": 0.00032979200477711856,
+          "conclusion_return_upper_secs": 0.00032979200477711856,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/hard-knapsack-12",
+      "instance": "hard-knapsack-12",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 523.0,
+          "bound": 523.0,
+          "objective_recomputed": 523.0,
+          "return_secs": 0.001824917,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.7292e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.7292e-05,
+            "objective": 511.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 3,
+          "proof_return_upper_secs": 0.001824917,
+          "conclusion_return_upper_secs": 0.001824917,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 523.0,
+          "bound": 523.0,
+          "objective_recomputed": 523.0,
+          "return_secs": 0.00021399999968707561,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.0291004804894328e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.0291004804894328e-05,
+            "objective": 419.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 4,
+          "proof_return_upper_secs": 0.00021399999968707561,
+          "conclusion_return_upper_secs": 0.00021399999968707561,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/infeasible-tiny",
+      "instance": "infeasible-tiny",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "infeasible",
+          "raw_status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 2.1375e-05,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 6,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": 2.1375e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "infeasible",
+          "raw_status": "INFEASIBLE",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 7.166599971242249e-05,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 5,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": 7.166599971242249e-05,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/knapsack-10",
+      "instance": "knapsack-10",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 17.0,
+          "bound": 17.0,
+          "objective_recomputed": 17.0,
+          "return_secs": 6.15e-05,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 2.3458e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.3458e-05,
+            "objective": 16.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 7,
+          "proof_return_upper_secs": 6.15e-05,
+          "conclusion_return_upper_secs": 6.15e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 17.0,
+          "bound": 17.0,
+          "objective_recomputed": 17.0,
+          "return_secs": 0.00019337498815730214,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 2.954198862425983e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.954198862425983e-05,
+            "objective": 15.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 8,
+          "proof_return_upper_secs": 0.00019337498815730214,
+          "conclusion_return_upper_secs": 0.00019337498815730214,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/lp-prod-3",
+      "instance": "lp-prod-3",
+      "suite": "repository",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 13.0,
+          "bound": 13.0,
+          "objective_recomputed": 13.0,
+          "return_secs": 3.0209e-05,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 3.0209e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.6542e-05,
+            "objective": 13.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 10,
+          "proof_return_upper_secs": 3.0209e-05,
+          "conclusion_return_upper_secs": 3.0209e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 13.0,
+          "bound": 13.0,
+          "objective_recomputed": 13.0,
+          "return_secs": 0.00014999999257270247,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.00014999999257270247
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 9,
+          "proof_return_upper_secs": 0.00014999999257270247,
+          "conclusion_return_upper_secs": 0.00014999999257270247,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/milp-mixed-5",
+      "instance": "milp-mixed-5",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 29.0,
+          "bound": 29.0,
+          "objective_recomputed": 29.0,
+          "return_secs": 5.0167e-05,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 2.6167e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.6167e-05,
+            "objective": 29.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 11,
+          "proof_return_upper_secs": 5.0167e-05,
+          "conclusion_return_upper_secs": 5.0167e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 29.0,
+          "bound": 29.0,
+          "objective_recomputed": 29.0,
+          "return_secs": 0.0003580000047804788,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 2.9874994652345777e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.9874994652345777e-05,
+            "objective": 27.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 12,
+          "proof_return_upper_secs": 0.0003580000047804788,
+          "conclusion_return_upper_secs": 0.0003580000047804788,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/milp-wolsey-2",
+      "instance": "milp-wolsey-2",
+      "suite": "repository",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 40.0,
+          "bound": 40.0,
+          "objective_recomputed": 40.0,
+          "return_secs": 5.9959e-05,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 2.8292e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.8292e-05,
+            "objective": 34.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 14,
+          "proof_return_upper_secs": 5.9959e-05,
+          "conclusion_return_upper_secs": 5.9959e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 40.0,
+          "bound": 40.0,
+          "objective_recomputed": 40.0,
+          "return_secs": 0.00042654199933167547,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.3374992199242115e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.3374992199242115e-05,
+            "objective": 30.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 13,
+          "proof_return_upper_secs": 0.00042654199933167547,
+          "conclusion_return_upper_secs": 0.00042654199933167547,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "repository/unbounded-tiny",
+      "instance": "unbounded-tiny",
+      "suite": "repository",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "unbounded",
+          "raw_status": "unbounded",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 1.9166e-05,
+          "first": {
+            "source": "lp_not_applicable",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 15,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": 1.9166e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "infeasible_or_unbounded",
+          "raw_status": "INF_OR_UNBD",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 6.674999895039946e-05,
+          "first": {
+            "source": "lp_not_applicable",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 16,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/assign-16x16",
+      "instance": "assign-16x16",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 165.0,
+          "bound": 165.0,
+          "objective_recomputed": 165.0,
+          "return_secs": 0.001971916,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0009275
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0009275,
+            "objective": 165.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 18,
+          "proof_return_upper_secs": 0.001971916,
+          "conclusion_return_upper_secs": 0.001971916,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 165.0,
+          "bound": 165.0,
+          "objective_recomputed": 165.0,
+          "return_secs": 0.0008219169976655394,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.5334003516472876e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.5334003516472876e-05,
+            "objective": 994.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 17,
+          "proof_return_upper_secs": 0.0008219169976655394,
+          "conclusion_return_upper_secs": 0.0008219169976655394,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/assign-40x40",
+      "instance": "assign-40x40",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 176.0,
+          "bound": 176.0,
+          "objective_recomputed": 176.0,
+          "return_secs": 0.073029083,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.035927041
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.035927041,
+            "objective": 176.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 19,
+          "proof_return_upper_secs": 0.073029083,
+          "conclusion_return_upper_secs": 0.073029083,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 176.0,
+          "bound": 176.0,
+          "objective_recomputed": 176.0,
+          "return_secs": 0.003125582996290177,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00012954199337400496
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00012954199337400496,
+            "objective": 2048.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 20,
+          "proof_return_upper_secs": 0.003125582996290177,
+          "conclusion_return_upper_secs": 0.003125582996290177,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/knapsack-200",
+      "instance": "knapsack-200",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "动态规划 .opt",
+        "status": "optimal",
+        "objective": 3409.0,
+        "sha256": "08951d3e71ad7054de6ef5616d831b4280bebfe88b052a110e45686f03d81121"
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3409.0,
+          "bound": 3409.0,
+          "objective_recomputed": 3409.0,
+          "return_secs": 0.001698583,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0002365
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0002365,
+            "objective": 3409.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 22,
+          "proof_return_upper_secs": 0.001698583,
+          "conclusion_return_upper_secs": 0.001698583,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3409.0,
+          "bound": 3409.0,
+          "objective_recomputed": 3409.0,
+          "return_secs": 0.0009123749914579093,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.858399577438831e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.858399577438831e-05,
+            "objective": 3100.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 21,
+          "proof_return_upper_secs": 0.0009123749914579093,
+          "conclusion_return_upper_secs": 0.0009123749914579093,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/knapsack-2000",
+      "instance": "knapsack-2000",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "动态规划 .opt",
+        "status": "optimal",
+        "objective": 35328.0,
+        "sha256": "d4be6b6328194ad8c540824d6289dfd4555cad54ce00fff68b47a649037a0f8d"
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 35328.0,
+          "bound": 35328.0,
+          "objective_recomputed": 35328.0,
+          "return_secs": 0.009603458,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.005754166
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.005754166,
+            "objective": 35314.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 23,
+          "proof_return_upper_secs": 0.009603458,
+          "conclusion_return_upper_secs": 0.009603458,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 35328.0,
+          "bound": 35328.0,
+          "objective_recomputed": 35328.0,
+          "return_secs": 0.0032334999996237457,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 8.104200242087245e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 8.104200242087245e-05,
+            "objective": 32380.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 24,
+          "proof_return_upper_secs": 0.0032334999996237457,
+          "conclusion_return_upper_secs": 0.0032334999996237457,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/knapsack-500",
+      "instance": "knapsack-500",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "动态规划 .opt",
+        "status": "optimal",
+        "objective": 8975.0,
+        "sha256": "5c29bb6d691728a1addd3820fd92b05748447525b8ba9518852512789ab7e7ab"
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 8975.0,
+          "bound": 8975.0,
+          "objective_recomputed": 8975.0,
+          "return_secs": 0.006234666,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002071916
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002071916,
+            "objective": 8961.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 26,
+          "proof_return_upper_secs": 0.006234666,
+          "conclusion_return_upper_secs": 0.006234666,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 8975.0,
+          "bound": 8975.0,
+          "objective_recomputed": 8975.0,
+          "return_secs": 0.001589584004250355,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.6334011130966246e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.6334011130966246e-05,
+            "objective": 8228.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 25,
+          "proof_return_upper_secs": 0.001589584004250355,
+          "conclusion_return_upper_secs": 0.001589584004250355,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/knapsack-5000",
+      "instance": "knapsack-5000",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "动态规划 .opt",
+        "status": "optimal",
+        "objective": 88526.0,
+        "sha256": "d9417145f23624a048db5ed91c495deebe84083cd299d48360157f7ce4622e75"
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 88526.0,
+          "bound": 88526.0,
+          "objective_recomputed": 88526.0,
+          "return_secs": 0.013169333,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00877275
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00877275,
+            "objective": 88525.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 27,
+          "proof_return_upper_secs": 0.013169333,
+          "conclusion_return_upper_secs": 0.013169333,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 88526.0,
+          "bound": 88526.0,
+          "objective_recomputed": 88526.0,
+          "return_secs": 0.004416125011630356,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00017745900549925864
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00017745900549925864,
+            "objective": 80836.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 28,
+          "proof_return_upper_secs": 0.004416125011630356,
+          "conclusion_return_upper_secs": 0.004416125011630356,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/lp-sparse-4000x800",
+      "instance": "lp-sparse-4000x800",
+      "suite": "benchmark",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 5893.7057566182575,
+          "bound": 5893.7057566182575,
+          "objective_recomputed": 5893.705756618256,
+          "return_secs": 0.956611708,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.956611708
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.956126625,
+            "objective": 5893.705756618256
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 30,
+          "proof_return_upper_secs": 0.956611708,
+          "conclusion_return_upper_secs": 0.956611708,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 5893.7057566182575,
+          "bound": 5893.7057566182575,
+          "objective_recomputed": 5893.7057566182575,
+          "return_secs": 0.4399096660054056,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.4399096660054056
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 29,
+          "proof_return_upper_secs": 0.4399096660054056,
+          "conclusion_return_upper_secs": 0.4399096660054056,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/lp-wide-1000x2000",
+      "instance": "lp-wide-1000x2000",
+      "suite": "benchmark",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 112.6002675915855,
+          "bound": 112.6002675915855,
+          "objective_recomputed": 112.60026759158558,
+          "return_secs": 0.707467667,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.707467667
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.7028985,
+            "objective": 112.60026759158558
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 31,
+          "proof_return_upper_secs": 0.707467667,
+          "conclusion_return_upper_secs": 0.707467667,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 112.60026759158555,
+          "bound": 112.60026759158555,
+          "objective_recomputed": 112.60026759158556,
+          "return_secs": 0.27347858299617656,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.27347858299617656
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 32,
+          "proof_return_upper_secs": 0.27347858299617656,
+          "conclusion_return_upper_secs": 0.27347858299617656,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/lp-wide-200x300",
+      "instance": "lp-wide-200x300",
+      "suite": "benchmark",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 112.66861478047609,
+          "bound": 112.66861478047609,
+          "objective_recomputed": 112.6686147804761,
+          "return_secs": 0.005928958,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.005928958
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.005842042,
+            "objective": 112.6686147804761
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 34,
+          "proof_return_upper_secs": 0.005928958,
+          "conclusion_return_upper_secs": 0.005928958,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 112.66861478047623,
+          "bound": 112.66861478047623,
+          "objective_recomputed": 112.66861478047622,
+          "return_secs": 0.005710791010642424,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.005710791010642424
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 33,
+          "proof_return_upper_secs": 0.005710791010642424,
+          "conclusion_return_upper_secs": 0.005710791010642424,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/marketsplit-2x20",
+      "instance": "marketsplit-2x20",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 10.0,
+          "bound": 10.0,
+          "objective_recomputed": 10.0,
+          "return_secs": 9.0083e-05,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 8.5708e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 8.5708e-05,
+            "objective": 10.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 35,
+          "proof_return_upper_secs": 9.0083e-05,
+          "conclusion_return_upper_secs": 9.0083e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 10.0,
+          "bound": 10.0,
+          "objective_recomputed": 10.0,
+          "return_secs": 0.013574708005762659,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.013527333008823916
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.013527333008823916,
+            "objective": 10.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 36,
+          "proof_return_upper_secs": 0.013574708005762659,
+          "conclusion_return_upper_secs": 0.013574708005762659,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/marketsplit-4x30",
+      "instance": "marketsplit-4x30",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 15.0,
+          "bound": 15.0,
+          "objective_recomputed": 15.0,
+          "return_secs": 0.001113416,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.001105041
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.001105041,
+            "objective": 15.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 38,
+          "proof_return_upper_secs": 0.001113416,
+          "conclusion_return_upper_secs": 0.001113416,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 15.0,
+          "bound": 15.0,
+          "objective_recomputed": 15.0,
+          "return_secs": 0.45284916600212455,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.4522827909968328
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.4522827909968328,
+            "objective": 14.999999999999995
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 37,
+          "proof_return_upper_secs": 0.45284916600212455,
+          "conclusion_return_upper_secs": 0.45284916600212455,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/marketsplit-4x40",
+      "instance": "marketsplit-4x40",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 19.0,
+          "bound": 19.0,
+          "objective_recomputed": 19.0,
+          "return_secs": 0.039017542,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.039005042
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.039005042,
+            "objective": 19.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 39,
+          "proof_return_upper_secs": 0.039017542,
+          "conclusion_return_upper_secs": 0.039017542,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 19.0,
+          "bound": 19.0,
+          "objective_recomputed": 19.0,
+          "return_secs": 7.050898209010484,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 6.988351959007559
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 6.988351959007559,
+            "objective": 19.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 40,
+          "proof_return_upper_secs": 7.050898209010484,
+          "conclusion_return_upper_secs": 7.050898209010484,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/marketsplit-5x50",
+      "instance": "marketsplit-5x50",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 25.0,
+          "bound": 25.0,
+          "objective_recomputed": 25.0,
+          "return_secs": 0.702747834,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002682667
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002682667,
+            "objective": 25.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 42,
+          "proof_return_upper_secs": 0.702747834,
+          "conclusion_return_upper_secs": 0.702747834,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "NODE_LIMIT",
+          "objective": null,
+          "bound": 24.0,
+          "objective_recomputed": null,
+          "return_secs": 33.07467791700037,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 41,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/milp-mixed-120i30c",
+      "instance": "milp-mixed-120i30c",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 980.8532676191315,
+          "bound": 980.8532676191315,
+          "objective_recomputed": 980.8532676191315,
+          "return_secs": 0.003680166,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000252416
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000252416,
+            "objective": 980.8532676191315
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 43,
+          "proof_return_upper_secs": 0.003680166,
+          "conclusion_return_upper_secs": 0.003680166,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 980.8532676191315,
+          "bound": 980.8532676191315,
+          "objective_recomputed": 980.8532676191315,
+          "return_secs": 0.01654199999757111,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0022625420097028837
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0022625420097028837,
+            "objective": 841.9708278613274
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 44,
+          "proof_return_upper_secs": 0.01654199999757111,
+          "conclusion_return_upper_secs": 0.01654199999757111,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/milp-mixed-250i40c",
+      "instance": "milp-mixed-250i40c",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1275.7917517460828,
+          "bound": 1275.7917517460828,
+          "objective_recomputed": 1275.791751746083,
+          "return_secs": 0.004833333,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000787583
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000787583,
+            "objective": 1264.8689994928743
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 46,
+          "proof_return_upper_secs": 0.004833333,
+          "conclusion_return_upper_secs": 0.004833333,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1275.7917517460835,
+          "bound": 1275.7917517460835,
+          "objective_recomputed": 1275.7917517460835,
+          "return_secs": 0.027199917007237673,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.006164750011521392
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.006164750011521392,
+            "objective": 1261.2513296836862
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 45,
+          "proof_return_upper_secs": 0.027199917007237673,
+          "conclusion_return_upper_secs": 0.027199917007237673,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/mknap-10x200",
+      "instance": "mknap-10x200",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1791.0,
+          "bound": 1791.0,
+          "objective_recomputed": 1791.0,
+          "return_secs": 5.889098375,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00140975
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00140975,
+            "objective": 1593.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 47,
+          "proof_return_upper_secs": 5.889098375,
+          "conclusion_return_upper_secs": 5.889098375,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1791.0,
+          "bound": 1791.0,
+          "objective_recomputed": 1791.0,
+          "return_secs": 1.5877892920107115,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.829200042877346e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.829200042877346e-05,
+            "objective": 988.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 48,
+          "proof_return_upper_secs": 1.5877892920107115,
+          "conclusion_return_upper_secs": 1.5877892920107115,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/mknap-3x100",
+      "instance": "mknap-3x100",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 2331.0,
+          "bound": 2331.0,
+          "objective_recomputed": 2331.0,
+          "return_secs": 0.003957125,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.5416e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.5416e-05,
+            "objective": 2329.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 50,
+          "proof_return_upper_secs": 0.003957125,
+          "conclusion_return_upper_secs": 0.003957125,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 2331.0,
+          "bound": 2331.0,
+          "objective_recomputed": 2331.0,
+          "return_secs": 0.05109824999817647,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.345799632370472e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.345799632370472e-05,
+            "objective": 1204.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 49,
+          "proof_return_upper_secs": 0.05109824999817647,
+          "conclusion_return_upper_secs": 0.05109824999817647,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/mknap-5x300",
+      "instance": "mknap-5x300",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 4762.0,
+          "bound": 4762.0,
+          "objective_recomputed": 4762.0,
+          "return_secs": 0.029986584,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000218542
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000218542,
+            "objective": 4721.0
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 51,
+          "proof_return_upper_secs": 0.029986584,
+          "conclusion_return_upper_secs": 0.029986584,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 4762.0,
+          "bound": 4762.0,
+          "objective_recomputed": 4762.0,
+          "return_secs": 0.5147573750000447,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.383300256449729e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.383300256449729e-05,
+            "objective": 2310.0
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 52,
+          "proof_return_upper_secs": 0.5147573750000447,
+          "conclusion_return_upper_secs": 0.5147573750000447,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/setcover-100x150",
+      "instance": "setcover-100x150",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "objective_recomputed": 276.0,
+          "return_secs": 0.164909167,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.017021334
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.017021334,
+            "objective": 282.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 54,
+          "proof_return_upper_secs": 0.164909167,
+          "conclusion_return_upper_secs": 0.164909167,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 276.0,
+          "bound": 276.0,
+          "objective_recomputed": 276.0,
+          "return_secs": 0.010768416002974845,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.341599171515554e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.341599171515554e-05,
+            "objective": 985.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 53,
+          "proof_return_upper_secs": 0.010768416002974845,
+          "conclusion_return_upper_secs": 0.010768416002974845,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/setcover-300x600",
+      "instance": "setcover-300x600",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 144.0,
+          "bound": 144.0,
+          "objective_recomputed": 144.0,
+          "return_secs": 13.924282166,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 1.850658541
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 1.850658541,
+            "objective": 162.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 55,
+          "proof_return_upper_secs": 13.924282166,
+          "conclusion_return_upper_secs": 13.924282166,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 144.0,
+          "bound": 144.0,
+          "objective_recomputed": 144.0,
+          "return_secs": 0.28734829199675005,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00013899999612476677
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00013899999612476677,
+            "objective": 1831.0
+          },
+          "events_accepted": 11,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 56,
+          "proof_return_upper_secs": 0.28734829199675005,
+          "conclusion_return_upper_secs": 0.28734829199675005,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/setcover-400x800",
+      "instance": "setcover-400x800",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 113.0,
+          "bound": 113.0,
+          "objective_recomputed": 113.0,
+          "return_secs": 26.235336292,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 6.215356834
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 6.215356834,
+            "objective": 129.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 58,
+          "proof_return_upper_secs": 26.235336292,
+          "conclusion_return_upper_secs": 26.235336292,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 113.0,
+          "bound": 113.0,
+          "objective_recomputed": 113.0,
+          "return_secs": 0.3241810409963364,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00021050000214017928
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00021050000214017928,
+            "objective": 1885.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 57,
+          "proof_return_upper_secs": 0.3241810409963364,
+          "conclusion_return_upper_secs": 0.3241810409963364,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "benchmark/setcover-60x100",
+      "instance": "setcover-60x100",
+      "suite": "benchmark",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "objective_recomputed": 243.0,
+          "return_secs": 0.003631792,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00183825
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00183825,
+            "objective": 243.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 59,
+          "proof_return_upper_secs": 0.003631792,
+          "conclusion_return_upper_secs": 0.003631792,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 243.0,
+          "bound": 243.0,
+          "objective_recomputed": 243.0,
+          "return_secs": 0.0010848749952856451,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.0749990148469806e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.0749990148469806e-05,
+            "objective": 804.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 60,
+          "proof_return_upper_secs": 0.0010848749952856451,
+          "conclusion_return_upper_secs": 0.0010848749952856451,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/air03",
+      "instance": "air03",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/air03.mps.gz",
+        "status": "optimal",
+        "objective": 340160.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 340160.0,
+          "bound": 340160.0,
+          "objective_recomputed": 340160.0,
+          "return_secs": 1.8158906670000001,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.567291209
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.567291209,
+            "objective": 360238.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 62,
+          "proof_return_upper_secs": 1.8158906670000001,
+          "conclusion_return_upper_secs": 1.8158906670000001,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 340160.0,
+          "bound": 340160.0,
+          "objective_recomputed": 340160.0,
+          "return_secs": 0.11792883300222456,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0013440420007100329
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0013440420007100329,
+            "objective": 1234662.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 61,
+          "proof_return_upper_secs": 0.11792883300222456,
+          "conclusion_return_upper_secs": 0.11792883300222456,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/enigma",
+      "instance": "enigma",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/enigma.mps.gz",
+        "status": "optimal",
+        "objective": 0.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 1.9960580829999999,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 1.9960355
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 1.9960355,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 63,
+          "proof_return_upper_secs": 1.9960580829999999,
+          "conclusion_return_upper_secs": 1.9960580829999999,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.050049124998622574,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.04997391698998399
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.04997391698998399,
+            "objective": 0.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 64,
+          "proof_return_upper_secs": 0.050049124998622574,
+          "conclusion_return_upper_secs": 0.050049124998622574,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/lseu",
+      "instance": "lseu",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/lseu.mps.gz",
+        "status": "optimal",
+        "objective": 1120.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1120.0,
+          "bound": 1120.0,
+          "objective_recomputed": 1120.0,
+          "return_secs": 2.863950417,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000491
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000491,
+            "objective": 1311.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 66,
+          "proof_return_upper_secs": 2.863950417,
+          "conclusion_return_upper_secs": 2.863950417,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1120.0,
+          "bound": 1120.0,
+          "objective_recomputed": 1120.0,
+          "return_secs": 0.044432540991692804,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.808299127034843e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.808299127034843e-05,
+            "objective": 3459.0
+          },
+          "events_accepted": 11,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 65,
+          "proof_return_upper_secs": 0.044432540991692804,
+          "conclusion_return_upper_secs": 0.044432540991692804,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/p0033",
+      "instance": "p0033",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0033.mps.gz",
+        "status": "optimal",
+        "objective": 3089.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3089.0,
+          "bound": 3089.0,
+          "objective_recomputed": 3089.0,
+          "return_secs": 0.059060542,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002809125
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002809125,
+            "objective": 3597.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 67,
+          "proof_return_upper_secs": 0.059060542,
+          "conclusion_return_upper_secs": 0.059060542,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3089.0,
+          "bound": 3089.0,
+          "objective_recomputed": 3089.0,
+          "return_secs": 0.0016126669943332672,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.2499992307275534e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.2499992307275534e-05,
+            "objective": 3828.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 68,
+          "proof_return_upper_secs": 0.0016126669943332672,
+          "conclusion_return_upper_secs": 0.0016126669943332672,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/p0201",
+      "instance": "p0201",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0201.mps.gz",
+        "status": "optimal",
+        "objective": 7615.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 7615.0,
+          "bound": 7615.0,
+          "objective_recomputed": 7615.0,
+          "return_secs": 29.614759042,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.272647625
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.272647625,
+            "objective": 10005.0
+          },
+          "events_accepted": 43,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 70,
+          "proof_return_upper_secs": 29.614759042,
+          "conclusion_return_upper_secs": 29.614759042,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 7615.0,
+          "bound": 7615.0,
+          "objective_recomputed": 7615.0,
+          "return_secs": 0.08790099999168888,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00010704099258873612
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00010704099258873612,
+            "objective": 9990.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 69,
+          "proof_return_upper_secs": 0.08790099999168888,
+          "conclusion_return_upper_secs": 0.08790099999168888,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/p0282",
+      "instance": "p0282",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0282.mps.gz",
+        "status": "optimal",
+        "objective": 258411.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 258411.0,
+          "bound": 258411.0,
+          "objective_recomputed": 258411.0,
+          "return_secs": 0.005249333,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.001489791
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.001489791,
+            "objective": 1096212.0
+          },
+          "events_accepted": 29,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 71,
+          "proof_return_upper_secs": 0.005249333,
+          "conclusion_return_upper_secs": 0.005249333,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 258411.0,
+          "bound": 258411.0,
+          "objective_recomputed": 258411.0,
+          "return_secs": 0.02605787498760037,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.6791992392390966e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.6791992392390966e-05,
+            "objective": 457129.0
+          },
+          "events_accepted": 11,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 72,
+          "proof_return_upper_secs": 0.02605787498760037,
+          "conclusion_return_upper_secs": 0.02605787498760037,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/p0548",
+      "instance": "p0548",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/p0548.mps.gz",
+        "status": "optimal",
+        "objective": 8691.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 8691.0,
+          "bound": 8691.0,
+          "objective_recomputed": 8691.0,
+          "return_secs": 0.007504208,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.004946125
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.004946125,
+            "objective": 8763.0
+          },
+          "events_accepted": 3,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 74,
+          "proof_return_upper_secs": 0.007504208,
+          "conclusion_return_upper_secs": 0.007504208,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 8691.0,
+          "bound": 8691.0,
+          "objective_recomputed": 8691.0,
+          "return_secs": 0.012041250010952353,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00284904200816527
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00284904200816527,
+            "objective": 30762.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 73,
+          "proof_return_upper_secs": 0.012041250010952353,
+          "conclusion_return_upper_secs": 0.012041250010952353,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "public/stein27",
+      "instance": "stein27",
+      "suite": "public",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 3.0 原始 MPS",
+        "url": "https://miplib2010.zib.de/miplib3/miplib3/stein27.mps.gz",
+        "status": "optimal",
+        "objective": 18.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 18.0,
+          "bound": 18.0,
+          "objective_recomputed": 18.0,
+          "return_secs": 1.446666333,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00313075
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00313075,
+            "objective": 19.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 75,
+          "proof_return_upper_secs": 1.446666333,
+          "conclusion_return_upper_secs": 1.446666333,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 18.0,
+          "bound": 18.0,
+          "objective_recomputed": 18.0,
+          "return_secs": 0.012620082998182625,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.608298720791936e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.608298720791936e-05,
+            "objective": 19.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 76,
+          "proof_return_upper_secs": 0.012620082998182625,
+          "conclusion_return_upper_secs": 0.012620082998182625,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/bnatt500",
+      "instance": "bnatt500",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "infeasible",
+        "objective": null,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": null,
+          "bound": null,
+          "objective_recomputed": null,
+          "return_secs": 1.051641334,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 78,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": null,
+          "bound": 0.0,
+          "objective_recomputed": null,
+          "return_secs": 60.001624374999665,
+          "first": {
+            "source": "no_solution",
+            "elapsed_secs": null
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 77,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/drayage-100-23",
+      "instance": "drayage-100-23",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 103333.87407,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 103333.87407302856,
+          "bound": 103333.87407302856,
+          "objective_recomputed": 103333.87407302856,
+          "return_secs": 0.007743958,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0008515
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0008515,
+            "objective": 119252.21483230591
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 79,
+          "proof_return_upper_secs": 0.007743958,
+          "conclusion_return_upper_secs": 0.007743958,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 103333.87407302856,
+          "bound": 103333.87407302856,
+          "objective_recomputed": 103333.87407302856,
+          "return_secs": 0.04827929199382197,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.001469374998123385
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.001469374998123385,
+            "objective": 574298.8220214843
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 80,
+          "proof_return_upper_secs": 0.04827929199382197,
+          "conclusion_return_upper_secs": 0.04827929199382197,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/drayage-25-23",
+      "instance": "drayage-25-23",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 101282.647018,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 101282.64701843263,
+          "bound": 101282.64701843263,
+          "objective_recomputed": 101282.64701843262,
+          "return_secs": 0.040825125,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000870708
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000870708,
+            "objective": 119252.21483230591
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 82,
+          "proof_return_upper_secs": 0.040825125,
+          "conclusion_return_upper_secs": 0.040825125,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 101282.64701843263,
+          "bound": 101282.64701843263,
+          "objective_recomputed": 101282.64701843262,
+          "return_secs": 0.3859675420098938,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.0014640420122304931
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.0014640420122304931,
+            "objective": 543511.0272788999
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 81,
+          "proof_return_upper_secs": 0.3859675420098938,
+          "conclusion_return_upper_secs": 0.3859675420098938,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/gen-ip054",
+      "instance": "gen-ip054",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 6840.96564179,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 6908.636775881,
+          "bound": 6767.562882315393,
+          "objective_recomputed": 6908.636775881,
+          "return_secs": 60.00011225,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000299042
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000299042,
+            "objective": 7343.345890247
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 83,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "NODE_LIMIT",
+          "objective": 6840.965641792,
+          "bound": 6802.7011065873385,
+          "objective_recomputed": 6840.9656417920005,
+          "return_secs": 43.78753595800663,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.3916006688959897e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.3916006688959897e-05,
+            "objective": 15687.59407325
+          },
+          "events_accepted": 18,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 84,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/icir97_tension",
+      "instance": "icir97_tension",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 6375.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 6396.0,
+          "bound": 6336.295028865337,
+          "objective_recomputed": 6396.0,
+          "return_secs": 60.002695125,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002663041
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002663041,
+            "objective": 6497.0
+          },
+          "events_accepted": 14,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 86,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 6375.0,
+          "bound": 6375.0,
+          "objective_recomputed": 6375.0,
+          "return_secs": 52.86824237499968,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.4255336670030374
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.4255336670030374,
+            "objective": 6416.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 85,
+          "proof_return_upper_secs": 52.86824237499968,
+          "conclusion_return_upper_secs": 52.86824237499968,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/neos-4954672-berkel",
+      "instance": "neos-4954672-berkel",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 2612710.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 6829821.0,
+          "bound": 1344421.9366716947,
+          "objective_recomputed": 6829821.0,
+          "return_secs": 60.001529041,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.193947125
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.193947125,
+            "objective": 6829821.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 87,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": 2631881.999999999,
+          "bound": 2344181.3848396777,
+          "objective_recomputed": 2631881.9999999986,
+          "return_secs": 59.99997595799505,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00358116599090863
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00358116599090863,
+            "objective": 5806492.0
+          },
+          "events_accepted": 32,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 88,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/neos17",
+      "instance": "neos17",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 0.1500025774,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.1500025774225781,
+          "bound": 0.1500025774225781,
+          "objective_recomputed": 0.1500025774225778,
+          "return_secs": 14.183802625,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.184835041
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.184835041,
+            "objective": 0.15136665450768974
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 90,
+          "proof_return_upper_secs": 14.183802625,
+          "conclusion_return_upper_secs": 14.183802625,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 0.15000257742257772,
+          "bound": 0.15000257742257772,
+          "objective_recomputed": 0.15000257742257742,
+          "return_secs": 0.4576069169997936,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00010045900125987828
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00010045900125987828,
+            "objective": 1.2559127372627372
+          },
+          "events_accepted": 35,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 89,
+          "proof_return_upper_secs": 0.4576069169997936,
+          "conclusion_return_upper_secs": 0.4576069169997936,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "miplib2017/seymour",
+      "instance": "seymour",
+      "suite": "miplib2017",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "MIPLIB 2017 v37",
+        "status": "optimal",
+        "objective": 423.0,
+        "mps_rehashed": true
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 423.0,
+          "bound": 412.0,
+          "objective_recomputed": 423.0,
+          "return_secs": 64.184572584,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.003636625
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.003636625,
+            "objective": 446.0
+          },
+          "events_accepted": 24,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 91,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": 423.0,
+          "bound": 417.0,
+          "objective_recomputed": 423.0,
+          "return_secs": 60.00053904099332,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00031033299455884844
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00031033299455884844,
+            "objective": 502.0
+          },
+          "events_accepted": 13,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 92,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "diagnostic/two-equalities",
+      "instance": "two-equalities",
+      "suite": "diagnostic",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1000.0,
+          "bound": 1000.0,
+          "objective_recomputed": 1000.0,
+          "return_secs": 2.9542e-05,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 2.9542e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 2.5958e-05,
+            "objective": 1000.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 94,
+          "proof_return_upper_secs": 2.9542e-05,
+          "conclusion_return_upper_secs": 2.9542e-05,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1000.0,
+          "bound": 1000.0,
+          "objective_recomputed": 1000.0,
+          "return_secs": 0.00013533399032894522,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.00013533399032894522
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 93,
+          "proof_return_upper_secs": 0.00013533399032894522,
+          "conclusion_return_upper_secs": 0.00013533399032894522,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_m1",
+      "instance": "boundary_m1",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 8049.0,
+          "bound": 8049.0,
+          "objective_recomputed": 8049.0,
+          "return_secs": 0.005629917,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000182458
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000182458,
+            "objective": 8021.0
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 95,
+          "proof_return_upper_secs": 0.005629917,
+          "conclusion_return_upper_secs": 0.005629917,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 8049.0,
+          "bound": 8049.0,
+          "objective_recomputed": 8049.0,
+          "return_secs": 0.0014104999863775447,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.587499668356031e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.587499668356031e-05,
+            "objective": 4296.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 96,
+          "proof_return_upper_secs": 0.0014104999863775447,
+          "conclusion_return_upper_secs": 0.0014104999863775447,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_m17",
+      "instance": "boundary_m17",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 6753.0,
+          "bound": 6753.0,
+          "objective_recomputed": 6753.0,
+          "return_secs": 31.006227875,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002248792
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002248792,
+            "objective": 6694.0
+          },
+          "events_accepted": 9,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 98,
+          "proof_return_upper_secs": 31.006227875,
+          "conclusion_return_upper_secs": 31.006227875,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 6753.0,
+          "bound": 6753.0,
+          "objective_recomputed": 6753.0,
+          "return_secs": 6.7285372909973375,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 6.162500358186662e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 6.162500358186662e-05,
+            "objective": 3951.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 97,
+          "proof_return_upper_secs": 6.7285372909973375,
+          "conclusion_return_upper_secs": 6.7285372909973375,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_n199",
+      "instance": "boundary_n199",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 6143.0,
+          "bound": 6143.0,
+          "objective_recomputed": 6143.0,
+          "return_secs": 0.009584209,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000110875
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000110875,
+            "objective": 6134.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 99,
+          "proof_return_upper_secs": 0.009584209,
+          "conclusion_return_upper_secs": 0.009584209,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 6143.0,
+          "bound": 6143.0,
+          "objective_recomputed": 6143.0,
+          "return_secs": 0.002664291998371482,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.870901127811521e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.870901127811521e-05,
+            "objective": 3530.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 100,
+          "proof_return_upper_secs": 0.002664291998371482,
+          "conclusion_return_upper_secs": 0.002664291998371482,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_n200",
+      "instance": "boundary_n200",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 6127.0,
+          "bound": 6127.0,
+          "objective_recomputed": 6127.0,
+          "return_secs": 0.009729458,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000104542
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000104542,
+            "objective": 6127.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 102,
+          "proof_return_upper_secs": 0.009729458,
+          "conclusion_return_upper_secs": 0.009729458,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 6127.0,
+          "bound": 6127.0,
+          "objective_recomputed": 6127.0,
+          "return_secs": 0.029282457995577715,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.766598820220679e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.766598820220679e-05,
+            "objective": 3360.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 101,
+          "proof_return_upper_secs": 0.029282457995577715,
+          "conclusion_return_upper_secs": 0.029282457995577715,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_n512_m16",
+      "instance": "boundary_n512_m16",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 14202.0,
+          "bound": 14206.0,
+          "objective_recomputed": 14202.0,
+          "return_secs": 18.492409833,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000828666
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000828666,
+            "objective": 14107.0
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 103,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": 14202.0,
+          "bound": 14210.0,
+          "objective_recomputed": 14202.0,
+          "return_secs": 60.000080499987234,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 7.79169931774959e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 7.79169931774959e-05,
+            "objective": 8539.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 104,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/boundary_n513_m16",
+      "instance": "boundary_n513_m16",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "limit_reached",
+          "raw_status": "limit_reached",
+          "objective": 14448.0,
+          "bound": 14456.0,
+          "objective_recomputed": 14448.0,
+          "return_secs": 17.94164075,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000873416
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000873416,
+            "objective": 14357.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 106,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "limit_reached",
+          "raw_status": "TIME_LIMIT",
+          "objective": 14448.0,
+          "bound": 14456.0,
+          "objective_recomputed": 14448.0,
+          "return_secs": 60.00006754200149,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 8.729200635571033e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 8.729200635571033e-05,
+            "objective": 8625.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 105,
+          "proof_return_upper_secs": null,
+          "conclusion_return_upper_secs": null,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/covering_120x200_s12109",
+      "instance": "covering_120x200_s12109",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "objective_recomputed": 58.0,
+          "return_secs": 1.374869667,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.033845875
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.033845875,
+            "objective": 61.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 107,
+          "proof_return_upper_secs": 1.374869667,
+          "conclusion_return_upper_secs": 1.374869667,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 58.0,
+          "bound": 58.0,
+          "objective_recomputed": 58.0,
+          "return_secs": 0.13698624999960884,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.4333999287337065e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.4333999287337065e-05,
+            "objective": 274.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 108,
+          "proof_return_upper_secs": 0.13698624999960884,
+          "conclusion_return_upper_secs": 0.13698624999960884,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/covering_60x100_s12101",
+      "instance": "covering_60x100_s12101",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "objective_recomputed": 32.0,
+          "return_secs": 0.005066083,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.002499333
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.002499333,
+            "objective": 32.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 110,
+          "proof_return_upper_secs": 0.005066083,
+          "conclusion_return_upper_secs": 0.005066083,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 32.0,
+          "bound": 32.0,
+          "objective_recomputed": 32.0,
+          "return_secs": 0.0011137499968754128,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.8124999264255166e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.8124999264255166e-05,
+            "objective": 169.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 109,
+          "proof_return_upper_secs": 0.0011137499968754128,
+          "conclusion_return_upper_secs": 0.0011137499968754128,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/ge_rows",
+      "instance": "ge_rows",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 11477.0,
+          "bound": 11477.0,
+          "objective_recomputed": 11477.0,
+          "return_secs": 0.000420875,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000245208
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000245208,
+            "objective": 11477.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 111,
+          "proof_return_upper_secs": 0.000420875,
+          "conclusion_return_upper_secs": 0.000420875,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 11477.0,
+          "bound": 11477.0,
+          "objective_recomputed": 11477.0,
+          "return_secs": 0.0002127089974237606,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.716698847711086e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.716698847711086e-05,
+            "objective": 11477.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 112,
+          "proof_return_upper_secs": 0.0002127089974237606,
+          "conclusion_return_upper_secs": 0.0002127089974237606,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/minimization",
+      "instance": "minimization",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.000204333,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000106416
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000106416,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 114,
+          "proof_return_upper_secs": 0.000204333,
+          "conclusion_return_upper_secs": 0.000204333,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.00021212499996181577,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.7582998629659414e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.7582998629659414e-05,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 113,
+          "proof_return_upper_secs": 0.00021212499996181577,
+          "conclusion_return_upper_secs": 0.00021212499996181577,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/negative_coefficient",
+      "instance": "negative_coefficient",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 4305.0,
+          "bound": 4305.0,
+          "objective_recomputed": 4305.0,
+          "return_secs": 0.195780834,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000603459
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000603459,
+            "objective": 4304.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 115,
+          "proof_return_upper_secs": 0.195780834,
+          "conclusion_return_upper_secs": 0.195780834,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 4305.0,
+          "bound": 4305.0,
+          "objective_recomputed": 4305.0,
+          "return_secs": 0.07835304200125393,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.387499939184636e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.387499939184636e-05,
+            "objective": 2406.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 116,
+          "proof_return_upper_secs": 0.07835304200125393,
+          "conclusion_return_upper_secs": 0.07835304200125393,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/negative_objective",
+      "instance": "negative_objective",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 4304.0,
+          "bound": 4304.0,
+          "objective_recomputed": 4304.0,
+          "return_secs": 0.11684925,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000574333
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000574333,
+            "objective": 4304.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 118,
+          "proof_return_upper_secs": 0.11684925,
+          "conclusion_return_upper_secs": 0.11684925,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 4304.0,
+          "bound": 4304.0,
+          "objective_recomputed": 4304.0,
+          "return_secs": 0.07201087499561254,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.1207997128367424e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.1207997128367424e-05,
+            "objective": 2251.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 117,
+          "proof_return_upper_secs": 0.07201087499561254,
+          "conclusion_return_upper_secs": 0.07201087499561254,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_correlated_s12017",
+      "instance": "packing_correlated_s12017",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1747.0,
+          "bound": 1747.0,
+          "objective_recomputed": 1747.0,
+          "return_secs": 0.098879541,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000369708
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000369708,
+            "objective": 1732.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 119,
+          "proof_return_upper_secs": 0.098879541,
+          "conclusion_return_upper_secs": 0.098879541,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1747.0,
+          "bound": 1747.0,
+          "objective_recomputed": 1747.0,
+          "return_secs": 1.3164304160018219,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.733300011139363e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.733300011139363e-05,
+            "objective": 1393.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 120,
+          "proof_return_upper_secs": 1.3164304160018219,
+          "conclusion_return_upper_secs": 1.3164304160018219,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_correlated_s12043",
+      "instance": "packing_correlated_s12043",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 1749.0,
+          "bound": 1749.0,
+          "objective_recomputed": 1749.0,
+          "return_secs": 0.045821417,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000400167
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000400167,
+            "objective": 1720.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 122,
+          "proof_return_upper_secs": 0.045821417,
+          "conclusion_return_upper_secs": 0.045821417,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 1749.0,
+          "bound": 1749.0,
+          "objective_recomputed": 1749.0,
+          "return_secs": 2.8319782500038855,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00010829200618900359
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00010829200618900359,
+            "objective": 1480.0
+          },
+          "events_accepted": 9,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 121,
+          "proof_return_upper_secs": 2.8319782500038855,
+          "conclusion_return_upper_secs": 2.8319782500038855,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_many_rows_s12017",
+      "instance": "packing_many_rows_s12017",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3009.0,
+          "bound": 3009.0,
+          "objective_recomputed": 3009.0,
+          "return_secs": 0.060016833,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000183666
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000183666,
+            "objective": 2992.0
+          },
+          "events_accepted": 8,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 123,
+          "proof_return_upper_secs": 0.060016833,
+          "conclusion_return_upper_secs": 0.060016833,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3009.0,
+          "bound": 3009.0,
+          "objective_recomputed": 3009.0,
+          "return_secs": 1.2875281659944449,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 5.1333001465536654e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 5.1333001465536654e-05,
+            "objective": 1890.0
+          },
+          "events_accepted": 10,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 124,
+          "proof_return_upper_secs": 1.2875281659944449,
+          "conclusion_return_upper_secs": 1.2875281659944449,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_many_rows_s12043",
+      "instance": "packing_many_rows_s12043",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 2904.0,
+          "bound": 2904.0,
+          "objective_recomputed": 2904.0,
+          "return_secs": 0.114060459,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.00014975
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.00014975,
+            "objective": 2889.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 126,
+          "proof_return_upper_secs": 0.114060459,
+          "conclusion_return_upper_secs": 0.114060459,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 2904.0,
+          "bound": 2904.0,
+          "objective_recomputed": 2904.0,
+          "return_secs": 1.496150042003137,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.6959001338109374e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.6959001338109374e-05,
+            "objective": 1501.0
+          },
+          "events_accepted": 5,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 125,
+          "proof_return_upper_secs": 1.496150042003137,
+          "conclusion_return_upper_secs": 1.496150042003137,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_medium_s12017",
+      "instance": "packing_medium_s12017",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3264.0,
+          "bound": 3264.0,
+          "objective_recomputed": 3264.0,
+          "return_secs": 0.00824575,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 7.3834e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 7.3834e-05,
+            "objective": 3211.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 127,
+          "proof_return_upper_secs": 0.00824575,
+          "conclusion_return_upper_secs": 0.00824575,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3264.0,
+          "bound": 3264.0,
+          "objective_recomputed": 3264.0,
+          "return_secs": 0.12055350000446197,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.041699867229909e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.041699867229909e-05,
+            "objective": 1581.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 128,
+          "proof_return_upper_secs": 0.12055350000446197,
+          "conclusion_return_upper_secs": 0.12055350000446197,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_medium_s12043",
+      "instance": "packing_medium_s12043",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3065.0,
+          "bound": 3065.0,
+          "objective_recomputed": 3065.0,
+          "return_secs": 0.00847125,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 9.7416e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 9.7416e-05,
+            "objective": 3034.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 130,
+          "proof_return_upper_secs": 0.00847125,
+          "conclusion_return_upper_secs": 0.00847125,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3065.0,
+          "bound": 3065.0,
+          "objective_recomputed": 3065.0,
+          "return_secs": 0.019720334006706253,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.762501000892371e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.762501000892371e-05,
+            "objective": 1754.0
+          },
+          "events_accepted": 4,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 129,
+          "proof_return_upper_secs": 0.019720334006706253,
+          "conclusion_return_upper_secs": 0.019720334006706253,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_small_s12017",
+      "instance": "packing_small_s12017",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3246.0,
+          "bound": 3246.0,
+          "objective_recomputed": 3246.0,
+          "return_secs": 0.002965708,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.7333e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.7333e-05,
+            "objective": 3239.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 131,
+          "proof_return_upper_secs": 0.002965708,
+          "conclusion_return_upper_secs": 0.002965708,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3246.0,
+          "bound": 3246.0,
+          "objective_recomputed": 3246.0,
+          "return_secs": 0.00986058299895376,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.374999505467713e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.374999505467713e-05,
+            "objective": 2105.0
+          },
+          "events_accepted": 7,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 132,
+          "proof_return_upper_secs": 0.00986058299895376,
+          "conclusion_return_upper_secs": 0.00986058299895376,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/packing_small_s12043",
+      "instance": "packing_small_s12043",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3233.0,
+          "bound": 3233.0,
+          "objective_recomputed": 3233.0,
+          "return_secs": 0.003385417,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.2334e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.2334e-05,
+            "objective": 3224.0
+          },
+          "events_accepted": 2,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 134,
+          "proof_return_upper_secs": 0.003385417,
+          "conclusion_return_upper_secs": 0.003385417,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3233.0,
+          "bound": 3233.0,
+          "objective_recomputed": 3233.0,
+          "return_secs": 0.019465916004264727,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 3.287500294391066e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 3.287500294391066e-05,
+            "objective": 2245.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 133,
+          "proof_return_upper_secs": 0.019465916004264727,
+          "conclusion_return_upper_secs": 0.019465916004264727,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "auto/sparse_packing",
+      "instance": "sparse_packing",
+      "suite": "auto",
+      "kind": "MILP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 8160.0,
+          "bound": 8160.0,
+          "objective_recomputed": 8160.0,
+          "return_secs": 0.0305675,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 0.000433041
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000433041,
+            "objective": 8061.0
+          },
+          "events_accepted": 12,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 135,
+          "proof_return_upper_secs": 0.0305675,
+          "conclusion_return_upper_secs": 0.0305675,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 8160.0,
+          "bound": 8160.0,
+          "objective_recomputed": 8160.0,
+          "return_secs": 0.1697962919861311,
+          "first": {
+            "source": "callback",
+            "elapsed_secs": 4.6833985834382474e-05
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 4.6833985834382474e-05,
+            "objective": 4835.0
+          },
+          "events_accepted": 6,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 136,
+          "proof_return_upper_secs": 0.1697962919861311,
+          "conclusion_return_upper_secs": 0.1697962919861311,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan1/scan-dense-wide",
+      "instance": "scan-dense-wide",
+      "suite": "scan1",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 245.91463314573488,
+          "bound": 245.91463314573488,
+          "objective_recomputed": 245.91463314573494,
+          "return_secs": 0.043972541,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.043972541
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.042573125,
+            "objective": 245.91463314573494
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 138,
+          "proof_return_upper_secs": 0.043972541,
+          "conclusion_return_upper_secs": 0.043972541,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 245.9146331457349,
+          "bound": 245.9146331457349,
+          "objective_recomputed": 245.91463314573488,
+          "return_secs": 0.09727666700200643,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.09727666700200643
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 137,
+          "proof_return_upper_secs": 0.09727666700200643,
+          "conclusion_return_upper_secs": 0.09727666700200643,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan1/scan-medium",
+      "instance": "scan-medium",
+      "suite": "scan1",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 995.9821442517002,
+          "bound": 995.9821442517002,
+          "objective_recomputed": 995.9821442517004,
+          "return_secs": 0.190263458,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.190263458
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.189625875,
+            "objective": 995.9821442517004
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 139,
+          "proof_return_upper_secs": 0.190263458,
+          "conclusion_return_upper_secs": 0.190263458,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 995.9821442517012,
+          "bound": 995.9821442517012,
+          "objective_recomputed": 995.982144251701,
+          "return_secs": 0.08628212500480004,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.08628212500480004
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 140,
+          "proof_return_upper_secs": 0.08628212500480004,
+          "conclusion_return_upper_secs": 0.08628212500480004,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan1/scan-sparse-newseed",
+      "instance": "scan-sparse-newseed",
+      "suite": "scan1",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 12474.450211244153,
+          "bound": 12474.450211244153,
+          "objective_recomputed": 12474.450211244151,
+          "return_secs": 0.437498791,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.437498791
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.437142708,
+            "objective": 12474.450211244151
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 142,
+          "proof_return_upper_secs": 0.437498791,
+          "conclusion_return_upper_secs": 0.437498791,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 12474.450211244142,
+          "bound": 12474.450211244142,
+          "objective_recomputed": 12474.45021124414,
+          "return_secs": 0.14039666700409725,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.14039666700409725
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 141,
+          "proof_return_upper_secs": 0.14039666700409725,
+          "conclusion_return_upper_secs": 0.14039666700409725,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan1/scan-sparse-tall",
+      "instance": "scan-sparse-tall",
+      "suite": "scan1",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3749.197362207782,
+          "bound": 3749.197362207782,
+          "objective_recomputed": 3749.197362207781,
+          "return_secs": 0.330612125,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.330612125
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.3293585,
+            "objective": 3749.197362207781
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 143,
+          "proof_return_upper_secs": 0.330612125,
+          "conclusion_return_upper_secs": 0.330612125,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3749.19736220778,
+          "bound": 3749.19736220778,
+          "objective_recomputed": 3749.197362207779,
+          "return_secs": 0.2021797919878736,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.2021797919878736
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 144,
+          "proof_return_upper_secs": 0.2021797919878736,
+          "conclusion_return_upper_secs": 0.2021797919878736,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan2/scan2-dense-wide",
+      "instance": "scan2-dense-wide",
+      "suite": "scan2",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 245.57086864014497,
+          "bound": 245.57086864014497,
+          "objective_recomputed": 245.57086864014494,
+          "return_secs": 0.034599959,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.034599959
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.033177584,
+            "objective": 245.57086864014494
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 146,
+          "proof_return_upper_secs": 0.034599959,
+          "conclusion_return_upper_secs": 0.034599959,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 245.57086864014497,
+          "bound": 245.57086864014497,
+          "objective_recomputed": 245.57086864014497,
+          "return_secs": 0.08332420900114812,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.08332420900114812
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 145,
+          "proof_return_upper_secs": 0.08332420900114812,
+          "conclusion_return_upper_secs": 0.08332420900114812,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan2/scan2-medium",
+      "instance": "scan2-medium",
+      "suite": "scan2",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 980.8488775427141,
+          "bound": 980.8488775427141,
+          "objective_recomputed": 980.8488775427141,
+          "return_secs": 0.196025834,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.196025834
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.19541775,
+            "objective": 980.8488775427141
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 147,
+          "proof_return_upper_secs": 0.196025834,
+          "conclusion_return_upper_secs": 0.196025834,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 980.8488775427137,
+          "bound": 980.8488775427137,
+          "objective_recomputed": 980.8488775427137,
+          "return_secs": 0.09148287499556318,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.09148287499556318
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 148,
+          "proof_return_upper_secs": 0.09148287499556318,
+          "conclusion_return_upper_secs": 0.09148287499556318,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan2/scan2-sparse-tall",
+      "instance": "scan2-sparse-tall",
+      "suite": "scan2",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 3649.3927046034114,
+          "bound": 3649.3927046034114,
+          "objective_recomputed": 3649.392704603412,
+          "return_secs": 0.405470792,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.405470792
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.404600333,
+            "objective": 3649.392704603412
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 150,
+          "proof_return_upper_secs": 0.405470792,
+          "conclusion_return_upper_secs": 0.405470792,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 3649.3927046034146,
+          "bound": 3649.3927046034146,
+          "objective_recomputed": 3649.3927046034137,
+          "return_secs": 0.17339016700861976,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.17339016700861976
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 149,
+          "proof_return_upper_secs": 0.17339016700861976,
+          "conclusion_return_upper_secs": 0.17339016700861976,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scan2/scan2-sparse-wide",
+      "instance": "scan2-sparse-wide",
+      "suite": "scan2",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": null,
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 13852.898634416835,
+          "bound": 13852.898634416835,
+          "objective_recomputed": 13852.898634416835,
+          "return_secs": 0.471321917,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.471321917
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.470988125,
+            "objective": 13852.898634416835
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 151,
+          "proof_return_upper_secs": 0.471321917,
+          "conclusion_return_upper_secs": 0.471321917,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": 13852.89863441683,
+          "bound": 13852.89863441683,
+          "objective_recomputed": 13852.898634416833,
+          "return_secs": 0.15640741601237096,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.15640741601237096
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 152,
+          "proof_return_upper_secs": 0.15640741601237096,
+          "conclusion_return_upper_secs": 0.15640741601237096,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scale-solve/solve-1000",
+      "instance": "solve-1000",
+      "suite": "scale-solve",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "容量 LP 构造的已知最优值",
+        "status": "optimal",
+        "objective": 0.0
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.00020725,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.00020725
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.000178959,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 154,
+          "proof_return_upper_secs": 0.00020725,
+          "conclusion_return_upper_secs": 0.00020725,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": -0.0,
+          "bound": -0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.0003421660076128319,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.0003421660076128319
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 153,
+          "proof_return_upper_secs": 0.0003421660076128319,
+          "conclusion_return_upper_secs": 0.0003421660076128319,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scale-solve/solve-100000",
+      "instance": "solve-100000",
+      "suite": "scale-solve",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "容量 LP 构造的已知最优值",
+        "status": "optimal",
+        "objective": 0.0
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.017924791,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.017924791
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.015383416,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 155,
+          "proof_return_upper_secs": 0.017924791,
+          "conclusion_return_upper_secs": 0.017924791,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": -0.0,
+          "bound": -0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.02228849999664817,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.02228849999664817
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 156,
+          "proof_return_upper_secs": 0.02228849999664817,
+          "conclusion_return_upper_secs": 0.02228849999664817,
+          "verified": true
+        }
+      }
+    },
+    {
+      "case_id": "scale-solve/solve-8000",
+      "instance": "solve-8000",
+      "suite": "scale-solve",
+      "kind": "LP",
+      "time_limit_secs": 60,
+      "truth": {
+        "source": "容量 LP 构造的已知最优值",
+        "status": "optimal",
+        "objective": 0.0
+      },
+      "issues": [],
+      "runs": {
+        "mic": {
+          "solver": "mic",
+          "status": "optimal",
+          "raw_status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.001404583,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.001404583
+          },
+          "first_checked_callback": {
+            "event": 1,
+            "elapsed_secs": 0.001214541,
+            "objective": 0.0
+          },
+          "events_accepted": 1,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 1,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 158,
+          "proof_return_upper_secs": 0.001404583,
+          "conclusion_return_upper_secs": 0.001404583,
+          "verified": true
+        },
+        "gurobi": {
+          "solver": "gurobi",
+          "status": "optimal",
+          "raw_status": "OPTIMAL",
+          "objective": -0.0,
+          "bound": -0.0,
+          "objective_recomputed": 0.0,
+          "return_secs": 0.0018254999886266887,
+          "first": {
+            "source": "lp_return_upper",
+            "elapsed_secs": 0.0018254999886266887
+          },
+          "first_checked_callback": null,
+          "events_accepted": 0,
+          "events_rejected": [],
+          "callback_errors": [],
+          "reported_error": null,
+          "order": 0,
+          "rep": 0,
+          "issues": [],
+          "raw_line": 157,
+          "proof_return_upper_secs": 0.0018254999886266887,
+          "conclusion_return_upper_secs": 0.0018254999886266887,
+          "verified": true
+        }
+      }
+    }
+  ],
+  "raw_sha256": "dd83806320e1d27a6edde9641dbf720e9011710ada0a853d949d4496fbc4f872",
+  "manifest_sha256": "a2b7b90362c512e06b061db352d54c22b923dbe995fb5e60ef514f638e2d9575",
+  "freeze_sha256": "a9f877b2cebe415553d80ec81e38b3cd8751e6404567bc4d760582d0fa0740f9",
+  "previous_proofs": {
+    "mic": 69,
+    "gurobi": 70
+  },
+  "previous_audit_passed": true,
+  "previous_timings_sha256": "e778eb018f4bc3a283378de7cc99571f9f058e3a792ebfa047a12edb56a87362",
+  "proof_changes": {
+    "mic": {
+      "gained": [
+        "marketsplit-5x50"
+      ],
+      "lost": []
+    },
+    "gurobi": {
+      "gained": [],
+      "lost": []
+    }
+  },
+  "mic_only_optimal": [
+    "marketsplit-5x50"
+  ],
+  "gurobi_only_optimal": [
+    "icir97_tension"
+  ],
+  "callbacks_and_limits": {
+    "mic": {
+      "accepted_callbacks": 300,
+      "rejected_callbacks": 0,
+      "callback_query_errors": 0,
+      "limit_with_solution": 6
+    },
+    "gurobi": {
+      "accepted_callbacks": 377,
+      "rejected_callbacks": 0,
+      "callback_query_errors": 0,
+      "limit_with_solution": 5
+    }
+  },
+  "raw_process_sha256": "5d038db4d8193456ebd5cf072d74fb02fafb5f10407e64e7acb884735bf696b2",
+  "verifier_sha256": "2d0f92191e797ea56af130eca53db15d0a78e16ef56ca086c8a1119a8b97ce06",
+  "cross_round_bounds_checked": true,
+  "matched_model_inputs": 79,
+  "independent_market_lower": 25
+}

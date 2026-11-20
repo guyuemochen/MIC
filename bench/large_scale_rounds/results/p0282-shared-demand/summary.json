@@ -1,0 +1,250 @@
+{
+  "host": "Apple M4, macOS 27.2.1, arm64",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "gurobi": "10.0.3",
+  "threads": 1,
+  "node_limit": 2000000,
+  "time_limit_secs": 60,
+  "gap": 0,
+  "early_stop": "off",
+  "timing": "从载入后的模型开始，包含预处理、求解与新解回调。每次单独启动进程。",
+  "order": "三种求解器的六种排列各一次，各求解器均覆盖每个出场顺序两次。",
+  "binary_sha256": {
+    "previous": "551ae8b32a2def55ad6421fd3bae95e523561b0d17e70d82e7aa4afaea670bd3",
+    "new": "d3d740ab8ac9005ecd2b14ba28882b8911b99329b1ad586a22c4555be56c59ef",
+    "gurobi": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9"
+  },
+  "source_sha256": {
+    "bench/large_scale_rounds/check_results.py": "b56ddf3ed181e952f958e9bfd88ffbcd3c2c1562912f275e6163d1be1c7a464a",
+    "bench/large_scale_rounds/compare_drayage_timing.py": "b151d16bc7b5ec88331ae7554cf4e33ccbaf455145f3e1bf56f403a0c400f9f2",
+    "bench/large_scale_rounds/compare_gurobi10.py": "4b56e2d9c18f31ce4a4d0716e0e50ad7b236e24ec3ad1baa1f0d3be3d8c6ec86",
+    "milp/Cargo.lock": "485ae25775c89334423538a03c60486d4787e5e5a463524b65a624fa24239564",
+    "milp/Cargo.toml": "ebb033f8b89fe8470592d9198627c8a880aebef386236514795e9a5404c4c5fe",
+    "milp/examples/round_probe.rs": "bbc92b14234bd72f29a7ca677dd1763daaa3a9a51d811ad16a500014622a952d",
+    "milp/src/binary_propagation.rs": "26a51f848abd35f1b6a5698e0fe5c3f83d5910f77fd2c19784fa4a1ab023fe93",
+    "milp/src/block_cover.rs": "58d66dbc87b33faeec8cd1da6baa314c51ecf1168fbdc3369a59b1036d6fb635",
+    "milp/src/branch_bound.rs": "6ee07765759684b3437ff7501c284d56a9a9ed67f3d04f27235be87e0315e464",
+    "milp/src/conditional_rows.rs": "1bd575db401a6be021b507f1479ea82e59c895b1d35c6efd053f3531a0ea5e43",
+    "milp/src/cuts.rs": "92debc6790a5d203c4540dcfc386d9a34f0c0d61396fc75f7091825c774324d9",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/heuristics.rs": "c033ab64dd915a7a1a3c7c6b33c705373232ac2b4239a00c83a02b4ccd13f282",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "cf0bb71ec4b181804273ac623700053a290cb1b7e936bbab77a028ed81a6385f",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/parallel_bb.rs": "a686a17f4d3ab0ea831459e0b525e54b741f1bdf31a24591ba21a844211dc286",
+    "milp/src/phase1_progress_diagnostics.rs": "0b31160f3faf612234983677ee981d0e79b09bb6449c7327038d73fb63d016f9",
+    "milp/src/presolve.rs": "8a3e8d6d0edaf592a429208ab1cedb407c40e370887d165dfe0c4735475858b1",
+    "milp/src/presolve/binary_mutex.rs": "3d609c3f780cd465f4738c13186056e4a2480f14d48700d2fb201b743e809c5c",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/route_cover.rs": "68bf4103d952ba28e840b1f34ba5760cb301758c36850bb7edbf813a73da85aa",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/shared_demand.rs": "4db8f49a985d92e07f843fc6d97a746f0a2414a25f8bcc87023e288d9bf74374",
+    "milp/src/simplex.rs": "ee8bcbeea3ebf38aec55f96be84d853b96ed46cf64c7d50275d14b006dbe3eb9",
+    "milp/src/simplex_sparse.rs": "22ae28f2f63feeceab5cd2417e350757f0b6b584b576b123985697dce4da3ee2",
+    "milp/src/solver.rs": "d208cb6e60a94258b69fea3939e967c3ce1473e60a1994ce4ef5c94bdde311ff",
+    "milp/src/time_window_routes.rs": "e49ef0e683f711ea6b87fc77748bb06eca3b35bee3ddb0409e9c8c7b07c4e204"
+  },
+  "runs_sha256": "ca944213904101b77b67077f446ffeffee8ead16ebf7d83098c1be5fef0c6709",
+  "verification": {
+    "passed": true,
+    "runs": 18,
+    "instances": 1,
+    "solutions_checked": 18,
+    "mic_with_external_optimum": 12,
+    "mic_bounds_checked": 12,
+    "errors": []
+  },
+  "accepted_callbacks": 270,
+  "rejected_callbacks": 0,
+  "results": {
+    "previous": {
+      "elapsed_median_secs": 2.9695651045,
+      "elapsed_range_secs": [
+        2.9509494590000003,
+        2.989112
+      ],
+      "first_median_secs": 0.023212896,
+      "first_objectives": [
+        317142.0
+      ],
+      "objectives": [
+        258411.0
+      ],
+      "bounds": [
+        258411.0
+      ],
+      "nodes": [
+        1648
+      ],
+      "lp_iterations": [
+        82352
+      ],
+      "time_to_previous_first_quality_median_secs": 0.023212896
+    },
+    "new": {
+      "elapsed_median_secs": 0.005069083,
+      "elapsed_range_secs": [
+        0.004967,
+        0.005157083
+      ],
+      "first_median_secs": 0.0013800000000000002,
+      "first_objectives": [
+        1096212.0
+      ],
+      "objectives": [
+        258411.0
+      ],
+      "bounds": [
+        258411.0
+      ],
+      "nodes": [
+        1
+      ],
+      "lp_iterations": [
+        0
+      ],
+      "time_to_previous_first_quality_median_secs": 0.001424875
+    },
+    "gurobi": {
+      "elapsed_median_secs": 0.024148166499799117,
+      "elapsed_range_secs": [
+        0.023638707993086427,
+        0.02469287499843631
+      ],
+      "first_median_secs": 5.0812501285690814e-05,
+      "first_objectives": [
+        457129.0
+      ],
+      "objectives": [
+        258411.0
+      ],
+      "bounds": [
+        258411.0
+      ],
+      "nodes": [
+        1
+      ],
+      "lp_iterations": [
+        572
+      ],
+      "time_to_previous_first_quality_median_secs": 0.002404708502581343
+    }
+  },
+  "previous_first_quality_threshold": 317142,
+  "previous_binary_origin": "p0282-p0548-gurobi10/summary.json 中标记 new 的上一轮二进制",
+  "independent_verification": {
+    "accepted_callbacks_exactly_verified": 548,
+    "additional_determinism_runs": 2,
+    "binary_sha256": "d3d740ab8ac9005ecd2b14ba28882b8911b99329b1ad586a22c4555be56c59ef",
+    "distinct_models": 115,
+    "enumerated_models": 100,
+    "errors": [],
+    "generator_sha256": "9aa39a1421a0728df5f2d52687694fec185c6e14e1fdc611beab8efc30c0dde8",
+    "gurobi_models": 15,
+    "p0282_dp_matches": 13,
+    "runs": 117,
+    "status_counts": {
+      "infeasible": 76,
+      "optimal": 41
+    }
+  },
+  "differential_sha256": "12d184328836f634045af23b0a8b422afc1bf90fac507c3547c9c742bee3ba68",
+  "coverage": {
+    "cases": 79,
+    "excluded_by_size_or_type": 35,
+    "directly_tested": 44,
+    "selected": [
+      "p0282"
+    ]
+  },
+  "limits": [
+    {
+      "time_limit_ms": 1,
+      "determinism": "Wall",
+      "observer_delay_ms": 0,
+      "node_limit": 1,
+      "status": "LimitReached",
+      "objective": null,
+      "bound": null,
+      "nodes": 1,
+      "callback_count": 0
+    },
+    {
+      "time_limit_ms": 10,
+      "determinism": "Wall",
+      "observer_delay_ms": 0,
+      "node_limit": 1,
+      "status": "LimitReached",
+      "objective": 283803.0,
+      "bound": null,
+      "nodes": 1,
+      "callback_count": 28
+    },
+    {
+      "time_limit_ms": 1000,
+      "determinism": "Wall",
+      "observer_delay_ms": 0,
+      "node_limit": 1,
+      "status": "Optimal",
+      "objective": 258411.0,
+      "bound": 258411.0,
+      "nodes": 1,
+      "callback_count": 29
+    },
+    {
+      "time_limit_ms": 1,
+      "determinism": "Budget",
+      "observer_delay_ms": 0,
+      "node_limit": 1,
+      "status": "Optimal",
+      "objective": 258411.0,
+      "bound": 258411.0,
+      "nodes": 1,
+      "callback_count": 29
+    },
+    {
+      "time_limit_ms": 50,
+      "determinism": "Wall",
+      "observer_delay_ms": 70,
+      "node_limit": 1,
+      "status": "LimitReached",
+      "objective": 1096212.0,
+      "bound": null,
+      "nodes": 1,
+      "callback_count": 1
+    }
+  ],
+  "p0548_regression": {
+    "status": "optimal",
+    "objective": 8691.0,
+    "bound": 8691.0,
+    "nodes": 1
+  },
+  "tests": {
+    "milp-final": {
+      "passed": 562,
+      "failed": 0,
+      "ignored": 6
+    },
+    "accept-final": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    "planner": {
+      "passed": 127,
+      "failed": 0,
+      "ignored": 2
+    },
+    "ffi-final": {
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    },
+    "python": {
+      "passed": 65
+    }
+  }
+}

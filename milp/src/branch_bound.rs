@@ -119,7 +119,7 @@ pub enum BranchRule {
     /// pseudo×probes=8 最优（−25% 证最优墙钟）。故默认走类自适应
     /// （[`BbOptions::branch_rule_auto`] + [`detect_pseudocost_favorable`]）：
     /// 背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数 2..=64，P3 收紧
-    /// 单行回落）⇒ Pseudocost + probes=8，其余 ⇒ MostFractional；
+    /// 单行回落）及带付费启用项和共享替代项的二元覆盖模型 ⇒ Pseudocost + probes=8；
     /// marketsplit（等式行）不命中类，探测白烧路径不进默认。
     /// 可靠性冷启动见 [`BbOptions::pc_reliability_probes`]。
     Pseudocost,
@@ -201,10 +201,9 @@ pub struct BbOptions {
     pub reuse_probe_evidence: bool,
     /// 精确二元静态行传播。默认 Auto，仅用户请求单线程时开启，不读取割。
     pub binary_row_propagation: BinaryPropagationMode,
-    /// 子集和 MITM 可行性启发式的窗口重试预算（R5-retry）：全 Binary +
-    /// 全 Eq + 整系数类、且根阶段廉价启发式（round/dive）全部 miss 时在根
-    /// 一次求解（n ≤ 42 全变量精确；n ≤ 84 窗口半枚举）。默认 8；0 = 关闭
-    ///（CLI `--mitm=off` 供消融）。
+    /// 二元等式折半枚举的窗口重试预算。根节点廉价启发式均未找到解时启用。
+    /// 42 列以内枚举全模型，顺序搜索在目标和行残差可精确区分时可直接证优。
+    /// 43 至 84 列仅在局部窗口找可行解。默认 8，0 表示关闭（CLI `--mitm=off`）。
     pub mitm_windows: usize,
     /// 全局 DFS 工作栈（R6-retry，轴3；仅并行 threads ≥ 2 生效）：true ⇒
     /// 子代直接压全局栈顶、worker 恒从栈顶弹——全局探索序对齐顺序 DFS，
@@ -244,7 +243,7 @@ pub struct BbOptions {
     /// 类自适应默认开关（R3）：true 时 `branch_rule` 字段视为「未指定」，
     /// 求解入口按问题结构类检测（[`detect_pseudocost_favorable`]）解析
     /// 有效规则——背包/多维背包类（全 Binary + 全正系数 Le 行 + 行数
-    /// 2..=64，P3 收紧单行回落）⇒ Pseudocost + `pc_reliability_probes ≥ 8`，
+    /// 2..=64）或带付费启用项和共享替代项的覆盖模型 ⇒ Pseudocost + `pc_reliability_probes ≥ 8`，
     /// 否则 MostFractional；false 时按 `branch_rule` 字段逐字生效（显式覆盖
     /// 优先）。默认 true。
     pub branch_rule_auto: bool,
@@ -429,7 +428,7 @@ pub fn detect_pseudocost_favorable(problem: &Problem) -> bool {
 }
 
 /// 求解入口解析类自适应默认（R3 分支规则）：`branch_rule_auto = true` 时按
-/// [`detect_pseudocost_favorable`] 翻转有效规则（命中 ⇒ Pseudocost 且
+/// 多维背包或具有共享替代项的二元覆盖结构翻转有效规则（命中 ⇒ Pseudocost 且
 /// `pc_reliability_probes ≥ 8`；未命中 ⇒ MostFractional），返回解析后的
 /// 具体选项（`branch_rule_auto` 置 false，幂等）；显式指定
 /// （`branch_rule_auto = false`）原样透传——覆盖优先。
@@ -444,7 +443,7 @@ fn resolve_branch_rule_defaults(problem: &Problem, opts: &BbOptions) -> BbOption
     }
     let mut resolved = *opts;
     resolved.branch_rule_auto = false;
-    if detect_pseudocost_favorable(problem) {
+    if detect_pseudocost_favorable(problem) || crate::block_cover::prefers_pseudocost(problem) {
         resolved.branch_rule = BranchRule::Pseudocost;
         resolved.pc_reliability_probes = resolved.pc_reliability_probes.max(8);
     } else {
@@ -752,6 +751,59 @@ fn sequential_bb(
     #[cfg(not(feature = "root_heuristic_work_budget"))]
     let mut root_work_budget: Option<&mut heuristics::HeuristicWorkBudget> = None;
 
+    // 两处根启发式共用同一出口。完整左右匹配给出的最优值独立于根 LP；
+    // 局部窗口或中断只交付复核过的可行点，随后仍由原搜索处理预算和界。
+    let root_subset_sum = |bounds: &Bounds,
+                           lp_x: &[f64],
+                           incumbent: &mut Option<(f64, Vec<f64>)>,
+                           stats: &mut BbStats,
+                           simplex: &dyn LpEngine,
+                           base_iters: u64| {
+        if incumbent.is_some() || opts.mitm_windows == 0 {
+            return None;
+        }
+        let found = heuristics::subset_sum_search(
+            problem,
+            bounds,
+            lp_x,
+            opts.mitm_windows,
+            &tol,
+            true,
+            time_deadline,
+        )?;
+        let objective = found.incumbent.objective;
+        maybe_update(sense, incumbent, found.incumbent, incumbent_observer);
+        if !found.proven {
+            return None;
+        }
+        if let Some(h) = hooks {
+            emit_progress(
+                h,
+                &start,
+                stats.nodes,
+                Some(objective),
+                Some(objective),
+                sense,
+            );
+        }
+        let status = if time_deadline.is_some_and(|end| Instant::now() >= end) {
+            SolveStatus::LimitReached
+        } else {
+            SolveStatus::Optimal
+        };
+        Some(finish(
+            status,
+            incumbent.take(),
+            stats,
+            simplex,
+            start,
+            base_iters,
+            Some(objective),
+            false,
+            false,
+        ))
+    };
+
     // —— 根预割启发式（仅 root_cuts 开启时额外执行一轮）——
     // 割循环可能把根 LP 顶点从「单断点近整数」推向「多分数中面」（界更紧
     // 但取整/潜水质量下降——max 背包类：纯 LP 贪心顶点仅容量断点一个分数
@@ -778,23 +830,10 @@ fn sequential_bb(
         ) {
             maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        // 子集和 MITM（R5-retry）：全 Eq + 全 Binary 类的最后手段——
-        // round/dive（及一切 LP 驱动机制）在该类零产出（marketsplit 大规格
-        // 200 万节点零可行）；MITM 脱离 LP 信息源精确/窗口求解。仅当廉价
-        // 启发式全部 miss（incumbent 为空）才启动，非该类恒零成本跳过。
-        if opts.heuristics
-            && opts.mitm_windows > 0
-            && incumbent.is_none()
-        {
-            if let Some(inc) = heuristics::subset_sum_mitm(
-                problem,
-                &bounds,
-                &sol.x,
-                opts.mitm_windows,
-                &tol,
-            ) {
-                maybe_update(sense, &mut incumbent, inc, incumbent_observer);
-            }
+        if let Some(result) = root_subset_sum(
+            &bounds, &sol.x, &mut incumbent, &mut stats, &*simplex, base_lp_iterations,
+        ) {
+            return Ok(result);
         }
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
         if let Some(budget) = root_work_budget.as_deref() {
@@ -1029,16 +1068,10 @@ fn sequential_bb(
         ) {
             maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        if opts.mitm_windows > 0 && incumbent.is_none() {
-            if let Some(inc) = heuristics::subset_sum_mitm(
-                problem,
-                &bounds,
-                &sol.x,
-                opts.mitm_windows,
-                &tol,
-            ) {
-                maybe_update(sense, &mut incumbent, inc, incumbent_observer);
-            }
+        if let Some(result) = root_subset_sum(
+            &bounds, &sol.x, &mut incumbent, &mut stats, &*simplex, base_lp_iterations,
+        ) {
+            return Ok(result);
         }
         #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
         if let Some(budget) = root_work_budget.as_deref() {
@@ -6298,6 +6331,43 @@ mod tests {
             }),
         };
         (lines, hooks)
+    }
+
+    #[test]
+    fn subset_sum_root_proof_reports_bound_with_and_without_cuts() {
+        let path = std::path::Path::new("../bench/instances/marketsplit-4x40.milp");
+        let p = crate::instance::load_instance(path).unwrap();
+        for root_cuts in [true, false] {
+            let (lines, hooks) = collector();
+            let opts = BbOptions {
+                root_cuts,
+                node_limit: 1,
+                ..BbOptions::default()
+            };
+            let result = branch_and_bound_controlled(
+                &p,
+                &opts,
+                &SearchControl::default(),
+                tol(),
+                Some(&hooks),
+            )
+            .unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.best_objective, Some(19.0));
+            assert_eq!(result.best_objective, result.bound);
+            assert_eq!(result.stats.nodes, 1);
+            let lines = lines.lock().unwrap();
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].bound, result.bound);
+            assert_eq!(lines[0].incumbent, result.best_objective);
+
+            let off = BbOptions {
+                mitm_windows: 0,
+                ..opts
+            };
+            let limited = branch_and_bound(&p, &off, tol()).unwrap();
+            assert_eq!(limited.status, SolveStatus::LimitReached);
+        }
     }
 
     /// hard-knapsack-12 + 极小 log_period：首行在根阶段结束（nodes=1）；

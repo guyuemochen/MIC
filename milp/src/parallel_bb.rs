@@ -1025,14 +1025,16 @@ pub fn parallel_branch_and_bound(
                 maybe_update_local(sense, &mut incumbent, inc);
             }
             if opts.mitm_windows > 0 && incumbent.is_none() {
-                if let Some(inc) = heuristics::subset_sum_mitm(
+                if let Some(found) = heuristics::subset_sum_search(
                     problem,
                     &bounds,
                     &sol.x,
                     opts.mitm_windows,
                     &tol,
+                    false,
+                    time_deadline,
                 ) {
-                    maybe_update_local(sense, &mut incumbent, inc);
+                    maybe_update_local(sense, &mut incumbent, found.incumbent);
                 }
             }
             #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]
@@ -1164,14 +1166,16 @@ pub fn parallel_branch_and_bound(
                 maybe_update_local(sense, &mut incumbent, inc);
             }
             if opts.mitm_windows > 0 && incumbent.is_none() {
-                if let Some(inc) = heuristics::subset_sum_mitm(
+                if let Some(found) = heuristics::subset_sum_search(
                     problem,
                     &bounds,
                     &sol.x,
                     opts.mitm_windows,
                     &tol,
+                    false,
+                    time_deadline,
                 ) {
-                    maybe_update_local(sense, &mut incumbent, inc);
+                    maybe_update_local(sense, &mut incumbent, found.incumbent);
                 }
             }
             #[cfg(all(feature = "proof_profile", feature = "root_heuristic_work_budget"))]

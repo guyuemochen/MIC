@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-11-20T08:40:44.737312+00:00",
+  "command": [
+    "/opt/homebrew/opt/python@3.13/bin/python3.13",
+    "/tmp/mic-pack-round.SW4BPY/post.py"
+  ],
+  "script_sha256": "d019b9b09857f893f986f7896eaa8e55b45aee8bcfcca4589cb5edb824d94aee",
+  "timings_sha256": "e778eb018f4bc3a283378de7cc99571f9f058e3a792ebfa047a12edb56a87362",
+  "library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "changed_parameter": {
+    "DualReductions": 0
+  },
+  "count": 1,
+  "results": [
+    {
+      "case_id": "repository/unbounded-tiny",
+      "instance": "unbounded-tiny",
+      "model": "models/unbounded-tiny.json.gz",
+      "model_sha256": "84db4d072384cfe8bc20cf8b30a7fe337e8e01ff10f68348af0c4d4abd6830a2",
+      "solver": "gurobi",
+      "primary_record": {
+        "status": "infeasible_or_unbounded",
+        "raw_status": "INF_OR_UNBD",
+        "elapsed_secs": 6.799999391660094e-05,
+        "parameters": {
+          "OutputFlag": 0,
+          "Threads": 1,
+          "TimeLimit": 60.0,
+          "NodeLimit": 2000000.0,
+          "MIPGap": 0.0,
+          "MIPGapAbs": 0.0,
+          "IntFeasTol": 1e-06,
+          "DualReductions": 1,
+          "FeasibilityTol": 1e-06,
+          "OptimalityTol": 1e-06
+        },
+        "version": "10.0.3"
+      },
+      "diagnostic": {
+        "status": "unbounded",
+        "raw_status": "UNBOUNDED",
+        "elapsed_secs": 0.0003956669970648363,
+        "objective": null,
+        "bound": null,
+        "gap_absolute": null,
+        "gap_percent": null,
+        "values": null,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "version": "10.0.3",
+        "cuts": null,
+        "rc_fixed": null,
+        "rc_reapplies": null,
+        "rc_refixed": null,
+        "presolve_reductions": null,
+        "auto_degraded": null,
+        "gap_terminated": null,
+        "raw_status_code": 5,
+        "solution_count": 0,
+        "bound_source": null,
+        "optimizer_runtime_secs": 0.0003840923309326172,
+        "barrier_iterations": 0,
+        "model_roundtrip_passed": true,
+        "incumbent_events": [],
+        "callback_errors": [],
+        "parameters": {
+          "OutputFlag": 0,
+          "Threads": 1,
+          "DualReductions": 0,
+          "TimeLimit": 60.0,
+          "NodeLimit": 2000000.0,
+          "MIPGap": 0.0,
+          "MIPGapAbs": 0.0,
+          "IntFeasTol": 1e-06,
+          "FeasibilityTol": 1e-06,
+          "OptimalityTol": 1e-06
+        }
+      },
+      "raw": {
+        "command": [
+          "/opt/homebrew/opt/python@3.13/bin/python3.13",
+          "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/all-gurobi10-timing/diagnose_gurobi_ambiguity.py",
+          "_worker",
+          "/Library/gurobi1003/macos_universal2/lib/libgurobi100.dylib",
+          "/Users/guyuemochen/Desktop/projects/MIC/bench/large_scale_rounds/results/all-gurobi10-structural-60s/models/unbounded-tiny.json.gz",
+          "60",
+          "2000000"
+        ],
+        "started_at_utc": "2026-11-20T08:40:44.686069+00:00",
+        "finished_at_utc": "2026-11-20T08:40:44.737194+00:00",
+        "process_elapsed_secs": 0.05096487500122748,
+        "returncode": 0,
+        "timeout": false,
+        "spawn_error": null,
+        "stdout": "{\"status\": \"unbounded\", \"raw_status\": \"UNBOUNDED\", \"elapsed_secs\": 0.0003956669970648363, \"objective\": null, \"bound\": null, \"gap_absolute\": null, \"gap_percent\": null, \"values\": null, \"nodes\": 0, \"lp_iterations\": 0, \"version\": \"10.0.3\", \"cuts\": null, \"rc_fixed\": null, \"rc_reapplies\": null, \"rc_refixed\": null, \"presolve_reductions\": null, \"auto_degraded\": null, \"gap_terminated\": null, \"raw_status_code\": 5, \"solution_count\": 0, \"bound_source\": null, \"optimizer_runtime_secs\": 0.0003840923309326172, \"barrier_iterations\": 0, \"model_roundtrip_passed\": true, \"incumbent_events\": [], \"callback_errors\": [], \"parameters\": {\"OutputFlag\": 0, \"Threads\": 1, \"DualReductions\": 0, \"TimeLimit\": 60.0, \"NodeLimit\": 2000000.0, \"MIPGap\": 0.0, \"MIPGapAbs\": 0.0, \"IntFeasTol\": 1e-06, \"FeasibilityTol\": 1e-06, \"OptimalityTol\": 1e-06}}\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

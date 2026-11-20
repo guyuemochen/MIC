@@ -44,7 +44,14 @@ pub mod scaling;
 pub mod simplex_sparse;
 
 mod binary_propagation;
+mod block_cover;
+mod conditional_rows;
+mod classification_conflicts;
+mod cover_repair;
+mod packing;
+mod periodic_equalities;
 mod route_cover;
+mod shared_demand;
 mod time_window_routes;
 
 #[cfg(feature = "proof_profile")]
