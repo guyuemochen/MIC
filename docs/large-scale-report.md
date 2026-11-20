@@ -4284,3 +4284,26 @@ MIC 用 0.352 秒证明 `bnatt500` 无可行解。上一版在根节点因数值
 ```sh
 python3 bench/large_scale_rounds/results/bnatt-boolean/verify.py
 ```
+
+## 49. 在其他公开模型上检验 bnatt500 的优化
+
+同系列的 `bnatt400` 在当前 MIC 上约 24 毫秒证得最优值 1。上一版 MIC 与 Gurobi 10.0.3 各运行 60 秒，均未找到可行解。独立来源 PyBoolNet 的 17 个小模型中有 1 个也用上了这项优化。三个求解器在这 17 例上全部证优，结果与逐个枚举原始状态一致。[MIPLIB 同系列算例](https://miplib.zib.de/instance_details_bnatt400.html) · [PyBoolNet 模型快照](https://github.com/hklarner/pyboolnet/tree/3394310d07e3e25810a828d8da4f6d7241115113/pyboolnet/repository)
+
+| 算例 | 上一版 MIC（`31fbb74`） | 当前 MIC（`6f8be8e`） | Gurobi 10.0.3 |
+|---|---:|---:|---:|
+| `bnatt400` | 60.009 秒，触限，无可行解记录 | 0.02373 秒，最优值 1 | 60.000 秒，触限，无可行解记录 |
+| `randomnet_n7k3` | 1.277 毫秒，最优值 0 | 0.045 毫秒，最优值 0 | 0.428 毫秒，最优值 0 |
+
+比较使用同一台 Apple M4、单线程、60 秒时限、200 万节点上限、零目标间隙。计时从模型加载后开始。`bnatt400` 的当前 MIC 耗时取 5 次中位数，五次均搜索 3162 个节点并返回同一组解。两项触限结果各测 1 次，仅报告截止时的进展。`randomnet_n7k3` 在预热后轮换三个求解器的运行顺序，各取 9 次中位数。[原始计时与参数](../bench/large_scale_rounds/results/bnatt-external/native/timing.json) · [17 例逐例结果与重复计时](../bench/large_scale_rounds/results/bnatt-external/independent/results.json)
+
+在 MIPLIB 2017 完整集合的 1065 个模型中，`bnatt` 组只有 `bnatt400` 和上一轮的 `bnatt500`。对于新测的 `bnatt400`，识别器把 3600 个二元变量缩为 400 个状态变量和 1930 条布尔子句。独立检查直接用官方 MPS 的原始系数验证了可行解满足全部 5614 行，也验证了这些子句与原约束的对应关系。目标变量取 0 时，1679 步推导得到矛盾，因此目标值 1 已证最优。原文件、可行解、证明与重放脚本均已归档。[MIPLIB 完整集合](https://miplib.zib.de/tag_collection.html) · [独立证优记录](../bench/large_scale_rounds/results/bnatt-external/certificate/verification.json)
+
+PyBoolNet 提供每个状态位的更新规则。固定点指更新一次后所有位均保持原值的状态。选取固定版本中所有有 2 至 16 个状态位、可直接解释为布尔规则的同名主模型，剔除重复后共 17 例。保留原表达式结构，把与、或运算转换成整数约束，统一最小化第一个声明的状态位。穷举 87032 个原始状态共得到 61 个固定点。唯一命中的 `randomnet_n7k3` 有 7 个状态位、128 种取值、10 个固定点。当前 MIC 使用 30 条布尔子句完成搜索；上一版进行了 261 次线性松弛迭代。其余 16 例沿用原求解流程，其中 15 例含有当前识别器未支持的两变量约束。另一例的一个或门直接读取另一个或门的输出，超出了当前支持的两层结构。这里的命中率只适用于这批小模型和这种写法。[固定版本的随机网络原规则](https://github.com/hklarner/pyboolnet/blob/3394310d07e3e25810a828d8da4f6d7241115113/pyboolnet/repository/randomnet_n7k3/randomnet_n7k3.bnet) · [转换与穷举核验脚本](../bench/large_scale_rounds/results/bnatt-external/independent/check.py)
+
+MIPLIB 还列出了 4 个其他组的近邻。`s1234`、`supportcase3`、`circ10-3` 均经正式识别器检查，三者的约束行数都超过该入口支持的变量数两倍。`neos-5178119-nalagi` 有 99 个连续变量，且有 99 列没有有限下界，现有转换器无法导入，也不满足全二元条件。这四例只用于核查适用范围。[官方近邻表](https://miplib.zib.de/instance_details_bnatt400.html#similar-instances-in-collection) · [逐例检查记录](../bench/large_scale_rounds/results/bnatt-external/native/neighbors.json)
+
+在仓库根目录运行以下命令，可从归档的原始 MPS、解和证明独立重放 `bnatt400` 的最优性检查。
+
+```sh
+python3 bench/large_scale_rounds/results/bnatt-external/certificate/verify.py
+```

@@ -1,0 +1,88 @@
+{
+  "instance": "bnatt400",
+  "official": "https://miplib.zib.de/instance_details_bnatt400.html",
+  "model_url": "https://miplib.zib.de/WebData/instances/bnatt400.mps.gz",
+  "raw_mps_sha256": "50565a2a2e80dd9563ce7b5d06e3053d986acf72d57ab787d97d1d10ad519ef8",
+  "milp_sha256": "74dde928ee768d12110da83af5bff36d2776b7136d54a57c3f03313436535299",
+  "exported_model_sha256": "453df14aea745fa399d0fe7f07439807bb7cc7a09b9639e8224f95b083a6c5d9",
+  "baseline_commit": "31fbb74786f20a8d00a16ea65d9db77f7b2addbc",
+  "current_commit": "6f8be8e7f9dcac311c514e8a81f2cfda3da3651a",
+  "baseline_binary_sha256": "de54fa524abad9afee95a33e1b61c649578230dce5bfeb0ca50b901daedf37a8",
+  "current_binary_sha256": "fe5b0d050463a7384e59b3cdde7eea7f3d546de7c45e133ab9381a1799978d1d",
+  "gurobi_library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "gurobi_version": "10.0.3",
+  "machine": "Apple M4",
+  "platform": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "mic_options": [
+    "--threads",
+    "1",
+    "--time-limit-secs",
+    "60",
+    "--node-limit",
+    "2000000",
+    "--early-stop",
+    "off"
+  ],
+  "gurobi_parameters": {
+    "OutputFlag": 0,
+    "Threads": 1,
+    "TimeLimit": 60.0,
+    "NodeLimit": 2000000.0,
+    "MIPGap": 0.0,
+    "MIPGapAbs": 0.0,
+    "IntFeasTol": 1e-06,
+    "DualReductions": 1,
+    "FeasibilityTol": 1e-06,
+    "OptimalityTol": 1e-06
+  },
+  "detector": {
+    "eligible": true,
+    "primary_variables": 400,
+    "clauses": 1930,
+    "preferred": -1
+  },
+  "run_order": [
+    "current",
+    "gurobi",
+    "baseline",
+    "current",
+    "current",
+    "current",
+    "current"
+  ],
+  "baseline": {
+    "status": "limit_reached",
+    "raw_status": "limit_reached",
+    "objective": null,
+    "bound": 0.0,
+    "elapsed_secs": 60.009129542,
+    "nodes": 330,
+    "lp_iterations": 332158
+  },
+  "current": {
+    "status": "optimal",
+    "raw_status": "optimal",
+    "objective": 1.0,
+    "bound": 1.0,
+    "elapsed_secs": 0.02373225,
+    "nodes": 3162,
+    "lp_iterations": 0
+  },
+  "current_seconds": [
+    0.02373225,
+    0.027262458,
+    0.023356209,
+    0.024000292,
+    0.023412417
+  ],
+  "current_median_seconds": 0.02373225,
+  "gurobi": {
+    "status": "limit_reached",
+    "raw_status": "TIME_LIMIT",
+    "objective": null,
+    "bound": 0.0,
+    "elapsed_secs": 60.00019125000108,
+    "nodes": 1985,
+    "lp_iterations": 1406269
+  }
+}

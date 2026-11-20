@@ -1,0 +1,27 @@
+{
+  "instance": "bnatt400",
+  "mps_sha256": "50565a2a2e80dd9563ce7b5d06e3053d986acf72d57ab787d97d1d10ad519ef8",
+  "milp_sha256": "74dde928ee768d12110da83af5bff36d2776b7136d54a57c3f03313436535299",
+  "witness_bits_sha256": "db5061645ec239addebda66954fe3d778947a06bc6cdd78f1038ea0b4d79899b",
+  "original_variables": 3600,
+  "original_rows": 5614,
+  "mps_objective": "min x1",
+  "mic_objective_column": 0,
+  "verified_objective": 1,
+  "projection": {
+    "primary_variables": 400,
+    "fixed_variables": 1586,
+    "restored_variables": 1614,
+    "private_input_tuples": 12912,
+    "checked_output_tuples": 6370,
+    "forbidden_output_tuples": 3187,
+    "entailed_clauses": 1930
+  },
+  "cnf_sha256": "870ce9aec96f737ca9e3b3cb80dad246c51cd0685ee7239c9690fff6d30974b8",
+  "better_value_excluded": {
+    "proof_sha256": "e8d869a054b6f8d4655b23e7a9e1723093a0d64144d60564b3da75a9358521dd",
+    "assumption": -1,
+    "verified_steps_including_empty": 1679
+  },
+  "conclusion": "optimal"
+}
