@@ -1,0 +1,66 @@
+{
+  "mic_binary_sha256": "ca571397b26a1c37af07edf4388bd5c2f2136bd498ce3e43446f1b065c43a30f",
+  "workspace_base_commit": "7e2c76671f3cb3647458bde72ddf6e43bfc629e1",
+  "source_fingerprint_reference": "../weighted-setcover/timing.json",
+  "mic_flags": [
+    "--time-limit-secs",
+    "60",
+    "--node-limit",
+    "2000000",
+    "--threads",
+    "1",
+    "--early-stop",
+    "off"
+  ],
+  "gurobi_archive": "../main-gurobi10-100-60s/timings.jsonl.gz",
+  "gurobi_archive_sha256": "3e5d712448c0d77c52c10d0285196dc42b7f20b951ae75e16027b35ce7512813",
+  "model_manifest_sha256": "22d2345dee309d24f4152ae0d22d3451d972d17b2c69d9c07ad176f4b8038f74",
+  "counts": {
+    "mic": {
+      "optimal": 88,
+      "infeasible": 2,
+      "unbounded": 1,
+      "limit_reached": 9
+    },
+    "gurobi": {
+      "optimal": 87,
+      "infeasible": 1,
+      "infeasible_or_unbounded": 1,
+      "limit_reached": 11
+    }
+  },
+  "verification": {
+    "final_vectors": 94,
+    "callbacks": 285
+  },
+  "common_optimal": 86,
+  "common_mic_slower": 39,
+  "seconds_gap_threshold": 1,
+  "significant_deficits": [
+    "boundary_m17",
+    "neos17",
+    "mknap-10x200",
+    "lseu",
+    "enigma",
+    "air03",
+    "stein27",
+    "covering_120x200_s12109"
+  ],
+  "mic_limited": [
+    "gen-ip054",
+    "icir97_tension",
+    "neos-4954672-berkel",
+    "seymour",
+    "boundary_n512_m16",
+    "boundary_n513_m16",
+    "circ10-3",
+    "s1234",
+    "supportcase3"
+  ],
+  "smaller_cover_cases": [
+    "setcover-100x150",
+    "setcover-60x100",
+    "covering_120x200_s12109",
+    "covering_60x100_s12101"
+  ]
+}

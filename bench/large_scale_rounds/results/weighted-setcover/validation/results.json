@@ -1,0 +1,1111 @@
+{
+  "binary_sha256": "ca571397b26a1c37af07edf4388bd5c2f2136bd498ce3e43446f1b065c43a30f",
+  "gurobi_version": "10.0.3",
+  "gurobi_library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "cases": {
+    "original": {
+      "milp_sha256": "b1487772b33bb1b08b2085095c5233bae905ea6b17ba3fb2c69a2c8791441397",
+      "variables": 800,
+      "rows": 400,
+      "gurobi": {
+        "status": "optimal",
+        "objective": 113.0,
+        "bound": 113.0,
+        "nodes": 118,
+        "selected": [
+          50,
+          71,
+          80,
+          125,
+          193,
+          208,
+          212,
+          234,
+          274,
+          280,
+          341,
+          349,
+          356,
+          429,
+          436,
+          452,
+          453,
+          461,
+          487,
+          499,
+          543,
+          596,
+          613,
+          618,
+          629,
+          645,
+          673,
+          675,
+          684,
+          698,
+          715,
+          721
+        ],
+        "verified_incumbents": [
+          1885.0,
+          504.0,
+          248.0,
+          154.0,
+          126.0,
+          122.0,
+          114.0,
+          113.0
+        ]
+      },
+      "optimum": 113,
+      "mic": {
+        "status": "optimal",
+        "objective": 113.0,
+        "bound": 113.0,
+        "nodes": 465,
+        "selected": [
+          50,
+          71,
+          80,
+          125,
+          193,
+          208,
+          212,
+          234,
+          274,
+          280,
+          349,
+          356,
+          429,
+          436,
+          452,
+          453,
+          461,
+          487,
+          499,
+          543,
+          596,
+          613,
+          618,
+          629,
+          645,
+          657,
+          673,
+          675,
+          684,
+          698,
+          715,
+          721
+        ],
+        "verified_incumbents": [
+          118.0,
+          117.0,
+          116.0,
+          115.0,
+          114.0,
+          113.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 113.0,
+          "bound": 99.0,
+          "nodes": 1,
+          "selected": [
+            50,
+            71,
+            80,
+            125,
+            193,
+            208,
+            212,
+            234,
+            274,
+            280,
+            349,
+            356,
+            429,
+            436,
+            452,
+            453,
+            461,
+            487,
+            499,
+            543,
+            596,
+            613,
+            618,
+            629,
+            645,
+            657,
+            673,
+            675,
+            684,
+            698,
+            715,
+            721
+          ],
+          "verified_incumbents": [
+            118.0,
+            117.0,
+            116.0,
+            115.0,
+            114.0,
+            113.0
+          ]
+        },
+        "464": {
+          "status": "limit_reached",
+          "objective": 113.0,
+          "bound": 99.0,
+          "nodes": 464,
+          "selected": [
+            50,
+            71,
+            80,
+            125,
+            193,
+            208,
+            212,
+            234,
+            274,
+            280,
+            349,
+            356,
+            429,
+            436,
+            452,
+            453,
+            461,
+            487,
+            499,
+            543,
+            596,
+            613,
+            618,
+            629,
+            645,
+            657,
+            673,
+            675,
+            684,
+            698,
+            715,
+            721
+          ],
+          "verified_incumbents": [
+            118.0,
+            117.0,
+            116.0,
+            115.0,
+            114.0,
+            113.0
+          ]
+        },
+        "465": {
+          "status": "optimal",
+          "objective": 113.0,
+          "bound": 113.0,
+          "nodes": 465,
+          "selected": [
+            50,
+            71,
+            80,
+            125,
+            193,
+            208,
+            212,
+            234,
+            274,
+            280,
+            349,
+            356,
+            429,
+            436,
+            452,
+            453,
+            461,
+            487,
+            499,
+            543,
+            596,
+            613,
+            618,
+            629,
+            645,
+            657,
+            673,
+            675,
+            684,
+            698,
+            715,
+            721
+          ],
+          "verified_incumbents": [
+            118.0,
+            117.0,
+            116.0,
+            115.0,
+            114.0,
+            113.0
+          ]
+        }
+      }
+    },
+    "permuted": {
+      "milp_sha256": "0fdb62c2afeff1a45ef84f9f9b45c787f98bb918ba167ce2ac9881f5af428042",
+      "variables": 800,
+      "rows": 400,
+      "optimum": 113,
+      "mic": {
+        "status": "optimal",
+        "objective": 113.0,
+        "bound": 113.0,
+        "nodes": 405,
+        "selected": [
+          18,
+          61,
+          119,
+          157,
+          182,
+          222,
+          259,
+          263,
+          309,
+          318,
+          338,
+          360,
+          364,
+          392,
+          441,
+          467,
+          488,
+          504,
+          522,
+          532,
+          536,
+          583,
+          615,
+          630,
+          674,
+          679,
+          688,
+          691,
+          695,
+          725,
+          744,
+          762
+        ],
+        "verified_incumbents": [
+          119.0,
+          118.0,
+          117.0,
+          116.0,
+          115.0,
+          114.0,
+          113.0
+        ]
+      }
+    },
+    "scaled-and-forced": {
+      "milp_sha256": "68530d5ca4a113d3a9f6a2f93048602d75a99ae7221b5432e3ec1cc4b0b8f008",
+      "variables": 801,
+      "rows": 401,
+      "optimum": 810,
+      "mic": {
+        "status": "optimal",
+        "objective": 810.0,
+        "bound": 810.0,
+        "nodes": 1891,
+        "selected": [
+          50,
+          71,
+          80,
+          125,
+          193,
+          208,
+          212,
+          234,
+          274,
+          280,
+          341,
+          349,
+          356,
+          429,
+          436,
+          452,
+          453,
+          461,
+          487,
+          499,
+          543,
+          570,
+          596,
+          613,
+          618,
+          629,
+          645,
+          673,
+          675,
+          698,
+          715,
+          721,
+          800
+        ],
+        "verified_incumbents": [
+          845.0,
+          831.0,
+          824.0,
+          817.0,
+          810.0
+        ]
+      }
+    },
+    "enumerated-4101": {
+      "milp_sha256": "411eab4900909eb70ea1bdd2706f844cea3a88cb1bc5b78043a8cba238da6484",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 990000,
+      "mic": {
+        "status": "optimal",
+        "objective": 990000.0,
+        "bound": 990000.0,
+        "nodes": 1,
+        "selected": [
+          0,
+          1,
+          3,
+          5,
+          6,
+          9
+        ],
+        "verified_incumbents": [
+          990000.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 990000.0,
+          "bound": 990000.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            1,
+            3,
+            5,
+            6,
+            9
+          ],
+          "verified_incumbents": [
+            990000.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 296
+    },
+    "enumerated-4102": {
+      "milp_sha256": "19844536a45d67a60f7fd9e571505d658500a526adef7277c7243ec68fc0b1db",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 20,
+      "mic": {
+        "status": "optimal",
+        "objective": 20.0,
+        "bound": 20.0,
+        "nodes": 1,
+        "selected": [
+          1,
+          2,
+          4,
+          5,
+          9,
+          10
+        ],
+        "verified_incumbents": [
+          20.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 20.0,
+          "bound": 20.0,
+          "nodes": 1,
+          "selected": [
+            1,
+            2,
+            4,
+            5,
+            9,
+            10
+          ],
+          "verified_incumbents": [
+            20.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 456
+    },
+    "enumerated-4103": {
+      "milp_sha256": "61ae5e7916fda12cdd76db18ad8ec4e1a67163fac1e4e51381e54e0a82781185",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 25,
+      "mic": {
+        "status": "optimal",
+        "objective": 25.0,
+        "bound": 25.0,
+        "nodes": 1,
+        "selected": [
+          2,
+          3,
+          8,
+          9,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          25.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 25.0,
+          "bound": 25.0,
+          "nodes": 1,
+          "selected": [
+            2,
+            3,
+            8,
+            9,
+            10,
+            11
+          ],
+          "verified_incumbents": [
+            25.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 216
+    },
+    "enumerated-4104": {
+      "milp_sha256": "66e9bb5af99d5fdb687ed1ef8ff65eccbdb523422624c9494a254388b9f7e8eb",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 990000,
+      "mic": {
+        "status": "optimal",
+        "objective": 990000.0,
+        "bound": 990000.0,
+        "nodes": 1,
+        "selected": [
+          0,
+          1,
+          3,
+          6,
+          7,
+          10
+        ],
+        "verified_incumbents": [
+          990000.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 990000.0,
+          "bound": 990000.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            1,
+            3,
+            6,
+            7,
+            10
+          ],
+          "verified_incumbents": [
+            990000.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 891
+    },
+    "enumerated-4105": {
+      "milp_sha256": "ed568b2b01e3f0d0d9ed56454078a6b1ee200ab2e312930d87785c0db142ed41",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 17,
+      "mic": {
+        "status": "optimal",
+        "objective": 17.0,
+        "bound": 17.0,
+        "nodes": 3,
+        "selected": [
+          0,
+          4,
+          7,
+          8,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          17.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 17.0,
+          "bound": 15.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            4,
+            7,
+            8,
+            10,
+            11
+          ],
+          "verified_incumbents": [
+            17.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 791
+    },
+    "enumerated-4106": {
+      "milp_sha256": "aa01b696df9371683ff86d1191192b847bc51fbb298073313975868e8414d281",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 24,
+      "mic": {
+        "status": "optimal",
+        "objective": 24.0,
+        "bound": 24.0,
+        "nodes": 1,
+        "selected": [
+          1,
+          3,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "verified_incumbents": [
+          24.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 24.0,
+          "bound": 24.0,
+          "nodes": 1,
+          "selected": [
+            1,
+            3,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "verified_incumbents": [
+            24.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 272
+    },
+    "enumerated-4107": {
+      "milp_sha256": "5070ec52f9112626d7286c9ec2d6d6f96a928c4e6ca51b00dbae07acb4ca7620",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 1620000,
+      "mic": {
+        "status": "optimal",
+        "objective": 1620000.0,
+        "bound": 1620000.0,
+        "nodes": 5,
+        "selected": [
+          0,
+          3,
+          4,
+          8,
+          9,
+          10
+        ],
+        "verified_incumbents": [
+          1620000.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 1620000.0,
+          "bound": 810009.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            3,
+            4,
+            8,
+            9,
+            10
+          ],
+          "verified_incumbents": [
+            1620000.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 734
+    },
+    "enumerated-4108": {
+      "milp_sha256": "61244e21937fb10c705bf5e1507ba1e07d6865e117ff7ba8615e2666ab073abf",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 16,
+      "mic": {
+        "status": "optimal",
+        "objective": 16.0,
+        "bound": 16.0,
+        "nodes": 1,
+        "selected": [
+          0,
+          1,
+          4,
+          5,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          16.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 16.0,
+          "bound": 16.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            1,
+            4,
+            5,
+            10,
+            11
+          ],
+          "verified_incumbents": [
+            16.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 294
+    },
+    "enumerated-4109": {
+      "milp_sha256": "5ec81097a2f360331623a9762e3ca58db20474f8fe58f835562d0879c0aa263a",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 24,
+      "mic": {
+        "status": "optimal",
+        "objective": 24.0,
+        "bound": 24.0,
+        "nodes": 3,
+        "selected": [
+          5,
+          6,
+          7,
+          9,
+          11
+        ],
+        "verified_incumbents": [
+          24.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 24.0,
+          "bound": 23.0,
+          "nodes": 1,
+          "selected": [
+            5,
+            6,
+            7,
+            9,
+            11
+          ],
+          "verified_incumbents": [
+            24.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 638
+    },
+    "enumerated-4110": {
+      "milp_sha256": "ca6853961e1b3949935f8c43cdf55ed69663e400faee1f8e1a09abef282cd590",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 2610000,
+      "mic": {
+        "status": "optimal",
+        "objective": 2610000.0,
+        "bound": 2610000.0,
+        "nodes": 3,
+        "selected": [
+          0,
+          5,
+          6,
+          8,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          2610000.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 2610000.0,
+          "bound": 2160008.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            5,
+            6,
+            8,
+            10,
+            11
+          ],
+          "verified_incumbents": [
+            2610000.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 380
+    },
+    "enumerated-4111": {
+      "milp_sha256": "94cec85e11bc5385e9bc6345f37516510c25ff2e351384debdbc4cdbcfdef416",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 31,
+      "mic": {
+        "status": "optimal",
+        "objective": 31.0,
+        "bound": 31.0,
+        "nodes": 9,
+        "selected": [
+          2,
+          3,
+          7,
+          8,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          33.0,
+          31.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 33.0,
+          "bound": 29.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            7,
+            11
+          ],
+          "verified_incumbents": [
+            33.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 244
+    },
+    "enumerated-4112": {
+      "milp_sha256": "d50bd631056035994060b28a5ddb5196c8167b5ef1b56c99f6b4b148133c487a",
+      "variables": 256,
+      "rows": 32,
+      "optimum": 12,
+      "mic": {
+        "status": "optimal",
+        "objective": 12.0,
+        "bound": 12.0,
+        "nodes": 1,
+        "selected": [
+          0,
+          2,
+          3,
+          4,
+          10,
+          11
+        ],
+        "verified_incumbents": [
+          12.0
+        ]
+      },
+      "limited": {
+        "1": {
+          "status": "optimal",
+          "objective": 12.0,
+          "bound": 12.0,
+          "nodes": 1,
+          "selected": [
+            0,
+            2,
+            3,
+            4,
+            10,
+            11
+          ],
+          "verified_incumbents": [
+            12.0
+          ]
+        }
+      },
+      "base_columns": 12,
+      "assignments": 4096,
+      "feasible_assignments": 344
+    },
+    "random-7341": {
+      "milp_sha256": "90a79f996e72cfaf021015ea89eb535b46f5634d64b248955e2bd7f96ecbb7a8",
+      "variables": 800,
+      "rows": 400,
+      "gurobi": {
+        "status": "optimal",
+        "objective": 105.0,
+        "bound": 105.0,
+        "nodes": 52,
+        "selected": [
+          14,
+          73,
+          121,
+          216,
+          227,
+          236,
+          272,
+          273,
+          292,
+          328,
+          331,
+          369,
+          389,
+          402,
+          404,
+          408,
+          457,
+          460,
+          490,
+          499,
+          589,
+          603,
+          664,
+          708,
+          714,
+          744,
+          767,
+          787,
+          798
+        ],
+        "verified_incumbents": [
+          2060.0,
+          369.0,
+          303.0,
+          180.0,
+          110.0,
+          109.0,
+          107.0,
+          105.0
+        ]
+      },
+      "optimum": 105,
+      "mic": {
+        "status": "optimal",
+        "objective": 105.0,
+        "bound": 105.0,
+        "nodes": 241,
+        "selected": [
+          14,
+          73,
+          121,
+          216,
+          227,
+          236,
+          272,
+          273,
+          292,
+          328,
+          331,
+          369,
+          389,
+          402,
+          404,
+          408,
+          457,
+          460,
+          490,
+          499,
+          589,
+          603,
+          664,
+          708,
+          714,
+          744,
+          767,
+          787,
+          798
+        ],
+        "verified_incumbents": [
+          120.0,
+          114.0,
+          111.0,
+          108.0,
+          106.0,
+          105.0
+        ]
+      }
+    },
+    "random-7342": {
+      "milp_sha256": "4f7fd2e9e04b7767e247140272c855d9d3ca25fe2d208ce2fb662cbff9d36b25",
+      "variables": 800,
+      "rows": 400,
+      "gurobi": {
+        "status": "optimal",
+        "objective": 145.0,
+        "bound": 145.0,
+        "nodes": 79,
+        "selected": [
+          12,
+          116,
+          132,
+          138,
+          176,
+          195,
+          212,
+          245,
+          251,
+          273,
+          297,
+          308,
+          320,
+          352,
+          354,
+          370,
+          394,
+          419,
+          437,
+          449,
+          459,
+          504,
+          523,
+          560,
+          583,
+          588,
+          597,
+          601,
+          632,
+          657,
+          713,
+          752,
+          779
+        ],
+        "verified_incumbents": [
+          1816.0,
+          682.0,
+          380.0,
+          213.0,
+          156.0,
+          155.0,
+          151.0,
+          149.0,
+          145.0
+        ]
+      },
+      "optimum": 145,
+      "mic": {
+        "status": "optimal",
+        "objective": 145.0,
+        "bound": 145.0,
+        "nodes": 347,
+        "selected": [
+          12,
+          116,
+          132,
+          138,
+          176,
+          195,
+          212,
+          245,
+          251,
+          273,
+          297,
+          308,
+          320,
+          352,
+          354,
+          370,
+          394,
+          419,
+          437,
+          449,
+          459,
+          504,
+          523,
+          560,
+          583,
+          588,
+          597,
+          601,
+          632,
+          657,
+          713,
+          752,
+          779
+        ],
+        "verified_incumbents": [
+          153.0,
+          152.0,
+          149.0,
+          145.0
+        ]
+      }
+    }
+  }
+}

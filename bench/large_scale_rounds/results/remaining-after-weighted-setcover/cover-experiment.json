@@ -1,0 +1,338 @@
+{
+  "change": "仅将 weighted_cover::Cover::detect 的最少列数由 256 改成 64，正式代码未变更。",
+  "gurobi_version": "10.0.3",
+  "sha256": {
+    "current": "ca571397b26a1c37af07edf4388bd5c2f2136bd498ce3e43446f1b065c43a30f",
+    "trial": "73020bbf201126a7b48a3347e5a63526c488c4febcf74b2e9bf24bf83aa744ea",
+    "library": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9"
+  },
+  "cases": {
+    "setcover-100x150": {
+      "current": [
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.164968333,
+          "nodes": 24,
+          "lp_iterations": 9104
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.163904125,
+          "nodes": 24,
+          "lp_iterations": 9104
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.165090458,
+          "nodes": 24,
+          "lp_iterations": 9104
+        }
+      ],
+      "trial": [
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.00554,
+          "nodes": 14,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.002561916,
+          "nodes": 14,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.002458291,
+          "nodes": 14,
+          "lp_iterations": 0
+        }
+      ],
+      "gurobi": [
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.012428749992977828,
+          "nodes": 1,
+          "lp_iterations": 117
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.010244750010315329,
+          "nodes": 1,
+          "lp_iterations": 117
+        },
+        {
+          "status": "optimal",
+          "objective": 276.0,
+          "bound": 276.0,
+          "elapsed_secs": 0.010371292009949684,
+          "nodes": 1,
+          "lp_iterations": 117
+        }
+      ]
+    },
+    "covering_120x200_s12109": {
+      "current": [
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 1.36931625,
+          "nodes": 171,
+          "lp_iterations": 43092
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 1.367896875,
+          "nodes": 171,
+          "lp_iterations": 43092
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 1.3745295,
+          "nodes": 171,
+          "lp_iterations": 43092
+        }
+      ],
+      "trial": [
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.01028275,
+          "nodes": 118,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.010157292,
+          "nodes": 118,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.010158417,
+          "nodes": 118,
+          "lp_iterations": 0
+        }
+      ],
+      "gurobi": [
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.13548850000370294,
+          "nodes": 26,
+          "lp_iterations": 1240
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.13567341698217206,
+          "nodes": 26,
+          "lp_iterations": 1240
+        },
+        {
+          "status": "optimal",
+          "objective": 58.0,
+          "bound": 58.0,
+          "elapsed_secs": 0.13523300000815652,
+          "nodes": 26,
+          "lp_iterations": 1240
+        }
+      ]
+    },
+    "setcover-60x100": {
+      "current": [
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.003566375,
+          "nodes": 1,
+          "lp_iterations": 554
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.0037025,
+          "nodes": 1,
+          "lp_iterations": 554
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.003641375,
+          "nodes": 1,
+          "lp_iterations": 554
+        }
+      ],
+      "trial": [
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.000941542,
+          "nodes": 1,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.000948333,
+          "nodes": 1,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.000958083,
+          "nodes": 1,
+          "lp_iterations": 0
+        }
+      ],
+      "gurobi": [
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.001028707978548482,
+          "nodes": 1,
+          "lp_iterations": 30
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.0011562499857973307,
+          "nodes": 1,
+          "lp_iterations": 30
+        },
+        {
+          "status": "optimal",
+          "objective": 243.0,
+          "bound": 243.0,
+          "elapsed_secs": 0.0011098330141976476,
+          "nodes": 1,
+          "lp_iterations": 30
+        }
+      ]
+    },
+    "covering_60x100_s12101": {
+      "current": [
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.005058958,
+          "nodes": 1,
+          "lp_iterations": 664
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.005075833,
+          "nodes": 1,
+          "lp_iterations": 664
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.005048583,
+          "nodes": 1,
+          "lp_iterations": 664
+        }
+      ],
+      "trial": [
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.000733542,
+          "nodes": 1,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.000726209,
+          "nodes": 1,
+          "lp_iterations": 0
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.00073025,
+          "nodes": 1,
+          "lp_iterations": 0
+        }
+      ],
+      "gurobi": [
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.0012716669880319387,
+          "nodes": 1,
+          "lp_iterations": 25
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.001105792005546391,
+          "nodes": 1,
+          "lp_iterations": 25
+        },
+        {
+          "status": "optimal",
+          "objective": 32.0,
+          "bound": 32.0,
+          "elapsed_secs": 0.001084415998775512,
+          "nodes": 1,
+          "lp_iterations": 25
+        }
+      ]
+    }
+  },
+  "trial_acceptance": {
+    "test": "acceptance_setcover_100x150_unlocked_optimal",
+    "passed": false,
+    "assertion": "回滚语义：已提交割保留",
+    "source": "milp/tests/acceptance.rs:961"
+  },
+  "modified_source_sha256": "c50ae76428687c2812c6e7c52b0afc8f94fcc9f2964b269ff8b5d6f8c12f14b5"
+}

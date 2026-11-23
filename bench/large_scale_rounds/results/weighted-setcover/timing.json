@@ -1,0 +1,285 @@
+{
+  "platform": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "baseline_commit": "7e2c76671f3cb3647458bde72ddf6e43bfc629e1",
+  "binary_sha256": {
+    "baseline": "9eb838da4abb895c58d02a44793a06b963ed19be1596691e5d44bb5280e9db61",
+    "current": "ca571397b26a1c37af07edf4388bd5c2f2136bd498ce3e43446f1b065c43a30f"
+  },
+  "source_sha256": {
+    "milp/src/binary_propagation.rs": "26a51f848abd35f1b6a5698e0fe5c3f83d5910f77fd2c19784fa4a1ab023fe93",
+    "milp/src/block_cover.rs": "58d66dbc87b33faeec8cd1da6baa314c51ecf1168fbdc3369a59b1036d6fb635",
+    "milp/src/boolean_network/encoding.rs": "cc5dfc7e8c306660c991c466e08ca2749502bd9ac9621a815ee75541759c4b96",
+    "milp/src/boolean_network/search.rs": "2711cc16f322f237d8f5b7b36f1b3b0ac8a9d50302692239531efe7223fd2e78",
+    "milp/src/boolean_network.rs": "ff4e50aa598d21b0954899c786e34f36fe6655b3d0769366a4080ab5bce6d3bf",
+    "milp/src/branch_bound.rs": "6ee07765759684b3437ff7501c284d56a9a9ed67f3d04f27235be87e0315e464",
+    "milp/src/classification_conflicts.rs": "f965b234d985bd8c83739263d98fc7b170f50d9565a70222075e02867e82d03e",
+    "milp/src/conditional_rows.rs": "1bd575db401a6be021b507f1479ea82e59c895b1d35c6efd053f3531a0ea5e43",
+    "milp/src/cover_repair/bound.rs": "e31607b64f0ce74504c48da1ca52305a605d90961f366659e7c875c005ba411b",
+    "milp/src/cover_repair.rs": "6fb9d372119c6ed83f76d5e8825d22331166c4d3e1e0fef1a358674980759f18",
+    "milp/src/cuts.rs": "92debc6790a5d203c4540dcfc386d9a34f0c0d61396fc75f7091825c774324d9",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/grouped_dp.rs": "356bf00121fda4ff6b0d2d05c3bcb7a4d18887495c408c492ca8346c86d18fae",
+    "milp/src/heuristics.rs": "033efdc2618a01c841850ec57bcfdb1aa7b633c526865438249a6bd708aa7782",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "989db23c2c8fc8108e5f6115503efa25dc45b56e06692803afa0279852ea76bf",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/packing.rs": "558f07d49a36209e0da98cf2832e5e887c21f0e58f5966194c537a4efef7bc71",
+    "milp/src/packing_core.rs": "3a03ee0c22c8656aa945c82cc4f74b6519180ec713e91b24eb557b8c2bd32780",
+    "milp/src/parallel_bb.rs": "a686a17f4d3ab0ea831459e0b525e54b741f1bdf31a24591ba21a844211dc286",
+    "milp/src/periodic_equalities.rs": "f7ff847870b617d282760ec86e8099ab6a7a243c10e09800b8158b9f5617d5fd",
+    "milp/src/periodic_projection.rs": "c4a18096e00d573f06efb5dd1d6d98fc0594a7d0b3b7e10f3e7dfe883f627316",
+    "milp/src/phase1_progress_diagnostics.rs": "0b31160f3faf612234983677ee981d0e79b09bb6449c7327038d73fb63d016f9",
+    "milp/src/presolve/binary_mutex.rs": "3d609c3f780cd465f4738c13186056e4a2480f14d48700d2fb201b743e809c5c",
+    "milp/src/presolve.rs": "8a3e8d6d0edaf592a429208ab1cedb407c40e370887d165dfe0c4735475858b1",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/route_cover.rs": "68bf4103d952ba28e840b1f34ba5760cb301758c36850bb7edbf813a73da85aa",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/shared_demand.rs": "4db8f49a985d92e07f843fc6d97a746f0a2414a25f8bcc87023e288d9bf74374",
+    "milp/src/simplex.rs": "70d82930da8f3afa7c141847dc04be6a2be25da4fc494206d2f0e6e82a5e52da",
+    "milp/src/simplex_sparse.rs": "6ee8dbf6e191dea48635e0e1793bd46d94ddb4df3283fdb41475cc8bda409c2b",
+    "milp/src/solver.rs": "4a5f35b625a2db5687434e4791149977572e6dc8f38799492ed7cb3df71f940d",
+    "milp/src/time_window_routes.rs": "e49ef0e683f711ea6b87fc77748bb06eca3b35bee3ddb0409e9c8c7b07c4e204",
+    "milp/src/weighted_cover/primal.rs": "25f0e50466059d7adab4639de28f202902db57a790be358af03bd3aef99a3833",
+    "milp/src/weighted_cover/search.rs": "1fa1a9fb15ff8f28c16321a52099d5a53c7644f52a2e983c0627c53691ec955e",
+    "milp/src/weighted_cover.rs": "7dd6bfe86157ba72d816460d7b506f5e6eb9aa064e3fee5c8ee7d9f5c7650862"
+  },
+  "input_sha256": {
+    "setcover-400x800": "b1487772b33bb1b08b2085095c5233bae905ea6b17ba3fb2c69a2c8791441397",
+    "setcover-300x600": "76cd09336751c59cbd3b7d6b86f671b09b969062237e035c7de77968482a8316"
+  },
+  "gurobi_library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "gurobi_version": "10.0.3",
+  "gurobi_parameters": {
+    "OutputFlag": 0,
+    "Threads": 1,
+    "TimeLimit": 60.0,
+    "NodeLimit": 2000000.0,
+    "MIPGap": 0.0,
+    "MIPGapAbs": 0.0,
+    "IntFeasTol": 1e-06,
+    "DualReductions": 1,
+    "FeasibilityTol": 1e-06,
+    "OptimalityTol": 1e-06
+  },
+  "mic_flags": [
+    "--time-limit-secs",
+    "60",
+    "--node-limit",
+    "2000000",
+    "--threads",
+    "1",
+    "--early-stop",
+    "off"
+  ],
+  "order": [
+    [
+      "baseline",
+      "current",
+      "gurobi"
+    ],
+    [
+      "current",
+      "gurobi",
+      "baseline"
+    ],
+    [
+      "gurobi",
+      "baseline",
+      "current"
+    ]
+  ],
+  "results": {
+    "setcover-400x800": {
+      "baseline": {
+        "status": "optimal",
+        "objective": 113,
+        "bound": 113,
+        "seconds": [
+          26.220822917,
+          26.162568625,
+          26.196466916
+        ],
+        "median_seconds": 26.196466916,
+        "nodes": [
+          279,
+          279,
+          279
+        ],
+        "lp_iterations": [
+          105652,
+          105652,
+          105652
+        ],
+        "first_feasible_seconds": [
+          6.166543917,
+          6.160742209,
+          6.19611275
+        ],
+        "optimal_incumbent_seconds": [
+          14.049359417,
+          14.007778917,
+          14.05569975
+        ]
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 113,
+        "bound": 113,
+        "seconds": [
+          0.106891416,
+          0.105519916,
+          0.10534625
+        ],
+        "median_seconds": 0.105519916,
+        "nodes": [
+          465,
+          465,
+          465
+        ],
+        "lp_iterations": [
+          0,
+          0,
+          0
+        ],
+        "first_feasible_seconds": [
+          0.000388875,
+          0.000394958,
+          0.000369375
+        ],
+        "optimal_incumbent_seconds": [
+          0.019063833,
+          0.018079458,
+          0.018080167
+        ]
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 113,
+        "bound": 113,
+        "seconds": [
+          0.3240352919965517,
+          0.32408612497965805,
+          0.32534337500692345
+        ],
+        "median_seconds": 0.32408612497965805,
+        "nodes": [
+          118,
+          118,
+          118
+        ],
+        "lp_iterations": [
+          3812,
+          3812,
+          3812
+        ],
+        "first_feasible_seconds": [
+          0.00022408401127904654,
+          0.00022108398843556643,
+          0.00020816700998693705
+        ],
+        "optimal_incumbent_seconds": [
+          0.2814491250028368,
+          0.281068708980456,
+          0.2825620420044288
+        ]
+      }
+    },
+    "setcover-300x600": {
+      "baseline": {
+        "status": "optimal",
+        "objective": 144,
+        "bound": 144,
+        "seconds": [
+          13.832329125,
+          13.796224041,
+          13.914033290999999
+        ],
+        "median_seconds": 13.832329125,
+        "nodes": [
+          577,
+          577,
+          577
+        ],
+        "lp_iterations": [
+          114512,
+          114512,
+          114512
+        ],
+        "first_feasible_seconds": [
+          1.841730458,
+          1.829337333,
+          1.8410785
+        ],
+        "optimal_incumbent_seconds": [
+          13.214929583,
+          13.182304083,
+          13.295857625
+        ]
+      },
+      "current": {
+        "status": "optimal",
+        "objective": 144,
+        "bound": 144,
+        "seconds": [
+          0.0774345,
+          0.07535525,
+          0.076558416
+        ],
+        "median_seconds": 0.076558416,
+        "nodes": [
+          374,
+          374,
+          374
+        ],
+        "lp_iterations": [
+          0,
+          0,
+          0
+        ],
+        "first_feasible_seconds": [
+          0.000258125,
+          0.000247458,
+          0.000278875
+        ],
+        "optimal_incumbent_seconds": [
+          0.055762667,
+          0.053898666,
+          0.054581541
+        ]
+      },
+      "gurobi": {
+        "status": "optimal",
+        "objective": 144,
+        "bound": 144,
+        "seconds": [
+          0.28729441700852476,
+          0.28696100000524893,
+          0.28752216597786173
+        ],
+        "median_seconds": 0.28729441700852476,
+        "nodes": [
+          84,
+          84,
+          84
+        ],
+        "lp_iterations": [
+          2952,
+          2952,
+          2952
+        ],
+        "first_feasible_seconds": [
+          0.0001380419998895377,
+          0.00013991599553264678,
+          0.00013670799671672285
+        ],
+        "optimal_incumbent_seconds": [
+          0.28352395800175145,
+          0.28313716599950567,
+          0.2836190829984844
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "change": "仅将稠密装载 packing_core::Model::detect 的最少列数由 384 改为 192。",
+  "trial_sha256": "7828b1c83d3088e2c9ecf84d6c40b101fba8c137fbb28db2d60dba3aecbebc7d",
+  "cases": {
+    "boundary_m17": {
+      "elapsed_secs": 2.7069386250000003,
+      "objective": 6753.0,
+      "bound": 6753.0,
+      "status": "optimal",
+      "nodes": 507900,
+      "lp_iterations": 140,
+      "seconds_per_run": [
+        2.7069386250000003,
+        2.569687459,
+        2.579786292
+      ],
+      "median_seconds": 2.579786292
+    },
+    "mknap-10x200": {
+      "elapsed_secs": 1.095216,
+      "objective": 1791.0,
+      "bound": 1791.0,
+      "status": "optimal",
+      "nodes": 145459,
+      "lp_iterations": 53,
+      "seconds_per_run": [
+        1.095216,
+        1.0791085,
+        1.075473209
+      ],
+      "median_seconds": 1.0791085
+    }
+  }
+}

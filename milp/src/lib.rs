@@ -50,6 +50,7 @@ mod block_cover;
 mod conditional_rows;
 mod classification_conflicts;
 mod cover_repair;
+mod weighted_cover;
 mod packing;
 mod periodic_equalities;
 mod route_cover;

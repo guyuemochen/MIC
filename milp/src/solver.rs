@@ -647,7 +647,12 @@ fn solve_integer_structure(
     {
         let limit = structural_node_limit(opts, ctrl);
         let mut result = None;
-        for solve in [crate::boolean_network::solve, crate::packing::solve, crate::grouped_dp::solve] {
+        for solve in [
+            crate::boolean_network::solve,
+            crate::packing::solve,
+            crate::grouped_dp::solve,
+            crate::weighted_cover::solve,
+        ] {
             result = solve(problem, opts.tol, deadline, limit, &mut accept)?;
             if result.is_some() {
                 break;

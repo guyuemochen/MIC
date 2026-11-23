@@ -4339,3 +4339,26 @@ python3 bench/large_scale_rounds/results/bnatt-external/certificate/verify.py
 `p0201` 有 20 个互不重叠的九选一分组。新版逐组选择，若两个部分解给所有后续选项留下相同的约束，只保留费用较低的部分解。这样把旧版的 1,508,731 次线性松弛迭代替换为 58,293 次动态规划状态展开。旧版和 Gurobi 分别访问 17,147 和 17 个分支定界节点，与动态规划状态的计数口径不同。独立核验用原始 MPS 的 201 个变量和全部 133 条约束复算了返回的解，并重跑了行列打乱和目标变换的等价模型。对 24 个小模型穷举共 23,328 个分组合法赋值，18 个最优值和 6 个不可行结论全部吻合。将原题预算设为 58,292 时，求解器返回触限及下界 5500；预算加一才报告最优。[核验方法与重放命令](../bench/large_scale_rounds/results/circ-p0201/validation/README.md) · [独立核验结果](../bench/large_scale_rounds/results/circ-p0201/validation/results.json)
 
 对第 50 节的 100 个模型逐个检查新算法的适用条件，仅 `p0201` 和 `xiao_wnt5a` 命中。后者也证得原最优值 0，旧版与新版各七次的中位数分别为 119 和 54 微秒。另行实跑的 `p0282`、`p0548`、`marketsplit-5x50` 分别证得 258411、8691、25，`bnatt500` 仍证得不可行。这四例的节点数和线性松弛迭代数与上轮一致。[100 例适用性检查](../bench/large_scale_rounds/results/circ-p0201/screen.json) · [五个回归样例的运行记录](../bench/large_scale_rounds/results/circ-p0201/regression.json)
+
+## 52. 用覆盖行的费用下界加速 setcover-400x800 的最优性证明
+
+在 `setcover-400x800` 上，旧版 MIC 需要 26.20 秒证明最优值 113，新版需要 0.106 秒，Gurobi 10.0.3 需要 0.324 秒。新版相对旧版加速约 248 倍，相对 Gurobi 约 3.07 倍。
+
+| 算例 | 最优值 | 旧版 MIC（`7e2c766`） | 新版 MIC | Gurobi 10.0.3 |
+|---|---:|---:|---:|---:|
+| `setcover-400x800` | 113 | 26.196 秒 | 0.106 秒 | 0.324 秒 |
+| `setcover-300x600` | 144 | 13.832 秒 | 0.077 秒 | 0.287 秒 |
+
+两例均在同一台 Apple M4 上，以单线程、60 秒、200 万节点和零目标间隙求解。三种程序分别使用同一模型，计时从加载完成后开始。每例轮换三种运行顺序，各取三次中位数。每次均用原模型检查最终变量值、目标、最优界和中途回调的可行解。[参数及逐遍计时](../bench/large_scale_rounds/results/weighted-setcover/timing.json) · [含解向量的原始记录](../bench/large_scale_rounds/results/weighted-setcover/runs.jsonl.gz) · [计时脚本](../bench/large_scale_rounds/results/weighted-setcover/measure.py)
+
+每行要求至少选一列，每列有正整数费用。新版先按每单位费用能新增多少覆盖行选列，再尝试撤掉部分列重新补齐。证优时给尚未满足的行分配非负价格，用整数重算在这些价格下任何可行解至少要花多少。如果某列的一种取值已经不可能比已知解便宜，就固定该列。若还有多种选择，就在候选最少的一行逐列分支。
+
+原题上，旧版做了 105,652 次线性松弛迭代。新版直接搜索覆盖组合，展开 465 个节点。首次找到最终费用 113 的中位时间分别为旧版 14.049 秒、新版 0.018 秒、Gurobi 0.281 秒。节点预算为 464 时，新版返回已有解 113 和下界 99。第 465 个节点才证明最优。
+
+额外的两份同规模模型分别由 MIC 和 Gurobi 证得 105 和 145。原题打乱行列并翻转部分不等式后仍为 113，费用全部乘 7 并新增费用为 19 的必选列后为 810。12 个小模型另用穷举检查了 49,152 个组合。独立核验的 35 个最终向量和 96 个回调向量均通过原约束复算。[独立核验与重放方法](../bench/large_scale_rounds/results/weighted-setcover/validation/README.md) · [逐项核验结果](../bench/large_scale_rounds/results/weighted-setcover/validation/results.json)
+
+## 53. 加权覆盖优化后的 100 例缺口检查
+
+用第 52 节的本地版本重跑 100 例，MIC 证优 88 例、证不可行 2 例、证无界 1 例，9 例触限。和同机、同输入、同预算的 Gurobi 10.0.3 归档对照，双方均证优的 86 例中，有 8 例 MIC 多花至少一秒，绝对差距最大的是 `boundary_m17` 和 `neos17`。`icir97_tension` 是唯一 Gurobi 证优而 MIC 仍触限的算例。`s1234` 在根节点寻找初始可行基时遇到数值奇异，约 0.15 秒即返回，无可行解和下界。[100 例逐项结论与剩余差距](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/comparison.md)
+
+临时放宽算法的列数下限后，4 个加权覆盖算例和 2 个稠密装载算例均证得原最优值。`covering_120x200_s12109` 从 1.369 秒降至 10.16 毫秒，`boundary_m17` 从 30.132 秒降至 2.580 秒。覆盖临时版在 `setcover-100x150` 上触发了现有验收中要求通用搜索提交割的断言。两项门槛改动均只在临时副本中测量。[覆盖试验及验收结果](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/cover-experiment.json) · [装载试验](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/pack-experiment.json)
