@@ -1,0 +1,223 @@
+{
+  "xiao_wnt5a": {
+    "baseline": {
+      "status": "optimal",
+      "objective": 0.0,
+      "bound": 0.0,
+      "elapsed_secs": 0.000119125,
+      "nodes": 1,
+      "lp_iterations": 20
+    },
+    "milp_sha256": "dadc057762f03df059bd469bbc56f8b3de4ab73bc1e3c0da4c0d733b57dd7966",
+    "checked_runs": {
+      "old": [
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000121417
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000120084
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.00011025
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000114542
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000118958
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000122334
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 1,
+          "lp_iterations": 20,
+          "elapsed_secs": 0.000112708
+        }
+      ],
+      "final": [
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 5.9167e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 5.0125e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 5.4292e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 4.7292e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 6.4666e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 4.9875e-05
+        },
+        {
+          "status": "optimal",
+          "objective": 0.0,
+          "bound": 0.0,
+          "nodes": 27,
+          "lp_iterations": 0,
+          "elapsed_secs": 5.5458e-05
+        }
+      ]
+    }
+  },
+  "p0282": {
+    "baseline": {
+      "status": "optimal",
+      "objective": 258411.0,
+      "bound": 258411.0,
+      "elapsed_secs": 0.005358208,
+      "nodes": 1,
+      "lp_iterations": 0
+    },
+    "milp_sha256": "fe34c7cf574f2027cc9e40a6e813f61b1db07144f8f2bb837225eed6272400a0",
+    "checked_runs": {
+      "final": [
+        {
+          "status": "optimal",
+          "objective": 258411.0,
+          "bound": 258411.0,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "elapsed_secs": 0.006310208
+        }
+      ]
+    }
+  },
+  "p0548": {
+    "baseline": {
+      "status": "optimal",
+      "objective": 8691.0,
+      "bound": 8691.0,
+      "elapsed_secs": 0.007587375,
+      "nodes": 1,
+      "lp_iterations": 379
+    },
+    "milp_sha256": "0012146521dfec56f5efeafcb3f464b52c656787715ced8723a479ea17bdd0e6",
+    "checked_runs": {
+      "final": [
+        {
+          "status": "optimal",
+          "objective": 8691.0,
+          "bound": 8691.0,
+          "nodes": 1,
+          "lp_iterations": 379,
+          "elapsed_secs": 0.020334959
+        }
+      ]
+    }
+  },
+  "bnatt500": {
+    "baseline": {
+      "status": "infeasible",
+      "objective": null,
+      "bound": null,
+      "elapsed_secs": 0.351808083,
+      "nodes": 24069,
+      "lp_iterations": 0
+    },
+    "milp_sha256": "80f3109a1af2fe652334df4e3f0dbb9d7c597fc790697ede2bb51fc46e3de77c",
+    "checked_runs": {
+      "final": [
+        {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "nodes": 24069,
+          "lp_iterations": 0,
+          "elapsed_secs": 0.351670625
+        }
+      ]
+    }
+  },
+  "marketsplit-5x50": {
+    "baseline": {
+      "status": "optimal",
+      "objective": 25.0,
+      "bound": 25.0,
+      "elapsed_secs": 0.902339375,
+      "nodes": 1,
+      "lp_iterations": 0
+    },
+    "milp_sha256": "32edc540d6417bff0cb7a5628313c1b6724da5d5207bb40e14e6a9624e249dfb",
+    "checked_runs": {
+      "final": [
+        {
+          "status": "optimal",
+          "objective": 25.0,
+          "bound": 25.0,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "elapsed_secs": 0.867073375
+        }
+      ]
+    }
+  }
+}

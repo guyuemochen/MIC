@@ -250,16 +250,13 @@ impl<'a> LpWorkLimit<'a> {
         (!self.can_start(1)).then(|| self.limit_status(deadline))
     }
 
-    /// 只在受限入口检查期限；普通resolve保留原有条件读钟的位置。
+    /// 热启动和每轮对偶修复开始前检查绝对期限；没有工作步上限时也须按时返回。
     #[inline]
-    pub(crate) fn entry_status(&self, deadline: Option<std::time::Instant>) -> Option<LpStatus> {
-        #[cfg(feature = "root_heuristic_work_limit")]
-        if self.remaining.is_some() {
-            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                return Some(LpStatus::TimeLimit);
-            }
+    pub(crate) fn start_status(&self, deadline: Option<std::time::Instant>) -> Option<LpStatus> {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Some(LpStatus::TimeLimit);
         }
-        self.stop_status(deadline)
+        (!self.can_start(1)).then_some(LpStatus::IterationLimit)
     }
 }
 
@@ -882,7 +879,7 @@ impl Simplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
-        if let Some(st) = work.entry_status(self.time_deadline) {
+        if let Some(st) = work.start_status(self.time_deadline) {
             return self.build_solution(st);
         }
         if !self.has_run {
@@ -1324,7 +1321,7 @@ impl Simplex {
     }
 
     /// 设置内部墙钟时限（W2）：Some(deadline) ⇒ 此后每次 solve/resolve 的
-    /// 迭代循环每 [`TIME_CHECK_INTERVAL`] 次主元检查一次墙钟，超过即返回
+    /// 主阶段每 [`TIME_CHECK_INTERVAL`] 次主元检查墙钟，热启动入口和对偶修复每轮也检查，超过即返回
     /// [`LpStatus::TimeLimit`]（诚实截断，不冒充 Optimal）；None = 关闭且
     /// **零墙钟读点**（默认态，t1 无时限确定性路径零扰动——条件读钟）。
     /// deadline 为绝对时刻（调用方由求解起点 + `time_limit_ms` 合成），
@@ -3165,7 +3162,7 @@ impl Simplex {
     fn dual_repair(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
         const BUDGET_BASE: u32 = 2_000;
         const DEGEN_BLAND: u32 = 32;
-        if let Some(st) = work.stop_status(self.time_deadline) {
+        if let Some(st) = work.start_status(self.time_deadline) {
             return DualRepair::Stopped(st);
         }
         if !self.dual_feasible() {
@@ -3178,7 +3175,7 @@ impl Simplex {
         let mut iters: u32 = 0;
         let mut degen: u32 = 0;
         loop {
-            if let Some(st) = work.stop_status(self.time_deadline) {
+            if let Some(st) = work.start_status(self.time_deadline) {
                 return DualRepair::Stopped(st);
             }
             // 新鲜度规范 (c)：外层循环每轮迭代顶部重算检验数——上一轮
@@ -4904,6 +4901,21 @@ mod tests {
             integrality: 1e-6,
             zero: 1e-12,
         }
+    }
+
+    #[test]
+    fn dual_repair_honors_deadline_without_work_limit() {
+        let p = prob(Sense::Maximize, vec![var("x", 0.0, 2.0)], vec![(0, 1.0)],
+            vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+        let bounds = Bounds::from_problem(&p);
+        let mut lp = Simplex::new(&p, Tolerances::default()).unwrap();
+        assert_eq!(lp.solve(&bounds).status, LpStatus::Optimal);
+        lp.set_time_deadline(Some(std::time::Instant::now()));
+        assert!(matches!(lp.dual_repair(&mut LpWorkLimit::unlimited()),
+            DualRepair::Stopped(LpStatus::TimeLimit)));
+        assert_eq!(lp.resolve(&bounds).status, LpStatus::TimeLimit);
+        lp.set_time_deadline(None);
+        assert_eq!(lp.resolve(&bounds).objective, 1.0);
     }
 
     fn var(name: &str, lb: f64, ub: f64) -> Variable {

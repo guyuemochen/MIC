@@ -1,0 +1,17 @@
+{
+  "instance": "circ10-3",
+  "solver": "mic",
+  "duration_seconds": 1,
+  "requested_sampling_interval_ms": 10,
+  "process": "round_probe",
+  "sample_time_local": "2026-11-23 12:02:58.505 +0800",
+  "call_stack_excerpt": [
+    "89 _RNvNtCs8UogrhuqBwG_4milp6solver21solve_controlled_impl",
+    "89 _RNvNtCs8UogrhuqBwG_4milp6solver14solve_prepared",
+    "89 _RNvNtCs8UogrhuqBwG_4milp12branch_bound31branch_and_bound_with_preserved",
+    "89 _RNvNtCs8UogrhuqBwG_4milp12branch_bound13sequential_bb",
+    "89 _RNvNtCs8UogrhuqBwG_4milp10heuristics21dive_with_work_budget",
+    "89 _RNvMs7_NtCs8UogrhuqBwG_4milp14simplex_sparseNtB5_13SparseSimplex7resolve",
+    "40 _RNvMs7_NtCs8UogrhuqBwG_4milp14simplex_sparseNtB5_13SparseSimplex22dual_repair_with_limit"
+  ]
+}

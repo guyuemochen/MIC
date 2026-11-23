@@ -45,6 +45,7 @@ pub mod simplex_sparse;
 
 mod binary_propagation;
 mod boolean_network;
+mod grouped_dp;
 mod block_cover;
 mod conditional_rows;
 mod classification_conflicts;

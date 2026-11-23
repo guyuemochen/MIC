@@ -646,10 +646,14 @@ fn solve_integer_structure(
         && opts.bb.lp_engine == crate::simplex_sparse::LpEngineKind::Auto
     {
         let limit = structural_node_limit(opts, ctrl);
-        match crate::boolean_network::solve(problem, opts.tol, deadline, limit, &mut accept)? {
-            Some(result) => Some(result),
-            None => crate::packing::solve(problem, opts.tol, deadline, limit, &mut accept)?,
+        let mut result = None;
+        for solve in [crate::boolean_network::solve, crate::packing::solve, crate::grouped_dp::solve] {
+            result = solve(problem, opts.tol, deadline, limit, &mut accept)?;
+            if result.is_some() {
+                break;
+            }
         }
+        result
     } else {
         None
     };

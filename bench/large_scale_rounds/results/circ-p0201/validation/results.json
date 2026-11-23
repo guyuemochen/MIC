@@ -1,0 +1,809 @@
+{
+  "source": "https://miplib2010.zib.de/miplib3/miplib3/p0201.mps.gz",
+  "original_mps_sha256": "8352d7f121289185f443fdc67080fa9de01e5b9bf11b0bf41087fba4277c07a4",
+  "milp_sha256": "040ec92353da3175afb3f6f87a323afc943ac305b66fa74d0931017e1c2710d2",
+  "binary_sha256": "9eb838da4abb895c58d02a44793a06b963ed19be1596691e5d44bb5280e9db61",
+  "verified_original_variables": 201,
+  "direct_grouped_source_sha256": "356bf00121fda4ff6b0d2d05c3bcb7a4d18887495c408c492ca8346c86d18fae",
+  "direct_confirmed_runs": 54,
+  "verified_original_rows": 133,
+  "official_optimum": 7615,
+  "small": {
+    "assignments": 23328,
+    "feasible_assignments": 3240,
+    "infeasible": 6,
+    "min_infeasible": 3,
+    "one_node_limit_reached": 24,
+    "optimal": 18,
+    "max_optimal": 9,
+    "min_optimal": 9,
+    "max_infeasible": 3
+  },
+  "runs": [
+    {
+      "case": "p0201",
+      "original_selected_columns": [
+        "C1002",
+        "C1004",
+        "C1026",
+        "C1039",
+        "C1044",
+        "C1057",
+        "C1059",
+        "C1075",
+        "C1076",
+        "C1093",
+        "C1097",
+        "C1111",
+        "C1116",
+        "C1129",
+        "C1131",
+        "C1147",
+        "C1148",
+        "C1165",
+        "C1169",
+        "C1183",
+        "C1188",
+        "C1201"
+      ],
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": 58293,
+      "lp_iterations": 0,
+      "callback_bits": [
+        "010100000000000000000000010000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001"
+      ],
+      "final_bits": "010100000000000000000000010000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001"
+    },
+    {
+      "case": "p0201-limit",
+      "limit": 1,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 5500.0,
+      "nodes": 1,
+      "lp_iterations": 0,
+      "callback_bits": [],
+      "final_bits": null
+    },
+    {
+      "case": "p0201-limit",
+      "limit": 58292,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 5500.0,
+      "nodes": 58292,
+      "lp_iterations": 0,
+      "callback_bits": [],
+      "final_bits": null
+    },
+    {
+      "case": "p0201-limit",
+      "limit": 58293,
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": 58293,
+      "lp_iterations": 0,
+      "callback_bits": [
+        "010100000000000000000000010000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001"
+      ],
+      "final_bits": "010100000000000000000000010000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001010000000000000001100000000000000001000100000000000001000010000000000001"
+    },
+    {
+      "case": "排列与费用变换",
+      "seed": 103,
+      "sign": 1,
+      "shift": 0,
+      "original_selected_columns": [
+        "C1009",
+        "C1011",
+        "C1022",
+        "C1039",
+        "C1040",
+        "C1057",
+        "C1061",
+        "C1075",
+        "C1080",
+        "C1093",
+        "C1095",
+        "C1111",
+        "C1112",
+        "C1129",
+        "C1133",
+        "C1147",
+        "C1152",
+        "C1165",
+        "C1167",
+        "C1183",
+        "C1184",
+        "C1201"
+      ],
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": 58293,
+      "lp_iterations": 0,
+      "callback_bits": [
+        "000000000000000000000000100100010000000100000000000110000000000000000000000001000000100000010000100000010000000010001000000001000100000000000000001000000100000001000100000000000000101000000000000000001"
+      ],
+      "final_bits": "000000000000000000000000100100010000000100000000000110000000000000000000000001000000100000010000100000010000000010001000000001000100000000000000001000000100000001000100000000000000101000000000000000001"
+    },
+    {
+      "case": "排列与费用变换",
+      "seed": 412,
+      "sign": -1,
+      "shift": -503,
+      "original_selected_columns": [
+        "C1009",
+        "C1011",
+        "C1030",
+        "C1031",
+        "C1048",
+        "C1049",
+        "C1066",
+        "C1070",
+        "C1084",
+        "C1089",
+        "C1102",
+        "C1104",
+        "C1120",
+        "C1121",
+        "C1138",
+        "C1142",
+        "C1156",
+        "C1161",
+        "C1174",
+        "C1176",
+        "C1192",
+        "C1193"
+      ],
+      "status": "optimal",
+      "objective": -7112.0,
+      "bound": -7112.0,
+      "nodes": 58293,
+      "lp_iterations": 0,
+      "callback_bits": [
+        "000000000000000000000001001000000010000000000000010000010010010000000000000000000001000000000000100000000000001100010100000010001010000000000001000001000000000000010000000000000000010000000010000100000"
+      ],
+      "final_bits": "000000000000000000000001001000000010000000000000010000010010010000000000000000000001000000000000100000000000001100010100000010001010000000000001000001000000000000010000000000000000010000000010000100000"
+    },
+    {
+      "case": "小型分组",
+      "seed": 0,
+      "sense": "min",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 26,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -28.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 1,
+      "sense": "max",
+      "truth": -11,
+      "feasible_count": 114,
+      "full": {
+        "status": "optimal",
+        "objective": -11.0,
+        "bound": -11.0,
+        "nodes": 24,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10001000101100001"
+        ],
+        "final_bits": "10001000101100001"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 15.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 2,
+      "sense": "min",
+      "truth": -7,
+      "feasible_count": 19,
+      "full": {
+        "status": "optimal",
+        "objective": -7.0,
+        "bound": -7.0,
+        "nodes": 16,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "01100000110001000"
+        ],
+        "final_bits": "01100000110001000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -20.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 3,
+      "sense": "max",
+      "truth": 29,
+      "feasible_count": 158,
+      "full": {
+        "status": "optimal",
+        "objective": 29.0,
+        "bound": 29.0,
+        "nodes": 20,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "11001100001010000"
+        ],
+        "final_bits": "11001100001010000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 38.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 4,
+      "sense": "min",
+      "truth": -22,
+      "feasible_count": 56,
+      "full": {
+        "status": "optimal",
+        "objective": -22.0,
+        "bound": -22.0,
+        "nodes": 24,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10100010001111000"
+        ],
+        "final_bits": "10100010001111000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -28.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 5,
+      "sense": "max",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 32,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 17.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 6,
+      "sense": "min",
+      "truth": -26,
+      "feasible_count": 116,
+      "full": {
+        "status": "optimal",
+        "objective": -26.0,
+        "bound": -26.0,
+        "nodes": 24,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00000010111001100"
+        ],
+        "final_bits": "00000010111001100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -28.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 7,
+      "sense": "max",
+      "truth": 8,
+      "feasible_count": 56,
+      "full": {
+        "status": "optimal",
+        "objective": 8.0,
+        "bound": 8.0,
+        "nodes": 18,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10000010110011000"
+        ],
+        "final_bits": "10000010110011000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 24.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 8,
+      "sense": "min",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 17,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -26.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 9,
+      "sense": "max",
+      "truth": 9,
+      "feasible_count": 200,
+      "full": {
+        "status": "optimal",
+        "objective": 9.0,
+        "bound": 9.0,
+        "nodes": 22,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10101010010100100"
+        ],
+        "final_bits": "10101010010100100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 18.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 10,
+      "sense": "min",
+      "truth": -10,
+      "feasible_count": 144,
+      "full": {
+        "status": "optimal",
+        "objective": -10.0,
+        "bound": -10.0,
+        "nodes": 19,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00011000100101100"
+        ],
+        "final_bits": "00011000100101100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -29.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 11,
+      "sense": "max",
+      "truth": 25,
+      "feasible_count": 552,
+      "full": {
+        "status": "optimal",
+        "objective": 25.0,
+        "bound": 25.0,
+        "nodes": 21,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00000110001001001"
+        ],
+        "final_bits": "00000110001001001"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 25.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 12,
+      "sense": "min",
+      "truth": -19,
+      "feasible_count": 243,
+      "full": {
+        "status": "optimal",
+        "objective": -19.0,
+        "bound": -19.0,
+        "nodes": 20,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00001011011010000"
+        ],
+        "final_bits": "00001011011010000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -27.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 13,
+      "sense": "max",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 35,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 16.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 14,
+      "sense": "min",
+      "truth": -20,
+      "feasible_count": 297,
+      "full": {
+        "status": "optimal",
+        "objective": -20.0,
+        "bound": -20.0,
+        "nodes": 18,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10000100001011001"
+        ],
+        "final_bits": "10000100001011001"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -20.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 15,
+      "sense": "max",
+      "truth": 2,
+      "feasible_count": 105,
+      "full": {
+        "status": "optimal",
+        "objective": 2.0,
+        "bound": 2.0,
+        "nodes": 15,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10100110000100100"
+        ],
+        "final_bits": "10100110000100100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 14.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 16,
+      "sense": "min",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 30,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -34.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 17,
+      "sense": "max",
+      "truth": 18,
+      "feasible_count": 367,
+      "full": {
+        "status": "optimal",
+        "objective": 18.0,
+        "bound": 18.0,
+        "nodes": 15,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "11101000010000100"
+        ],
+        "final_bits": "11101000010000100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 23.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 18,
+      "sense": "min",
+      "truth": -17,
+      "feasible_count": 82,
+      "full": {
+        "status": "optimal",
+        "objective": -17.0,
+        "bound": -17.0,
+        "nodes": 28,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00011001101000100"
+        ],
+        "final_bits": "00011001101000100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -21.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 19,
+      "sense": "max",
+      "truth": 12,
+      "feasible_count": 367,
+      "full": {
+        "status": "optimal",
+        "objective": 12.0,
+        "bound": 12.0,
+        "nodes": 17,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10000111110100000"
+        ],
+        "final_bits": "10000111110100000"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 14.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 20,
+      "sense": "min",
+      "truth": -24,
+      "feasible_count": 210,
+      "full": {
+        "status": "optimal",
+        "objective": -24.0,
+        "bound": -24.0,
+        "nodes": 17,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "10101000000110001"
+        ],
+        "final_bits": "10101000000110001"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -24.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 21,
+      "sense": "max",
+      "truth": null,
+      "feasible_count": 0,
+      "full": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "nodes": 32,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 16.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 22,
+      "sense": "min",
+      "truth": -24,
+      "feasible_count": 36,
+      "full": {
+        "status": "optimal",
+        "objective": -24.0,
+        "bound": -24.0,
+        "nodes": 17,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "01010001001110100"
+        ],
+        "final_bits": "01010001001110100"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": -41.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    },
+    {
+      "case": "小型分组",
+      "seed": 23,
+      "sense": "max",
+      "truth": 0,
+      "feasible_count": 118,
+      "full": {
+        "status": "optimal",
+        "objective": 0.0,
+        "bound": 0.0,
+        "nodes": 24,
+        "lp_iterations": 0,
+        "callback_bits": [
+          "00000010001001111"
+        ],
+        "final_bits": "00000010001001111"
+      },
+      "limited": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": 17.0,
+        "nodes": 1,
+        "lp_iterations": 0,
+        "callback_bits": [],
+        "final_bits": null
+      }
+    }
+  ]
+}

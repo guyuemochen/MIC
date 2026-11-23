@@ -1,0 +1,210 @@
+{
+  "p0201": {
+    "old": {
+      "seconds": [
+        29.556060792,
+        29.509669417,
+        29.635687
+      ],
+      "median": 29.556060792,
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": [
+        17147,
+        17147,
+        17147
+      ],
+      "lp_iterations": [
+        1508731,
+        1508731,
+        1508731
+      ]
+    },
+    "current": {
+      "seconds": [
+        0.007252917,
+        0.007107541,
+        0.007047417
+      ],
+      "median": 0.007107541,
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": [
+        58293,
+        58293,
+        58293
+      ],
+      "lp_iterations": [
+        0,
+        0,
+        0
+      ]
+    },
+    "gurobi": {
+      "seconds": [
+        0.09590804201434366,
+        0.0860709999979008,
+        0.08684962498955429
+      ],
+      "median": 0.08684962498955429,
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": [
+        17,
+        17,
+        17
+      ],
+      "lp_iterations": [
+        1492,
+        1492,
+        1492
+      ]
+    },
+    "deadline_fix_only": {
+      "seconds": [
+        29.250138125
+      ],
+      "median": 29.250138125,
+      "status": "optimal",
+      "objective": 7615.0,
+      "bound": 7615.0,
+      "nodes": [
+        17147
+      ],
+      "lp_iterations": [
+        1508731
+      ]
+    }
+  },
+  "circ10-3": {
+    "current": {
+      "seconds": [
+        60.02091225
+      ],
+      "median": 60.02091225,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 140.00000000000006,
+      "nodes": [
+        1
+      ],
+      "lp_iterations": [
+        12364
+      ]
+    },
+    "gurobi": {
+      "seconds": [
+        60.00268891698215
+      ],
+      "median": 60.00268891698215,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 140.00000000000003,
+      "nodes": [
+        38
+      ],
+      "lp_iterations": [
+        201986
+      ]
+    },
+    "deadline_fix_only": {
+      "seconds": [
+        60.027918375
+      ],
+      "median": 60.027918375,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": 140.00000000000006,
+      "nodes": [
+        1
+      ],
+      "lp_iterations": [
+        12839
+      ]
+    },
+    "old": {
+      "status": "external_timeout",
+      "process_elapsed_secs": 120.00570645800326,
+      "source": "../main-gurobi10-100-60s/raw.jsonl.gz"
+    }
+  },
+  "baseline_commit": "75b2c370a2629a1838bfb75139676be663bf6c3f",
+  "source_sha256": {
+    "milp/src/binary_propagation.rs": "26a51f848abd35f1b6a5698e0fe5c3f83d5910f77fd2c19784fa4a1ab023fe93",
+    "milp/src/block_cover.rs": "58d66dbc87b33faeec8cd1da6baa314c51ecf1168fbdc3369a59b1036d6fb635",
+    "milp/src/boolean_network/encoding.rs": "cc5dfc7e8c306660c991c466e08ca2749502bd9ac9621a815ee75541759c4b96",
+    "milp/src/boolean_network/search.rs": "2711cc16f322f237d8f5b7b36f1b3b0ac8a9d50302692239531efe7223fd2e78",
+    "milp/src/boolean_network.rs": "ff4e50aa598d21b0954899c786e34f36fe6655b3d0769366a4080ab5bce6d3bf",
+    "milp/src/branch_bound.rs": "6ee07765759684b3437ff7501c284d56a9a9ed67f3d04f27235be87e0315e464",
+    "milp/src/classification_conflicts.rs": "f965b234d985bd8c83739263d98fc7b170f50d9565a70222075e02867e82d03e",
+    "milp/src/conditional_rows.rs": "1bd575db401a6be021b507f1479ea82e59c895b1d35c6efd053f3531a0ea5e43",
+    "milp/src/cover_repair/bound.rs": "e31607b64f0ce74504c48da1ca52305a605d90961f366659e7c875c005ba411b",
+    "milp/src/cover_repair.rs": "6fb9d372119c6ed83f76d5e8825d22331166c4d3e1e0fef1a358674980759f18",
+    "milp/src/cuts.rs": "92debc6790a5d203c4540dcfc386d9a34f0c0d61396fc75f7091825c774324d9",
+    "milp/src/error.rs": "e0697fa4f2d51030446cb44b3e4c831197cf33a0b7358c2fb45a42ed09236ec6",
+    "milp/src/grouped_dp.rs": "356bf00121fda4ff6b0d2d05c3bcb7a4d18887495c408c492ca8346c86d18fae",
+    "milp/src/heuristics.rs": "033efdc2618a01c841850ec57bcfdb1aa7b633c526865438249a6bd708aa7782",
+    "milp/src/instance.rs": "70a8e6ffe315c9cb2669027618ef84439ba04ab0e65c8408576f5f0a1b4fc1aa",
+    "milp/src/lib.rs": "79f79be0de9eeae413561df4f32377fe5c9a52e657be0d9d3c31c7822966ef9a",
+    "milp/src/main.rs": "f425a5d2973888f596b923eb6713e644638999e76ef96cdf66b07cea9731ad0c",
+    "milp/src/model.rs": "f4f0515cf8b577263ddfb733f3cbdfc985abf05370a1f827f24912ca21f2a7db",
+    "milp/src/packing.rs": "558f07d49a36209e0da98cf2832e5e887c21f0e58f5966194c537a4efef7bc71",
+    "milp/src/packing_core.rs": "3a03ee0c22c8656aa945c82cc4f74b6519180ec713e91b24eb557b8c2bd32780",
+    "milp/src/parallel_bb.rs": "a686a17f4d3ab0ea831459e0b525e54b741f1bdf31a24591ba21a844211dc286",
+    "milp/src/periodic_equalities.rs": "f7ff847870b617d282760ec86e8099ab6a7a243c10e09800b8158b9f5617d5fd",
+    "milp/src/periodic_projection.rs": "c4a18096e00d573f06efb5dd1d6d98fc0594a7d0b3b7e10f3e7dfe883f627316",
+    "milp/src/phase1_progress_diagnostics.rs": "0b31160f3faf612234983677ee981d0e79b09bb6449c7327038d73fb63d016f9",
+    "milp/src/presolve/binary_mutex.rs": "3d609c3f780cd465f4738c13186056e4a2480f14d48700d2fb201b743e809c5c",
+    "milp/src/presolve.rs": "8a3e8d6d0edaf592a429208ab1cedb407c40e370887d165dfe0c4735475858b1",
+    "milp/src/proof_profile.rs": "e0d14c01ed9cdb9f9f17b1c451e2b34c3f9d64478b04172765c2e7d57a881375",
+    "milp/src/route_cover.rs": "68bf4103d952ba28e840b1f34ba5760cb301758c36850bb7edbf813a73da85aa",
+    "milp/src/scaling.rs": "a3f1d2272009ca237e454e3568ddc938cc8f40ff8d81cd82261af8138c62a23d",
+    "milp/src/search_ctrl.rs": "87add71f4468a2b5dea96968a6c499b4439a72dee865b7ad954bbe477abb0611",
+    "milp/src/shared_demand.rs": "4db8f49a985d92e07f843fc6d97a746f0a2414a25f8bcc87023e288d9bf74374",
+    "milp/src/simplex.rs": "70d82930da8f3afa7c141847dc04be6a2be25da4fc494206d2f0e6e82a5e52da",
+    "milp/src/simplex_sparse.rs": "6ee8dbf6e191dea48635e0e1793bd46d94ddb4df3283fdb41475cc8bda409c2b",
+    "milp/src/solver.rs": "841ef8d8e32e1edefaadb8230c7670c1efab23d65322a83e1002d6da0be28838",
+    "milp/src/time_window_routes.rs": "e49ef0e683f711ea6b87fc77748bb06eca3b35bee3ddb0409e9c8c7b07c4e204"
+  },
+  "binaries": {
+    "old": "fe5b0d050463a7384e59b3cdde7eea7f3d546de7c45e133ab9381a1799978d1d",
+    "current": "9eb838da4abb895c58d02a44793a06b963ed19be1596691e5d44bb5280e9db61",
+    "circ-fixed": "d601286ff3a1c22e0c3749ac0dfb8b063c12623df115eed488c05198d456b82c"
+  },
+  "gurobi_library_sha256": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9",
+  "gurobi_version": "10.0.3",
+  "params": [
+    "--time-limit-secs",
+    "60",
+    "--node-limit",
+    "2000000",
+    "--threads",
+    "1",
+    "--early-stop",
+    "off"
+  ],
+  "sources": {
+    "p0201": "040ec92353da3175afb3f6f87a323afc943ac305b66fa74d0931017e1c2710d2",
+    "circ10-3": "e146a5f47e27ec29d1978336cd118b5508b2c5ed0d81a310291c6b96652d7860"
+  },
+  "p0201_solver_order": [
+    [
+      "old",
+      "current",
+      "gurobi"
+    ],
+    [
+      "current",
+      "gurobi",
+      "old"
+    ],
+    [
+      "gurobi",
+      "old",
+      "current"
+    ]
+  ]
+}

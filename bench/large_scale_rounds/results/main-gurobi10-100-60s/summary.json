@@ -1,0 +1,456 @@
+{
+  "suite_stats": {
+    "全部": {
+      "cases": 100,
+      "lp": 17,
+      "milp": 83,
+      "by_solver": {
+        "mic": {
+          "optimal": 88,
+          "verified_optimal": 88,
+          "verified_optimal_within_budget": 88,
+          "checked_final_vectors": 94,
+          "callback": 78,
+          "rejected_callbacks": 0,
+          "infeasible": 2,
+          "no_solution": 5,
+          "lp_return_upper": 16,
+          "unbounded": 1,
+          "lp_not_applicable": 1,
+          "limit_reached": 8,
+          "error": 1
+        },
+        "gurobi": {
+          "optimal": 87,
+          "verified_optimal": 87,
+          "verified_optimal_within_budget": 87,
+          "checked_final_vectors": 93,
+          "callback": 77,
+          "rejected_callbacks": 0,
+          "infeasible": 1,
+          "no_solution": 6,
+          "lp_return_upper": 16,
+          "infeasible_or_unbounded": 1,
+          "lp_not_applicable": 1,
+          "limit_reached": 11
+        }
+      },
+      "proof": {
+        "pairs": 86,
+        "mic_faster": 43,
+        "gurobi_faster": 43,
+        "equal": 0,
+        "ratio_count": 86,
+        "median_ratio": 1.0432169647180383,
+        "geometric_mean_ratio": 1.091343660191046
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 57,
+        "mic_faster": 25,
+        "gurobi_faster": 32,
+        "equal": 0,
+        "ratio_count": 57,
+        "median_ratio": 1.5866940889502918,
+        "geometric_mean_ratio": 1.2801345940046045
+      },
+      "first_callback": {
+        "pairs": 76,
+        "mic_faster": 15,
+        "gurobi_faster": 61,
+        "equal": 0,
+        "ratio_count": 76,
+        "median_ratio": 4.362831966545427,
+        "geometric_mean_ratio": 6.31789867693893
+      }
+    },
+    "原有样例": {
+      "cases": 79,
+      "lp": 17,
+      "milp": 62,
+      "by_solver": {
+        "mic": {
+          "optimal": 70,
+          "verified_optimal": 70,
+          "verified_optimal_within_budget": 70,
+          "checked_final_vectors": 76,
+          "callback": 60,
+          "rejected_callbacks": 0,
+          "infeasible": 2,
+          "no_solution": 2,
+          "lp_return_upper": 16,
+          "unbounded": 1,
+          "lp_not_applicable": 1,
+          "limit_reached": 6
+        },
+        "gurobi": {
+          "optimal": 70,
+          "verified_optimal": 70,
+          "verified_optimal_within_budget": 70,
+          "checked_final_vectors": 75,
+          "callback": 59,
+          "rejected_callbacks": 0,
+          "infeasible": 1,
+          "no_solution": 3,
+          "lp_return_upper": 16,
+          "infeasible_or_unbounded": 1,
+          "lp_not_applicable": 1,
+          "limit_reached": 7
+        }
+      },
+      "proof": {
+        "pairs": 69,
+        "mic_faster": 32,
+        "gurobi_faster": 37,
+        "equal": 0,
+        "ratio_count": 69,
+        "median_ratio": 1.577799972950607,
+        "geometric_mean_ratio": 1.1068293631363004
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 56,
+        "mic_faster": 24,
+        "gurobi_faster": 32,
+        "equal": 0,
+        "ratio_count": 56,
+        "median_ratio": 1.6293579341950188,
+        "geometric_mean_ratio": 1.3023615153547754
+      },
+      "first_callback": {
+        "pairs": 59,
+        "mic_faster": 11,
+        "gurobi_faster": 48,
+        "equal": 0,
+        "ratio_count": 59,
+        "median_ratio": 6.912429423702234,
+        "geometric_mean_ratio": 7.995296179300652
+      }
+    },
+    "bnatt400 与 PyBoolNet": {
+      "cases": 18,
+      "lp": 0,
+      "milp": 18,
+      "by_solver": {
+        "mic": {
+          "optimal": 18,
+          "verified_optimal": 18,
+          "verified_optimal_within_budget": 18,
+          "checked_final_vectors": 18,
+          "callback": 18,
+          "rejected_callbacks": 0
+        },
+        "gurobi": {
+          "limit_reached": 1,
+          "no_solution": 1,
+          "rejected_callbacks": 0,
+          "optimal": 17,
+          "verified_optimal": 17,
+          "verified_optimal_within_budget": 17,
+          "checked_final_vectors": 17,
+          "callback": 17
+        }
+      },
+      "proof": {
+        "pairs": 17,
+        "mic_faster": 11,
+        "gurobi_faster": 6,
+        "equal": 0,
+        "ratio_count": 17,
+        "median_ratio": 0.4653449579700879,
+        "geometric_mean_ratio": 1.0306827599995259
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 1,
+        "mic_faster": 1,
+        "gurobi_faster": 0,
+        "equal": 0,
+        "ratio_count": 1,
+        "median_ratio": 0.48820710141966417,
+        "geometric_mean_ratio": 0.48820710141966417
+      },
+      "first_callback": {
+        "pairs": 17,
+        "mic_faster": 4,
+        "gurobi_faster": 13,
+        "equal": 0,
+        "ratio_count": 17,
+        "median_ratio": 1.5997611027119658,
+        "geometric_mean_ratio": 2.790382311264721
+      }
+    },
+    "新增 MIPLIB 近邻": {
+      "cases": 3,
+      "lp": 0,
+      "milp": 3,
+      "by_solver": {
+        "mic": {
+          "error": 1,
+          "no_solution": 3,
+          "rejected_callbacks": 0,
+          "limit_reached": 2
+        },
+        "gurobi": {
+          "limit_reached": 3,
+          "no_solution": 2,
+          "rejected_callbacks": 0,
+          "checked_final_vectors": 1,
+          "callback": 1
+        }
+      },
+      "proof": {
+        "pairs": 0,
+        "mic_faster": 0,
+        "gurobi_faster": 0,
+        "equal": 0,
+        "ratio_count": 0,
+        "median_ratio": null,
+        "geometric_mean_ratio": null
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 0,
+        "mic_faster": 0,
+        "gurobi_faster": 0,
+        "equal": 0,
+        "ratio_count": 0,
+        "median_ratio": null,
+        "geometric_mean_ratio": null
+      },
+      "first_callback": {
+        "pairs": 0,
+        "mic_faster": 0,
+        "gurobi_faster": 0,
+        "equal": 0,
+        "ratio_count": 0,
+        "median_ratio": null,
+        "geometric_mean_ratio": null
+      }
+    },
+    "纯线性规划": {
+      "cases": 17,
+      "lp": 17,
+      "milp": 0,
+      "by_solver": {
+        "mic": {
+          "optimal": 16,
+          "verified_optimal": 16,
+          "verified_optimal_within_budget": 16,
+          "checked_final_vectors": 16,
+          "lp_return_upper": 16,
+          "rejected_callbacks": 0,
+          "unbounded": 1,
+          "lp_not_applicable": 1
+        },
+        "gurobi": {
+          "optimal": 16,
+          "verified_optimal": 16,
+          "verified_optimal_within_budget": 16,
+          "checked_final_vectors": 16,
+          "lp_return_upper": 16,
+          "rejected_callbacks": 0,
+          "infeasible_or_unbounded": 1,
+          "lp_not_applicable": 1
+        }
+      },
+      "proof": {
+        "pairs": 16,
+        "mic_faster": 6,
+        "gurobi_faster": 10,
+        "equal": 0,
+        "ratio_count": 16,
+        "median_ratio": 1.5822470309504495,
+        "geometric_mean_ratio": 1.205464749079824
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 13,
+        "mic_faster": 4,
+        "gurobi_faster": 9,
+        "equal": 0,
+        "ratio_count": 13,
+        "median_ratio": 1.5866940889502918,
+        "geometric_mean_ratio": 1.380963935622689
+      },
+      "first_callback": {
+        "pairs": 0,
+        "mic_faster": 0,
+        "gurobi_faster": 0,
+        "equal": 0,
+        "ratio_count": 0,
+        "median_ratio": null,
+        "geometric_mean_ratio": null
+      }
+    },
+    "含整数变量": {
+      "cases": 83,
+      "lp": 0,
+      "milp": 83,
+      "by_solver": {
+        "mic": {
+          "optimal": 72,
+          "verified_optimal": 72,
+          "verified_optimal_within_budget": 72,
+          "checked_final_vectors": 78,
+          "callback": 78,
+          "rejected_callbacks": 0,
+          "infeasible": 2,
+          "no_solution": 5,
+          "limit_reached": 8,
+          "error": 1
+        },
+        "gurobi": {
+          "optimal": 71,
+          "verified_optimal": 71,
+          "verified_optimal_within_budget": 71,
+          "checked_final_vectors": 77,
+          "callback": 77,
+          "rejected_callbacks": 0,
+          "infeasible": 1,
+          "no_solution": 6,
+          "limit_reached": 11
+        }
+      },
+      "proof": {
+        "pairs": 70,
+        "mic_faster": 37,
+        "gurobi_faster": 33,
+        "equal": 0,
+        "ratio_count": 70,
+        "median_ratio": 0.5647446158816681,
+        "geometric_mean_ratio": 1.0668143468516569
+      },
+      "proof_at_least_one_ms": {
+        "pairs": 44,
+        "mic_faster": 21,
+        "gurobi_faster": 23,
+        "equal": 0,
+        "ratio_count": 44,
+        "median_ratio": 1.6130823518949762,
+        "geometric_mean_ratio": 1.2517779290161197
+      },
+      "first_callback": {
+        "pairs": 76,
+        "mic_faster": 15,
+        "gurobi_faster": 61,
+        "equal": 0,
+        "ratio_count": 76,
+        "median_ratio": 4.362831966545427,
+        "geometric_mean_ratio": 6.31789867693893
+      }
+    }
+  },
+  "counts": {
+    "mic": {
+      "optimal": 88,
+      "certified": 91,
+      "no_witness_at_limit": 2,
+      "callbacks": 318,
+      "rejected_callbacks": 0,
+      "callback_errors": 0,
+      "final_witness": 94
+    },
+    "gurobi": {
+      "optimal": 87,
+      "certified": 88,
+      "no_witness_at_limit": 5,
+      "callbacks": 403,
+      "rejected_callbacks": 0,
+      "callback_errors": 0,
+      "final_witness": 93
+    }
+  },
+  "only_optimal": {
+    "mic": [
+      "marketsplit-5x50",
+      "bnatt400"
+    ],
+    "gurobi": [
+      "icir97_tension"
+    ]
+  },
+  "mutual_limit_solutions": {
+    "仅 MIC 有解": [],
+    "仅 Gurobi 有解": [
+      "s1234"
+    ],
+    "MIC 目标较好": [],
+    "Gurobi 目标较好": [
+      "gen-ip054",
+      "neos-4954672-berkel"
+    ],
+    "可行目标一致": [
+      "seymour",
+      "boundary_n512_m16",
+      "boundary_n513_m16"
+    ],
+    "双方均无解记录": [
+      "supportcase3"
+    ]
+  },
+  "largest_wall_time_deficits_secs": [
+    [
+      "p0201",
+      29.576348125,
+      0.08895512500021141
+    ],
+    [
+      "setcover-400x800",
+      26.123806333,
+      0.3241535830020439
+    ],
+    [
+      "boundary_m17",
+      32.307348167,
+      6.640292041993234
+    ],
+    [
+      "neos17",
+      14.180623708,
+      0.4623073750117328
+    ],
+    [
+      "setcover-300x600",
+      13.832166958,
+      0.2909035829943605
+    ],
+    [
+      "mknap-10x200",
+      5.8305885,
+      1.5797447499935515
+    ]
+  ],
+  "largest_wall_time_advantages_secs": [
+    [
+      "marketsplit-4x40",
+      0.064579833,
+      7.084992874995805
+    ],
+    [
+      "packing_correlated_s12043",
+      0.041781917,
+      2.575136500003282
+    ],
+    [
+      "packing_many_rows_s12043",
+      0.110529709,
+      1.395850208005868
+    ],
+    [
+      "packing_many_rows_s12017",
+      0.057026791,
+      1.199799832989811
+    ],
+    [
+      "packing_correlated_s12017",
+      0.089339125,
+      1.2111322499986272
+    ]
+  ],
+  "over_60_1_seconds": [
+    [
+      "seymour",
+      "mic",
+      62.878127208
+    ]
+  ],
+  "issues": [
+    "circ10-3/mic 运行失败：外层进程超时并已终止"
+  ]
+}

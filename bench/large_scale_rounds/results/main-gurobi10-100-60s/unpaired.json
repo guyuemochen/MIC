@@ -1,0 +1,30 @@
+{
+  "instance": "neos-5178119-nalagi",
+  "source_url": "https://miplib.zib.de/WebData/instances/neos-5178119-nalagi.mps.gz",
+  "mps_sha256": "12f0110ef64f0647d3787203b69171e3749b4adf22b57326a17e6636126b0bbc",
+  "mic": "unsupported_input",
+  "negative_infinite_lower_bounds": 99,
+  "continuous": 99,
+  "gurobi_version": "10.0.3",
+  "command": [
+    "/Library/gurobi1003/macos_universal2/bin/gurobi_cl",
+    "Threads=1",
+    "TimeLimit=60",
+    "NodeLimit=2000000",
+    "MIPGap=0",
+    "MIPGapAbs=0",
+    "IntFeasTol=1e-6",
+    "JSONSolDetail=1",
+    "ResultFile=/private/tmp/mic-main-gap.6DqXLe/neos-native.json",
+    "/tmp/mic-bnatt-external.PTr1gh/neos-5178119-nalagi.mps"
+  ],
+  "gurobi_status": "optimal",
+  "gurobi_raw_status": 2,
+  "solutions": 4,
+  "objective": 22.740000000000002,
+  "bound": 22.740000000000002,
+  "runtime_secs": 46.52407193183899,
+  "gurobi_objective_rechecked": 22.740000000000002,
+  "official_optimum": 22.73999999763,
+  "issues": []
+}

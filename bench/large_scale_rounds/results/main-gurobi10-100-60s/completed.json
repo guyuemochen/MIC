@@ -1,0 +1,16 @@
+{
+  "finished_at_utc": "2026-11-23T04:06:11.781739+00:00",
+  "runs": 200,
+  "errors": [
+    {
+      "case_id": "neighbors/circ10-3",
+      "solver": "mic",
+      "raw_status": "ValueError",
+      "error": "外层进程超时并已终止"
+    }
+  ],
+  "timings_sha256": "3e5d712448c0d77c52c10d0285196dc42b7f20b951ae75e16027b35ce7512813",
+  "raw_sha256": "2cf0715989818fd6a1a63d0c5d8aec9743154d0b8909070500913d614ae654eb",
+  "repeated_pairs": 8,
+  "selection": "recheck/selection.json"
+}

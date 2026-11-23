@@ -1,0 +1,69 @@
+{
+  "changed_parameter": {
+    "DualReductions": 0
+  },
+  "timings_sha256": "3e5d712448c0d77c52c10d0285196dc42b7f20b951ae75e16027b35ce7512813",
+  "results": [
+    {
+      "instance": "unbounded-tiny",
+      "main": {
+        "status": "infeasible_or_unbounded",
+        "raw_status": "INF_OR_UNBD",
+        "objective": null,
+        "bound": null,
+        "parameters": {
+          "OutputFlag": 0,
+          "Threads": 1,
+          "TimeLimit": 60.0,
+          "NodeLimit": 2000000.0,
+          "MIPGap": 0.0,
+          "MIPGapAbs": 0.0,
+          "IntFeasTol": 1e-06,
+          "DualReductions": 1,
+          "FeasibilityTol": 1e-06,
+          "OptimalityTol": 1e-06
+        }
+      },
+      "diagnostic": {
+        "status": "unbounded",
+        "raw_status": "UNBOUNDED",
+        "elapsed_secs": 0.00011987498146481812,
+        "objective": null,
+        "bound": null,
+        "gap_absolute": null,
+        "gap_percent": null,
+        "values": null,
+        "nodes": 0,
+        "lp_iterations": 0,
+        "version": "10.0.3",
+        "cuts": null,
+        "rc_fixed": null,
+        "rc_reapplies": null,
+        "rc_refixed": null,
+        "presolve_reductions": null,
+        "auto_degraded": null,
+        "gap_terminated": null,
+        "raw_status_code": 5,
+        "solution_count": 0,
+        "bound_source": null,
+        "optimizer_runtime_secs": 0.00010800361633300781,
+        "barrier_iterations": 0,
+        "model_roundtrip_passed": true,
+        "incumbent_events": [],
+        "callback_errors": [],
+        "parameters": {
+          "OutputFlag": 0,
+          "Threads": 1,
+          "DualReductions": 0,
+          "TimeLimit": 60.0,
+          "NodeLimit": 2000000.0,
+          "MIPGap": 0.0,
+          "MIPGapAbs": 0.0,
+          "IntFeasTol": 1e-06,
+          "FeasibilityTol": 1e-06,
+          "OptimalityTol": 1e-06
+        }
+      }
+    }
+  ]
+}

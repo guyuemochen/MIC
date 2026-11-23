@@ -38,7 +38,7 @@
 //!   max(10_000, 20×(m+n))（`set_iter_limit_hint`
 //!   可收紧，R8 割循环接线点，F4）；数值失败（含主元过小、NaN/Inf）诚实
 //!   映射 IterationLimit + objective=NaN，绝不冒充 Optimal；W2 内部墙钟
-//!   （`set_time_deadline`）条件读钟——未注入 ⇒ 零墙钟读点；
+//!   （`set_time_deadline`）在热启动入口和每轮对偶修复也检查，未注入期限时不读钟；
 //! - **同一解构造**：x 提取（基本值 10·feas 内夹回界）、Optimal 终检
 //!   （基变量界违反/残基人工变量非零 ⇒ 降级 IterationLimit）、目标按 x
 //!   重算、对偶 = c_B·B⁻¹ × row_scale。
@@ -2434,7 +2434,7 @@ impl SparseSimplex {
         if let Some(st) = self.validate_bounds_arg(bounds) {
             return self.build_solution(st);
         }
-        if let Some(st) = work.entry_status(self.time_deadline) {
+        if let Some(st) = work.start_status(self.time_deadline) {
             return self.build_solution(st);
         }
         // Devex 热启动入口重置：参考框架 = 当时非基集（reset-to-全 1 与
@@ -2731,7 +2731,7 @@ impl SparseSimplex {
         {self.lu_trace.phase="dual_repair";self.lu_trace.reason="dual_repair";}
         const BUDGET_BASE: u32 = 2_000;
         const DEGEN_BLAND: u32 = 32;
-        if let Some(st) = work.stop_status(self.time_deadline) {
+        if let Some(st) = work.start_status(self.time_deadline) {
             return DualRepair::Stopped(st);
         }
         if !self.dual_feasible() {
@@ -2744,7 +2744,7 @@ impl SparseSimplex {
         let mut iters: u32 = 0;
         let mut degen: u32 = 0;
         loop {
-            if let Some(st) = work.stop_status(self.time_deadline) {
+            if let Some(st) = work.start_status(self.time_deadline) {
                 return DualRepair::Stopped(st);
             }
             // y = BTRAN(c_B)（检验数新鲜度：上一轮主元已改基）。
@@ -6239,6 +6239,21 @@ mod tests {
     }
 
     // ---- 构造辅助（对齐 simplex.rs 测试风格）----
+
+    #[test]
+    fn dual_repair_honors_deadline_without_work_limit() {
+        let p = prob(Sense::Maximize, vec![var("x", 0.0, 2.0)], vec![(0, 1.0)],
+            vec![(vec![(0, 1.0)], RelOp::Le, 1.0)]);
+        let bounds = Bounds::from_problem(&p);
+        let mut lp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        assert_eq!(lp.solve(&bounds).status, LpStatus::Optimal);
+        lp.set_time_deadline(Some(std::time::Instant::now()));
+        assert!(matches!(lp.dual_repair_with_limit(&mut LpWorkLimit::unlimited()),
+            DualRepair::Stopped(LpStatus::TimeLimit)));
+        assert_eq!(lp.resolve(&bounds).status, LpStatus::TimeLimit);
+        lp.set_time_deadline(None);
+        assert_eq!(lp.resolve(&bounds).objective, 1.0);
+    }
 
     fn var(name: &str, lb: f64, ub: f64) -> Variable {
         Variable {

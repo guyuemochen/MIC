@@ -1,0 +1,14 @@
+{
+  "rule": "首轮记录中任一方墙钟与单调进程耗时相差超过 1 秒，或运行出错，就按第一次的顺序重测双方。",
+  "cases": [
+    "auto/boundary_m17",
+    "auto/boundary_n512_m16",
+    "auto/boundary_n513_m16",
+    "miplib2017/seymour",
+    "neighbors/circ10-3",
+    "neighbors/supportcase3",
+    "pyboolnet/n3s1c1a",
+    "scale-solve/solve-100000"
+  ],
+  "first_pass_raw_sha256": "96b152068ca466cc0ad2be00dbb4c836f281f471e958e000ae6805219ed07eff"
+}
