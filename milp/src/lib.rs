@@ -44,6 +44,7 @@ pub mod scaling;
 pub mod simplex_sparse;
 
 mod binary_propagation;
+mod binary_tables;
 mod boolean_network;
 mod grouped_dp;
 mod block_cover;

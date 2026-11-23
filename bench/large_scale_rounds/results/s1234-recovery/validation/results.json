@@ -1,0 +1,291 @@
+{
+  "input_hashes": {
+    "mps_sha256": "5b4075a0fdaf6e9556f2f867e772c7a3b035dac983bb76809525855cd3251fce",
+    "milp_sha256": "da1edbbb244069c9ca8c8ac4ef879f206d36ce412b745d9d6601f5b63a61bf18",
+    "model_sha256": "0b5e2876c1c1e3113787c9e87b200b443128c25d2e1c32b96da60c8af52c47f3"
+  },
+  "runs_sha256": "bb14ea8410754ad2c8ab102fa5a71abc691a8dd95ec164f61aac6e0361e24956",
+  "probe_sha256": "e2dda69d48858528cefc3f5ea50a54a8444bd9af56f4ac1f68ea87ddddbc99fc",
+  "binary_columns": 2945,
+  "original_rows": 8418,
+  "independent_bound": {
+    "anchors": 128,
+    "impossible_anchors": 0,
+    "unique_local_tables": 4,
+    "lower_bound": 2
+  },
+  "original_runs": [
+    {
+      "dataset": "previous",
+      "solver": "gurobi",
+      "rep": 0,
+      "status": "limit_reached",
+      "objective": 276.0,
+      "bound": 2.0,
+      "nodes": 101,
+      "callback_objectives": [
+        304.0,
+        301.0,
+        298.0,
+        293.0,
+        288.0,
+        284.0,
+        282.0,
+        276.0
+      ],
+      "final_ones": 1502
+    },
+    {
+      "dataset": "previous",
+      "solver": "mic",
+      "rep": 0,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": null,
+      "nodes": 1,
+      "callback_objectives": [],
+      "final_ones": null
+    },
+    {
+      "dataset": "current",
+      "solver": "old",
+      "rep": 1,
+      "status": "limit_reached",
+      "objective": null,
+      "bound": null,
+      "nodes": 1,
+      "callback_objectives": [],
+      "final_ones": null
+    },
+    {
+      "dataset": "current",
+      "solver": "mic",
+      "rep": 1,
+      "status": "limit_reached",
+      "objective": 130.0,
+      "bound": 2.0,
+      "nodes": 129,
+      "callback_objectives": [
+        141.0,
+        140.0,
+        136.0,
+        135.0,
+        134.0,
+        130.0
+      ],
+      "final_ones": 930
+    },
+    {
+      "dataset": "current",
+      "solver": "gurobi",
+      "rep": 1,
+      "status": "limit_reached",
+      "objective": 276.0,
+      "bound": 2.0,
+      "nodes": 53,
+      "callback_objectives": [
+        304.0,
+        301.0,
+        298.0,
+        293.0,
+        288.0,
+        284.0,
+        282.0,
+        276.0
+      ],
+      "final_ones": 1502
+    }
+  ],
+  "permutation": {
+    "status": "limit_reached",
+    "objective": 138.0,
+    "bound": 2.0,
+    "nodes": 129,
+    "callback_objectives": [
+      156.0,
+      148.0,
+      147.0,
+      139.0,
+      138.0
+    ],
+    "final_ones": 976,
+    "model_sha256": "10ffa6811312d1560f123c4e2c30a0f3fed2033f2ecc86d76c55270b54b6d1f1"
+  },
+  "exhaustive": [
+    {
+      "case": "costly_singleton",
+      "assignments": 8192,
+      "feasible": 1844,
+      "optimum": 2,
+      "best_singleton": 26,
+      "independent_bound": {
+        "anchors": 11,
+        "impossible_anchors": 1,
+        "unique_local_tables": 11,
+        "lower_bound": 2
+      },
+      "runs_by_node_limit": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 26.0,
+          "bound": 2.0,
+          "nodes": 1,
+          "callback_objectives": [
+            26.0
+          ],
+          "final_ones": 2
+        },
+        "20000": {
+          "status": "optimal",
+          "objective": 2.0,
+          "bound": 2.0,
+          "nodes": 12,
+          "callback_objectives": [
+            26.0,
+            2.0
+          ],
+          "final_ones": 2
+        }
+      }
+    },
+    {
+      "case": "no_singleton",
+      "assignments": 8192,
+      "feasible": 54,
+      "optimum": 2,
+      "best_singleton": null,
+      "independent_bound": {
+        "anchors": 11,
+        "impossible_anchors": 1,
+        "unique_local_tables": 11,
+        "lower_bound": 2
+      },
+      "runs_by_node_limit": {
+        "1": {
+          "status": "limit_reached",
+          "objective": null,
+          "bound": 2.0,
+          "nodes": 1,
+          "callback_objectives": [],
+          "final_ones": null
+        },
+        "20000": {
+          "status": "optimal",
+          "objective": 2.0,
+          "bound": 2.0,
+          "nodes": 12,
+          "callback_objectives": [
+            2.0
+          ],
+          "final_ones": 2
+        }
+      }
+    },
+    {
+      "case": "infeasible",
+      "assignments": 8192,
+      "feasible": 0,
+      "optimum": null,
+      "best_singleton": null,
+      "independent_bound": {
+        "anchors": 11,
+        "impossible_anchors": 11,
+        "unique_local_tables": 10,
+        "lower_bound": null
+      },
+      "runs_by_node_limit": {
+        "1": {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "nodes": 1,
+          "callback_objectives": [],
+          "final_ones": null
+        },
+        "20000": {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "nodes": 1,
+          "callback_objectives": [],
+          "final_ones": null
+        }
+      }
+    },
+    {
+      "case": "negative_anchor_row",
+      "assignments": 8192,
+      "feasible": 1448,
+      "optimum": 3,
+      "best_singleton": 26,
+      "independent_bound": {
+        "anchors": 11,
+        "impossible_anchors": 1,
+        "unique_local_tables": 11,
+        "lower_bound": 3
+      },
+      "runs_by_node_limit": {
+        "1": {
+          "status": "limit_reached",
+          "objective": null,
+          "bound": 3.0,
+          "nodes": 1,
+          "callback_objectives": [],
+          "final_ones": null
+        },
+        "20000": {
+          "status": "optimal",
+          "objective": 3.0,
+          "bound": 3.0,
+          "nodes": 12,
+          "callback_objectives": [
+            27.0,
+            3.0
+          ],
+          "final_ones": 2
+        }
+      }
+    },
+    {
+      "case": "shared_cost",
+      "assignments": 16384,
+      "feasible": 4092,
+      "optimum": 10,
+      "best_singleton": 10,
+      "independent_bound": {
+        "anchors": 11,
+        "impossible_anchors": 1,
+        "unique_local_tables": 2,
+        "lower_bound": 10
+      },
+      "runs_by_node_limit": {
+        "1": {
+          "status": "limit_reached",
+          "objective": 10.0,
+          "bound": 10.0,
+          "nodes": 1,
+          "callback_objectives": [
+            10.0
+          ],
+          "final_ones": 2
+        },
+        "20000": {
+          "status": "optimal",
+          "objective": 10.0,
+          "bound": 10.0,
+          "nodes": 1,
+          "callback_objectives": [
+            10.0
+          ],
+          "final_ones": 2
+        }
+      }
+    }
+  ],
+  "published_reference": {
+    "status": "optimal",
+    "objective": 29.0,
+    "source": "MIPLIB 2017 v37"
+  },
+  "best_verified_feasible": 130.0
+}

@@ -47,8 +47,9 @@
 //! 额外求解一次：优先从原列重新分解当前静态基，失败才冷重建重跑两阶段；
 //! 本引擎仍使用下述整基重因子化重试，稠密路径只复用窄LU封装。
 //! 恢复策略不同，不改变 LP、容差或证明出口；再次失败均诚实停止。
-//! 可选 `sparse_phase1_recovery`（默认关闭）只在冷启动第一阶段完成换基后，
-//! 针对有限算术下的 LU 主元不足，重建初始基并开启风险主元复核再试一次。
+//! 默认 `sparse_phase1_recovery` 只在冷启动第一阶段完成换基后，对有限算术下的 LU
+//! 主元不足恢复一次。有完整松弛基且目标最优端点有限时，从该对偶可行基按最陡边修复，
+//! 重分解并按原问题复核原始和对偶可行性。其余模型沿用两阶段重建和风险主元复核。
 //! 沿用当前行、界及剩余预算；热启动回退、人工清理和第二阶段不触发此重建。
 //!
 //! # 修正单纯形机制（与表格引擎的实现差异；目标值恒同是红线）
@@ -2727,6 +2728,11 @@ impl SparseSimplex {
     }
 
     fn dual_repair_with_limit(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
+        self.dual_repair_from_basis::<false>(work)
+    }
+
+    /// 热启动沿用原选行规则；冷恢复才从单位松弛基维护逆基各行的长度平方。
+    fn dual_repair_from_basis<const STEEPEST: bool>(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
         #[cfg(feature = "lu_failure_diagnostics")]
         {self.lu_trace.phase="dual_repair";self.lu_trace.reason="dual_repair";}
         const BUDGET_BASE: u32 = 2_000;
@@ -2741,11 +2747,16 @@ impl SparseSimplex {
         let ncs = self.ncols_static();
         let budget = BUDGET_BASE.saturating_add((m as u32).saturating_mul(50));
         let bland_at = budget / 2;
+        let mut weights = if STEEPEST { vec![1.0; m] } else { Vec::new() };
+        let call_limit = self.call_iteration_limit();
         let mut iters: u32 = 0;
         let mut degen: u32 = 0;
         loop {
             if let Some(st) = work.start_status(self.time_deadline) {
                 return DualRepair::Stopped(st);
+            }
+            if STEEPEST && self.iter_call >= call_limit {
+                return DualRepair::Stopped(LpStatus::IterationLimit);
             }
             // y = BTRAN(c_B)（检验数新鲜度：上一轮主元已改基）。
             for i in 0..m {
@@ -2764,7 +2775,10 @@ impl SparseSimplex {
                     continue;
                 }
                 let bound = if below { lb } else { ub };
-                let norm = viol / (1.0 + bound.abs());
+                let mut norm = viol / (1.0 + bound.abs());
+                if STEEPEST {
+                    norm /= f64::sqrt(weights[i]);
+                }
                 match worst {
                     Some((_, w, _)) if w >= norm => {}
                     _ => worst = Some((i, norm, below)),
@@ -2776,7 +2790,9 @@ impl SparseSimplex {
             if iters >= budget {
                 return DualRepair::GiveUp;
             }
-            let use_bland = iters >= bland_at || degen >= DEGEN_BLAND;
+            // 冷恢复在原目标上维持对偶可行性，入基比值恒取最小；
+            // 退化循环仍由共享迭代上限和工作预算收口。
+            let use_bland = !STEEPEST && (iters >= bland_at || degen >= DEGEN_BLAND);
             // (2) 对偶比值测试：表格行 r 经 BTRAN(e_r) + 行收集；方向可行
             //（below ⇒ δ·a<0 / above ⇒ δ·a>0）的非基列中 ratio =
             // 有符号 rc/|a| 最小者；并列 |主元| 大者、退化期 Bland 最小列。
@@ -2873,8 +2889,15 @@ impl SparseSimplex {
                     return DualRepair::GiveUp;
                 }
             }
+            if STEEPEST && !self.update_dual_edge_weights(&rho, r, &mut weights) {
+                return DualRepair::GiveUp;
+            }
             work.charge_step();
-            if self.do_pivot(q, r, delta, t, hit_upper).is_err() {
+            if let Err(error) = self.do_pivot(q, r, delta, t, hit_upper) {
+                if STEEPEST {
+                    self.count_step(t);
+                    self.numerical_error = Some(error.message());
+                }
                 return DualRepair::GiveUp;
             }
             iters += 1;
@@ -2886,6 +2909,27 @@ impl SparseSimplex {
                 degen = 0;
             }
         }
+    }
+
+    /// 若 h_i 是逆基第 i 行，换基后 h_i' = h_i − (α_i / α_r)h_r。
+    /// 一次正向三角求解给出全部内积 (h_i·h_r)，不用存放稠密逆基。
+    fn update_dual_edge_weights(&mut self, rho: &[f64], row: usize, weights: &mut [f64]) -> bool {
+        let pivot = self.alpha[row];
+        let next = rho.iter().map(|v| v * v).sum::<f64>() / (pivot * pivot);
+        if !next.is_finite() || next <= 0.0 { return false; }
+        self.lu.ftran_dense(rho, &mut self.work);
+        Self::apply_forward_etas(&self.etas, &mut self.work);
+        for (i, weight) in weights.iter_mut().enumerate() {
+            let a = self.alpha[i];
+            if i != row && a != 0.0 {
+                let updated = *weight + a * a * next - 2.0 * a / pivot * self.work[i];
+                if !updated.is_finite() { return false; }
+                // 长度平方在精确算术中恒正。相消后的下限只影响选行评分。
+                *weight = updated.max(f64::EPSILON);
+            }
+        }
+        weights[row] = next;
+        true
     }
 
     // ---- 内部：对偶主循环（S10 三层 resolve 第一层） ----
@@ -3448,8 +3492,17 @@ impl SparseSimplex {
         }
         let mut alpha = std::mem::take(&mut self.alpha);
         self.lu.ftran_dense(&self.ftran_in, &mut alpha);
+        Self::apply_forward_etas(&self.etas, &mut alpha);
+        self.alpha = alpha;
+        #[cfg(test)]
+        if let Some(value) = direction_fault::take() {
+            self.alpha[0] = value;
+        }
+    }
+
+    fn apply_forward_etas(etas: &[Eta], alpha: &mut [f64]) {
         // ETA：旧 → 新顺序施加 E⁻¹（α_r' = α_r/e_r；其余 α_i −= e_i·α_r'）。
-        for eta in &self.etas {
+        for eta in etas {
             let t = alpha[eta.r] / eta.pivot;
             if t != 0.0 {
                 for &(i, e) in eta.nz.iter() {
@@ -3457,11 +3510,6 @@ impl SparseSimplex {
                 }
             }
             alpha[eta.r] = t;
-        }
-        self.alpha = alpha;
-        #[cfg(test)]
-        if let Some(value) = direction_fault::take() {
-            self.alpha[0] = value;
         }
     }
 
@@ -4432,6 +4480,11 @@ impl SparseSimplex {
             }
             // 失效基不能再读。不调用 start_call，沿用预算、计数和反循环记账。
             self.numerical_error = None;
+            if self.row_slack.iter().all(Option::is_some)
+                && self.c_internal.iter().zip(&self.bounds.ub).all(|(&c, &ub)| c >= 0.0 || ub.is_finite())
+            {
+                return self.recover_from_slack_basis(work);
+            }
             self.rebuild_initial_basis();
             self.phase1_pending = self.num_art > 0;
             self.devex_reset();
@@ -4442,6 +4495,72 @@ impl SparseSimplex {
             }
             self.run_two_phase_attempt(true, work, PrimalAttempt::RetryPhase1, &mut false)
         }
+    }
+
+    /// 不等式自带单位松弛列。结构变量贴到目标最优的有限端点，松弛列作基，
+    /// 原目标的非基检验数即目标系数。此时可能有原始违约，由对偶法修回。
+    #[cfg(feature = "sparse_phase1_recovery")]
+    fn recover_from_slack_basis(&mut self, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        let ncs = self.ncols_static();
+        self.in_basis.truncate(ncs);
+        self.in_basis.fill(false);
+        self.at_upper.truncate(ncs);
+        self.at_upper.fill(false);
+        for (upper, &cost) in self.at_upper.iter_mut().zip(&self.c_internal) {
+            *upper = cost < 0.0;
+        }
+        for (basic, slack) in self.basis.iter_mut().zip(&self.row_slack) {
+            *basic = slack.expect("对偶冷恢复要求每行有松弛列");
+            self.in_basis[*basic] = true;
+        }
+        self.num_art = 0;
+        self.art_info.clear();
+        // 成功前保留欠账：中断后 resolve 需要重新检查当前基。
+        self.phase1_pending = true;
+        if let Err(error) = self.refactor() {
+            self.numerical_error = Some(error.message());
+            return LpStatus::IterationLimit;
+        }
+        #[cfg(test)]
+        refactor_fault::phase1_recovery_boundary(self, true);
+        match self.dual_repair_from_basis::<true>(work) {
+            DualRepair::Stopped(status) => return status,
+            DualRepair::GiveUp => {
+                self.numerical_error.get_or_insert_with(|| "松弛基对偶修复未完成".to_string());
+                return LpStatus::IterationLimit;
+            }
+            DualRepair::Repaired => {}
+        }
+        if let Some(status) = self.phase1_recovery_stop_status(work) { return status; }
+        // 增量基本值不能单独证明原始可行。按原行、原右端、原界重算，再验证原目标。
+        let verified = self.refactor().map_err(|e| e.message())
+            .and_then(|()| self.check_phase_basic_values(2));
+        if let Err(message) = verified {
+            self.numerical_error = Some(message);
+            return LpStatus::IterationLimit;
+        }
+        let values = self.structural_solution();
+        for (i, terms) in self.row_terms.iter().enumerate() {
+            let activity: f64 = terms.iter().map(|&(j, a)| a * values[j]).sum();
+            let residual = activity - self.row_rhs[i];
+            let violation = match self.row_op[i] {
+                RelOp::Le => residual,
+                RelOp::Ge => -residual,
+                RelOp::Eq => residual.abs(),
+            };
+            if !residual.is_finite() || violation > self.tol.feasibility {
+                self.numerical_error = Some(format!("松弛基恢复后原约束第 {i} 行未通过复核"));
+                return LpStatus::IterationLimit;
+            }
+        }
+        if !self.dual_feasible() {
+            self.numerical_error = Some("松弛基恢复后原目标检验数未通过复核".to_string());
+            return LpStatus::IterationLimit;
+        }
+        if let Some(status) = self.phase1_recovery_stop_status(work) { return status; }
+        self.phase1_pending = false;
+        self.devex_reset();
+        LpStatus::Optimal
     }
 
     fn call_iteration_limit(&self) -> u64 {
@@ -5013,34 +5132,27 @@ impl SparseSimplex {
         self.pivots_since_time_check = TIME_CHECK_INTERVAL;
     }
 
+    /// 提取公开的结构变量解；贴界修正与冷恢复的原约束复核使用同一组值。
+    fn structural_solution(&self) -> Vec<f64> {
+        let mut x: Vec<_> = (0..self.num_structural).map(|j| self.nonbasic_value(j)).collect();
+        let feas = self.tol.feasibility;
+        for (&j, &value) in self.basis.iter().zip(&self.x_b) {
+            if j >= self.num_structural { continue; }
+            let (lb, ub) = self.col_bounds(j);
+            x[j] = if value < lb && value >= lb - 10.0 * feas { lb }
+                else if value > ub && value <= ub + 10.0 * feas { ub }
+                else { value };
+        }
+        x
+    }
+
     /// 构造 LpSolution（口径与 simplex.rs::build_solution 同款）。
     fn build_solution(&mut self, mut status: LpStatus) -> LpSolution {
         let n = self.num_structural;
         let m = self.basis.len();
         let ncs = self.ncols_static();
         let feas = self.tol.feasibility;
-        let mut x = vec![0.0; n];
-        for j in 0..n {
-            if self.in_basis[j] {
-                let mut v = f64::NAN;
-                for i in 0..m {
-                    if self.basis[i] == j {
-                        v = self.x_b[i];
-                        break;
-                    }
-                }
-                let (lb, ub) = self.col_bounds(j);
-                if v < lb && v >= lb - 10.0 * feas {
-                    v = lb;
-                }
-                if v > ub && v <= ub + 10.0 * feas {
-                    v = ub;
-                }
-                x[j] = v;
-            } else {
-                x[j] = self.nonbasic_value(j);
-            }
-        }
+        let x = self.structural_solution();
         if status == LpStatus::Optimal {
             // 最终校验：基变量界违反与残基人工变量。
             let mut ok = true;
@@ -6839,6 +6951,68 @@ mod tests {
             assert_eq!(engine.iterations(), 2);
             assert!(!engine.phase1_pending);
             assert!(engine.numerical_error.is_none());
+        }
+
+        #[test]
+        fn dual_slack_recovery_validates_both_sides_and_keeps_original_objective() {
+            let mut p = prob(Sense::Minimize, vec![var("x", 0.0, 4.0), var("y", 0.0, 4.0)],
+                vec![(0, -1.0), (1, 2.0)], vec![
+                    (vec![(0, 1.0), (1, 1.0)], RelOp::Ge, 3.0),
+                    (vec![(0, 2.0), (1, 1.0)], RelOp::Le, 5.0),
+                ]);
+            p.obj_offset = 7.0;
+            let bounds = Bounds::from_problem(&p);
+            let tol = Tolerances::default();
+            let expected = Simplex::new(&p, tol).unwrap().solve(&bounds);
+            let mut engine = SparseSimplex::new(&p, tol).unwrap();
+            let guard = Guard::recovery(Kind::Lu, 1, None);
+            let solution = engine.solve(&bounds);
+            assert_eq!(guard.recovery_boundaries(), [1, 1]);
+            assert!(guard.consumed());
+            assert_eq!(expected.status, LpStatus::Optimal);
+            assert_eq!(solution.status, expected.status);
+            assert_eq!(solution.x, vec![2.0, 1.0]);
+            assert_eq!(solution.objective, expected.objective);
+            assert_eq!(solution.objective, 7.0);
+            assert_eq!(engine.num_art, 0);
+            assert!(engine.etas.is_empty() && engine.dual_feasible());
+            assert!(engine.check_phase_basic_values(2).is_ok());
+        }
+
+        #[test]
+        fn dual_slack_recovery_obeys_remaining_iterations_and_stays_unresolved() {
+            let p = one_row(RelOp::Ge, 1.0, 1.0);
+            let mut engine = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            engine.set_iter_limit_hint(Some(1_000));
+            engine.iter_call = 999;
+            let status = engine.recover_from_slack_basis(&mut LpWorkLimit::unlimited());
+            assert_eq!(status, LpStatus::IterationLimit);
+            assert_eq!(engine.iter_call, 1_000);
+            assert_eq!(engine.iterations(), 1);
+            assert!(engine.phase1_pending);
+            assert!(engine.build_solution(status).objective.is_nan());
+        }
+
+        #[cfg(feature = "root_heuristic_work_limit")]
+        #[test]
+        fn interrupted_dual_slack_recovery_resolves_again_with_changed_bounds() {
+            let p = one_row(RelOp::Ge, 1.0, 1.0);
+            let mut bounds = Bounds::from_problem(&p);
+            let mut engine = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let mut remaining = 2;
+            let guard = Guard::recovery(Kind::Lu, 1, None);
+            let interrupted = engine.resolve_with_work_limit(&bounds, &mut remaining);
+            assert_eq!(interrupted.status, LpStatus::IterationLimit);
+            assert!(interrupted.objective.is_nan());
+            assert_eq!(guard.recovery_boundaries(), [1, 1]);
+            assert_eq!((remaining, engine.iterations()), (0, 2));
+            assert!(engine.phase1_pending && !engine.factorization_broken);
+            bounds.lb[0] = 1.25;
+            let resumed = engine.resolve(&bounds);
+            assert_eq!(resumed.status, LpStatus::Optimal);
+            assert_eq!(resumed.objective, 1.25);
+            assert_eq!(resumed.x, vec![1.25]);
+            assert!(!engine.phase1_pending);
         }
 
         #[test]

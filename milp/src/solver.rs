@@ -752,6 +752,23 @@ fn structured_prelude(
             }
             return Some(r);
         }
+        if let Some(bound) = crate::binary_tables::seed(
+            problem, opts.tol, deadline, node_limit, &mut r.stats.nodes, |values| {
+                let objective = problem.obj.eval(&values) + problem.obj_offset;
+                if let Some(observe) = observe {
+                    observe(Instant::now(), objective, &values);
+                }
+                r.best = Some(Incumbent { objective, values });
+            },
+        ) {
+            r.bound = Some(bound);
+            if r.time_exceeded() || r.stats.nodes >= node_limit {
+                r.status = Some(SolveStatus::LimitReached);
+            } else if r.best.as_ref().is_some_and(|inc| inc.objective == bound) {
+                r.status = Some(SolveStatus::Optimal);
+            }
+            return Some(r);
+        }
         let values = crate::periodic_equalities::seed(problem, deadline)?;
         let objective = problem.obj.eval(&values) + problem.obj_offset;
         if let Some(observe) = observe {

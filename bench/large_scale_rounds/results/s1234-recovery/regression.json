@@ -1,0 +1,107 @@
+{
+  "threads": 1,
+  "seconds": 5,
+  "node_limit": 2000000,
+  "results": {
+    "bnatt400": {
+      "old": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "elapsed_secs": 0.035976167,
+        "lp_iterations": 0,
+        "nodes": 3162,
+        "checked_callbacks": 1
+      },
+      "mic": {
+        "status": "optimal",
+        "objective": 1.0,
+        "bound": 1.0,
+        "elapsed_secs": 0.026089125,
+        "lp_iterations": 0,
+        "nodes": 3162,
+        "checked_callbacks": 1
+      }
+    },
+    "bnatt500": {
+      "old": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "elapsed_secs": 0.361597125,
+        "lp_iterations": 0,
+        "nodes": 24069,
+        "checked_callbacks": 0
+      },
+      "mic": {
+        "status": "infeasible",
+        "objective": null,
+        "bound": null,
+        "elapsed_secs": 0.366796833,
+        "lp_iterations": 0,
+        "nodes": 24069,
+        "checked_callbacks": 0
+      }
+    },
+    "p0201": {
+      "old": {
+        "status": "optimal",
+        "objective": 7615.0,
+        "bound": 7615.0,
+        "elapsed_secs": 0.007322708,
+        "lp_iterations": 0,
+        "nodes": 58293,
+        "checked_callbacks": 1
+      },
+      "mic": {
+        "status": "optimal",
+        "objective": 7615.0,
+        "bound": 7615.0,
+        "elapsed_secs": 0.007262708,
+        "lp_iterations": 0,
+        "nodes": 58293,
+        "checked_callbacks": 1
+      }
+    },
+    "lp-sparse-4000x800": {
+      "old": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "elapsed_secs": 1.909540375,
+        "lp_iterations": 2659,
+        "nodes": 1,
+        "checked_callbacks": 1
+      },
+      "mic": {
+        "status": "optimal",
+        "objective": 5893.7057566182575,
+        "bound": 5893.7057566182575,
+        "elapsed_secs": 1.316905583,
+        "lp_iterations": 2659,
+        "nodes": 1,
+        "checked_callbacks": 1
+      }
+    },
+    "circ10-3": {
+      "old": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "elapsed_secs": 5.044127208,
+        "lp_iterations": 2944,
+        "nodes": 1,
+        "checked_callbacks": 0
+      },
+      "mic": {
+        "status": "limit_reached",
+        "objective": null,
+        "bound": null,
+        "elapsed_secs": 5.176622125,
+        "lp_iterations": 2816,
+        "nodes": 1,
+        "checked_callbacks": 0
+      }
+    }
+  }
+}

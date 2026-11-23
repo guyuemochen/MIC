@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [features]
-default = ["sparse_row_products", "binary_coefficient_strengthening", "root_cut_recheck"]
+default = ["sparse_row_products", "binary_coefficient_strengthening", "root_cut_recheck", "sparse_phase1_recovery"]
 # 诊断计时完全独立于求解决策，默认不编译。
 sparse_profile = []
 # 受影响行累加通过独立配对门槛，默认开启；诊断访问计数仍单独编译。
@@ -39,7 +39,7 @@ certified_row_fallback = ["binary_coefficient_strengthening"]
 # 风险主元换基前重构旧基并整轮重选，默认关闭的数值稳定性试验。
 risk_pivot_refresh = []
 
-# 稀疏冷启动第一阶段在有限主元分解失败后，有界重建一次并复核风险主元。
+# 稀疏冷启动第一阶段在有限主元分解失败后，优先从对偶可行松弛基恢复，或有界重建一次。
 sparse_phase1_recovery = []
 
 # 首次LU失败的基/换基证据捕获；只供显式诊断，不改变算法和默认路径。
