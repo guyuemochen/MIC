@@ -47,11 +47,10 @@ impl Cover {
         let mut rows = Vec::with_capacity(p.constraints.len());
         let mut remaining = 200_000usize;
         for r in &p.constraints {
-            if r.op != RelOp::Ge
-                || r.rhs != 1.
+            if !matches!((r.op, r.rhs), (RelOp::Ge, 1.) | (RelOp::Le, -1.))
                 || r.expr.terms.is_empty()
                 || r.expr.terms.len() > 128
-                || r.expr.terms.iter().any(|&(_, a)| a != 1.)
+                || r.expr.terms.iter().any(|&(_, a)| a != r.rhs)
             {
                 return None;
             }
@@ -218,7 +217,7 @@ impl Search {
                 let x: Vec<_> = (0..n)
                     .map(|j| f64::from(fixed[j] || self.position[j] != usize::MAX))
                     .collect();
-                if p.constraints.iter().any(|r| r.expr.eval(&x) < r.rhs) {
+                if p.constraints.iter().any(|r| r.expr.eval(&x) * r.rhs < 1.) {
                     break;
                 }
                 accept(&x);

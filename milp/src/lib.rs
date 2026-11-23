@@ -45,6 +45,7 @@ pub mod simplex_sparse;
 
 mod binary_propagation;
 mod binary_tables;
+mod binary_form;
 mod boolean_network;
 mod grouped_dp;
 mod block_cover;

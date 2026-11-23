@@ -5,7 +5,7 @@
 //! 对称且完整的站点可按路线分配，每条链用一个站点，其余站点选零成本自环。
 //! 因此站点容量和逐任务恰覆盖描述了必要的组合约束；构造的上界另用原模型检查。
 
-use crate::model::{Constraint, LinearExpr, Problem, RelOp, Sense, Tolerances, VarType, Variable};
+use crate::model::{dyadic, Constraint, LinearExpr, Problem, RelOp, Sense, Tolerances, VarType, Variable};
 use crate::simplex::{Bounds, LpStatus};
 use crate::simplex_sparse::{new_engine, LpEngineKind};
 use crate::time_window_routes::RouteModel;
@@ -20,28 +20,6 @@ type Exact = i128;
 
 fn expired(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|end| Instant::now() >= end)
-}
-
-/// 把有限双精度数拆成奇数整数乘以二的幂，实现不舍入的共同格点。
-fn dyadic(value: f64) -> Option<(Exact, i32)> {
-    if !value.is_finite() {
-        return None;
-    }
-    if value == 0.0 {
-        return Some((0, 0));
-    }
-    let bits = value.to_bits();
-    let biased = ((bits >> 52) & 0x7ff) as i32;
-    let fraction = bits & ((1 << 52) - 1);
-    let (mantissa, exponent) = if biased == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1 << 52), biased - 1023 - 52)
-    };
-    let shift = mantissa.trailing_zeros();
-    let mantissa = Exact::from(mantissa >> shift);
-    let signed = if value < 0.0 { -mantissa } else { mantissa };
-    Some((signed, exponent + shift as i32))
 }
 
 fn grid_exponent(mut values: impl Iterator<Item = f64>) -> Option<i32> {

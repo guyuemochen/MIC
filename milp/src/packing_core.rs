@@ -88,6 +88,19 @@ impl Model {
         });
         Some(Self { items, caps })
     }
+
+    // 净收益相反的决定至少损失其绝对值。达到门槛的解只可能改变这批列。
+    fn improving_columns(&self, upper_scaled: i64, floor: usize) -> Vec<bool> {
+        let gap = upper_scaled - floor as i64 * SCALE;
+        self.items.iter().map(|it| it.net.abs() <= gap).collect()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct HalfSubset {
+    first: u16,
+    second: u16,
+    mask: u32,
 }
 
 struct Tail {
@@ -96,7 +109,9 @@ struct Tail {
     second: usize,
     left: Vec<Weights>,
     right: Vec<Weights>,
-    bins: Vec<Vec<(u32, u32)>>,
+    left_by_profit: Vec<Vec<HalfSubset>>,
+    right_by_profit: Vec<Vec<HalfSubset>>,
+    bins: Vec<Option<Vec<(u32, u32)>>>,
 }
 impl Tail {
     fn sums(items: &[&Item], m: usize) -> (Vec<Weights>, Vec<usize>) {
@@ -116,41 +131,28 @@ impl Tail {
         let start = items.len().saturating_sub(size);
         let tail = &items[start..];
         let split = tail.len() / 2;
-        let count = 1usize << tail.len();
         let (left, a) = Self::sums(&tail[..split], price.len());
         let (right, b) = Self::sums(&tail[split..], price.len());
         let mut dims: Vec<_> = (0..price.len()).collect();
         dims.sort_unstable_by_key(|&k| (Reverse(price[k]), k));
         let first = dims[0];
         let second = dims[1];
-        let mut bins: Vec<Vec<(u32, u32)>> =
-            (0..=a.last()? + b.last()?).map(|_| Vec::new()).collect();
-        let mut counts = vec![0; bins.len()];
-        for &v in &a {
-            for &v2 in &b {
-                counts[v + v2] += 1;
+        let bins = vec![None; a.last()? + b.last()? + 1];
+        let by_profit = |weights: &[Weights], profits: &[usize], offset: usize| {
+            let mut groups = vec![Vec::new(); profits.last().copied().unwrap_or(0) + 1];
+            for (mask, (&gain, w)) in profits.iter().zip(weights).enumerate() {
+                groups[gain].push(HalfSubset {
+                    first: w[first],
+                    second: w[second],
+                    mask: (mask << offset) as u32,
+                });
             }
-        }
-        for (bin, &n) in bins.iter_mut().zip(&counts) {
-            bin.reserve_exact(n);
-        }
-        for mask in 0..count {
-            if mask % 4096 == 0 && expired(deadline) {
-                return None;
-            }
-            let l = mask & (left.len() - 1);
-            let r = mask >> split;
-            let primary = u32::from(left[l][first] + right[r][first]);
-            let secondary = u32::from(left[l][second] + right[r][second]);
-            // 每组中第一种资源按八单位分箱，同箱按第二种资源排序。其余维在命中后逐项核验。
-            let key = (primary / 8) * 4096 + secondary;
-            bins[a[l] + b[r]].push((key, mask as u32));
-        }
-        for bin in &mut bins {
-            if expired(deadline) {
-                return None;
-            }
-            bin.sort_unstable();
+            groups
+        };
+        let left_by_profit = by_profit(&left, &a, 0);
+        let right_by_profit = by_profit(&right, &b, split);
+        if expired(deadline) {
+            return None;
         }
         Some(Self {
             split,
@@ -158,10 +160,12 @@ impl Tail {
             second,
             left,
             right,
+            left_by_profit,
+            right_by_profit,
             bins,
         })
     }
-    fn find(&self, value: usize, rem: &[i32], price: &[i64], slack: i64) -> Option<u32> {
+    fn find(&mut self, value: usize, rem: &[i32], price: &[i64], slack: i64) -> Option<u32> {
         // 最多 21 列、单项最多 127，任何真实尾部用量均小于 4096。可行时剩余
         // 容量的加权和不超过 slack，故各正价资源的剩余量分别不超过 slack/price[k]。
         let bounds = |k: usize| {
@@ -175,8 +179,36 @@ impl Tail {
         };
         let (a, b) = bounds(self.first);
         let (c, d) = bounds(self.second);
-        let bin = &self.bins[value];
-        if bin.is_empty() || c > d {
+        if c > d || a / 8 > b / 8 {
+            return None;
+        }
+        // 分支实际只会询问少数尾部收益。第一次查询该收益时才连接左右子集，
+        // 同一收益的后续查询复用按资源占用排序的桶。每对左右子集只属于一个桶。
+        let bin = self.bins[value].get_or_insert_with(|| {
+            let first = value.saturating_sub(self.right_by_profit.len() - 1);
+            let last = value.min(self.left_by_profit.len() - 1);
+            let groups = (first..=last).map(|gain| {
+                (
+                    &self.left_by_profit[gain],
+                    &self.right_by_profit[value - gain],
+                )
+            });
+            let capacity = groups.clone().map(|(l, r)| l.len() * r.len()).sum();
+            let mut pairs = Vec::with_capacity(capacity);
+            for (left, right) in groups {
+                for l in left {
+                    for r in right {
+                        // 第一种资源按八单位分箱，箱内按第二种资源和掩码排序。
+                        let primary = u32::from(l.first + r.first);
+                        let secondary = u32::from(l.second + r.second);
+                        pairs.push(((primary / 8) * 4096 + secondary, l.mask | r.mask));
+                    }
+                }
+            }
+            pairs.sort_unstable();
+            pairs
+        });
+        if bin.is_empty() {
             return None;
         }
         for block in a / 8..=b / 8 {
@@ -494,6 +526,35 @@ impl Window<'_> {
     }
 }
 
+fn neighborhood(items: &[Item], best: &[f64], rep: usize, rand: &mut u32) -> Vec<bool> {
+    let n = items.len();
+    let mut rank = Vec::with_capacity(n);
+    for (j, it) in items.iter().enumerate() {
+        *rand = rand.wrapping_mul(1664525).wrapping_add(1013904223);
+        let key = if rep == 0 {
+            j as u32
+        } else if j < 14 {
+            0
+        } else if j >= 50 + (rep % 4) * 8 {
+            u32::MAX
+        } else {
+            (*rand >> 13) * (5 + j as u32)
+                / if (it.net > 0) != (best[it.col] == 1.) {
+                    8
+                } else {
+                    1
+                }
+        };
+        rank.push((key, j));
+    }
+    rank.sort_unstable();
+    let mut selected = vec![false; n];
+    for &(_, j) in &rank[..36.min(n)] {
+        selected[j] = true;
+    }
+    selected
+}
+
 pub(super) fn solve(
     p: &Problem,
     tol: Tolerances,
@@ -578,53 +639,46 @@ pub(super) fn solve(
     model
         .items
         .sort_unstable_by_key(|it| (it.net.abs(), it.col));
-    let n = model.items.len();
     let mut rand = 101u32;
     let mut upper = (ub / SCALE) as usize;
     // 固定邻域外的列只用来找解，未解完的邻域不会产生全局界。
     let quota = limit.min(700_000) / 2;
+    let mut first_complete = false;
     for rep in 0..36 {
         if expired(deadline) || run.nodes >= quota || run.best >= upper {
             break;
         }
-        let mut rank = Vec::with_capacity(n);
-        for (j, it) in model.items.iter().enumerate() {
-            rand = rand.wrapping_mul(1664525).wrapping_add(1013904223);
-            let key = if rep == 0 {
-                j as u32
-            } else if j < 14 {
-                0
-            } else if j >= 50 + (rep % 4) * 8 {
-                u32::MAX
-            } else {
-                (rand >> 13) * (5 + j as u32)
-                    / if (it.net > 0) != (run.x[it.col] == 1.) {
-                        8
-                    } else {
-                        1
-                    }
-            };
-            rank.push((key, j));
-        }
-        rank.sort_unstable();
-        let mut selected = vec![false; n];
-        for &(_, j) in &rank[..36.min(n)] {
-            selected[j] = true;
-        }
-        let outside = if rep % 3 == 0 { &signs } else { &run.x };
+        // 首个局部窗口若在配额内搜完，用下一份相同配额搜索全部可能改进的列。
+        // 该窗口完整结束就已排除了更好解；中断只保留已复核的可行解。
+        let try_proof = rep == 1 && first_complete;
+        let floor = if try_proof { run.best + 1 } else { 0 };
+        let selected = if try_proof {
+            model.improving_columns(ub, floor)
+        } else {
+            neighborhood(&model.items, &run.x, rep, &mut rand)
+        };
+        let outside = if try_proof || rep % 3 == 0 {
+            &signs
+        } else {
+            &run.x
+        };
         let Some(mut w) = Window::new(&model, &prices, &selected, outside, deadline, 20, 0) else {
             break;
         };
         run.stop = (run.nodes + 40_000).min(quota);
-        w.search(0, w.base, 0, &mut run);
+        let complete = w.search(0, w.base, floor, &mut run);
+        if try_proof && complete {
+            upper = run.best;
+            break;
+        }
+        first_complete = rep == 0 && complete;
     }
     run.stop = limit;
     // 若损失超过上界与目标之间的差，则该列在达到门槛的任何解中都必须遵从净收益符号。
     // 完整排除一段收益后才降低全局上界。时间或节点用尽时保留最后已证明的上界。
     while run.best < upper && run.nodes < limit && !expired(deadline) {
         let floor = upper.saturating_sub(1).max(run.best + 1);
-        let gap = ub - floor as i64 * SCALE;
-        let selected: Vec<_> = model.items.iter().map(|it| it.net.abs() <= gap).collect();
+        let selected = model.improving_columns(ub, floor);
         let Some(mut w) = Window::new(&model, &prices, &selected, &signs, deadline, 21, 8) else {
             break;
         };
@@ -648,6 +702,54 @@ pub(super) fn solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tail_builds_only_queried_profits_and_matches_exhaustion() {
+        let items: Vec<_> = (0..8)
+            .map(|j| {
+                let mut weights = [0; WIDTH];
+                weights[..3].copy_from_slice(&[
+                    (j % 3 + 1) as u16,
+                    (2 * j % 5 + 1) as u16,
+                    (j % 4 + 2) as u16,
+                ]);
+                Item {
+                    col: j,
+                    profit: (j % 3 + 1) * 2,
+                    weights,
+                    net: 0,
+                }
+            })
+            .collect();
+        let refs: Vec<_> = items.iter().collect();
+        let prices = [6, 3, 0];
+        let mut tail = Tail::new(&refs, &prices, refs.len(), None).unwrap();
+        assert!(tail.bins.iter().all(Option::is_none));
+        // 相同收益在不同的剩余容量下应复用同一个完整索引；奇数收益的桶为空。
+        for profit in [12, 11, 16] {
+            for cap in [[3, 7, 8], [11, 10, 14], [8, 19, 24]] {
+                let expected = (0u32..1 << items.len())
+                    .filter_map(|mask| {
+                        let mut weights = [0; 3];
+                        let mut gain = 0;
+                        for item in &items {
+                            if mask & (1 << item.col) != 0 {
+                                gain += item.profit;
+                                for (w, &a) in weights.iter_mut().zip(&item.weights) {
+                                    *w += u32::from(a);
+                                }
+                            }
+                        }
+                        (gain == profit && weights.iter().zip(cap).all(|(&w, b)| w <= b as u32))
+                            .then_some((weights[0] / 8, weights[1], mask))
+                    })
+                    .min()
+                    .map(|(_, _, mask)| mask);
+                assert_eq!(tail.find(profit, &cap, &prices, i64::MAX), expected);
+            }
+        }
+        assert_eq!(tail.bins.iter().filter(|b| b.is_some()).count(), 3);
+    }
 
     #[test]
     fn dense_core_matches_exhaustion_and_keeps_valid_interrupted_bounds() {

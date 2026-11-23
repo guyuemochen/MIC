@@ -1,0 +1,50 @@
+{
+  "case": "neos-4954672-berkel",
+  "seconds": 60,
+  "nodes": 2000000,
+  "threads": 1,
+  "input_sha256": "ad9a194fbdfa34c155723db92bcfbdb73d43e06aa9065737d5ddca34806c9b48",
+  "binaries": {
+    "old": "e2dda69d48858528cefc3f5ea50a54a8444bd9af56f4ac1f68ea87ddddbc99fc",
+    "parallel": "f12b51ea961bb1472f139f3ace74d1ef33774c1516f9bc617147dc53a9c97b35"
+  },
+  "runs": {
+    "old": {
+      "status": "limit_reached",
+      "objective": 6829821.0,
+      "bound": 1344421.9366716947,
+      "nodes": 19240,
+      "lp_iterations": 815633,
+      "elapsed_secs": 60.000425625,
+      "presolve_reductions": 0
+    },
+    "parallel": {
+      "status": "limit_reached",
+      "objective": 6582828.0,
+      "bound": 1292431.9588837388,
+      "nodes": 30719,
+      "lp_iterations": 867087,
+      "elapsed_secs": 60.003178792,
+      "presolve_reductions": 651
+    }
+  },
+  "scanned_count": 100,
+  "nonzero_removals": {
+    "dinwoodie_life": {
+      "input_to_parallel_pass": 47,
+      "removed": 1
+    },
+    "krumsiek_myeloid": {
+      "input_to_parallel_pass": 33,
+      "removed": 1
+    },
+    "n3s1c1b": {
+      "input_to_parallel_pass": 7,
+      "removed": 1
+    },
+    "neos-4954672-berkel": {
+      "input_to_parallel_pass": 1848,
+      "removed": 651
+    }
+  }
+}

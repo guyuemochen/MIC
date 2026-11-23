@@ -1,0 +1,1459 @@
+{
+  "exact_scale_sweep": {
+    "old": {
+      "binary_sha256": "e2dda69d48858528cefc3f5ea50a54a8444bd9af56f4ac1f68ea87ddddbc99fc",
+      "ordered_inputs_sha256": "626ed7e68aa8a6eb421770002c61e7fbb0ac88a2e0d774281b3e38d81e5e23c4",
+      "counts": {
+        "optimal": 128,
+        "infeasible": 12
+      },
+      "callback_vectors": 139
+    },
+    "new": {
+      "binary_sha256": "002762390e72b3b9c326b24d0a9767223d651886dbdeeac569e9b5bf87d4bf75",
+      "ordered_inputs_sha256": "626ed7e68aa8a6eb421770002c61e7fbb0ac88a2e0d774281b3e38d81e5e23c4",
+      "counts": {
+        "optimal": 128,
+        "infeasible": 12
+      },
+      "callback_vectors": 137
+    }
+  },
+  "gurobi_version": "10.0.3",
+  "baseline_commit": "0b47f2a",
+  "threads": 1,
+  "repetitions": 1,
+  "seconds": 12,
+  "nodes": 2000000,
+  "binary_sha256": {
+    "old": "e2dda69d48858528cefc3f5ea50a54a8444bd9af56f4ac1f68ea87ddddbc99fc",
+    "new": "002762390e72b3b9c326b24d0a9767223d651886dbdeeac569e9b5bf87d4bf75",
+    "gurobi": "cfc125ca389b003a6bea0c96009b01e3f8c44b16d7ac95ff2bc0cda5bd0cecb9"
+  },
+  "final_vectors": 102,
+  "callback_vectors": 194,
+  "cases": {
+    "cover_817391": {
+      "group": "cover_817391",
+      "model_sha256": "15f76252b44638eaa1b58a6a23d8afc7a24b262f5499283a9de11eea1fece1e4",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.003175583,
+          "nodes": 14,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.003824042,
+          "nodes": 14,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 7,
+          "elapsed_secs": 0.023799416987458244,
+          "nodes": 1,
+          "lp_iterations": 280,
+          "reductions": null
+        }
+      }
+    },
+    "cover_817391_twice": {
+      "group": "cover_817391",
+      "model_sha256": "949462c8f46954910a73abee60ecbda53e662514b95aa1d62900414b6c4db10c",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.368305917,
+          "nodes": 11,
+          "lp_iterations": 12826,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.003185,
+          "nodes": 14,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 7,
+          "elapsed_secs": 0.022429542004829273,
+          "nodes": 1,
+          "lp_iterations": 280,
+          "reductions": null
+        }
+      }
+    },
+    "cover_817391_scaled": {
+      "group": "cover_817391",
+      "model_sha256": "cd8bf69a2365c2326f345a90ca194f2bc523b334e210f3d9382dd89645fcb881",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 1.246899334,
+          "nodes": 11,
+          "lp_iterations": 7587,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.002458,
+          "nodes": 14,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 46.0,
+          "bound": 46.0,
+          "callback_count": 7,
+          "elapsed_secs": 0.022552041977178305,
+          "nodes": 1,
+          "lp_iterations": 280,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 1,
+        "node_limit": 1,
+        "status": "limit_reached",
+        "objective": 46.0,
+        "bound": 42.0,
+        "nodes": 1,
+        "reductions": 0,
+        "callback_count": 2
+      }
+    },
+    "cover_905731": {
+      "group": "cover_905731",
+      "model_sha256": "cc3203de09d78096d28c6a17ef13fab34cc544e56e00b0420b2f0bb1ec537c90",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.002416792,
+          "nodes": 7,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.001767084,
+          "nodes": 7,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.002999457996338606,
+          "nodes": 1,
+          "lp_iterations": 68,
+          "reductions": null
+        }
+      }
+    },
+    "cover_905731_twice": {
+      "group": "cover_905731",
+      "model_sha256": "4bbdab4f8471f0cf3dd852212df7209ac3f2f5b4a4885a9dd9c209b1932dfd49",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.788198625,
+          "nodes": 1,
+          "lp_iterations": 11184,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.001733,
+          "nodes": 7,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.002986083010910079,
+          "nodes": 1,
+          "lp_iterations": 68,
+          "reductions": null
+        }
+      }
+    },
+    "cover_905731_scaled": {
+      "group": "cover_905731",
+      "model_sha256": "f7bcb021d4c17134a1a31ca627988b1939ed8b9a0e3599d9893247d2c0000d02",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 1.2834655,
+          "nodes": 1,
+          "lp_iterations": 18962,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.001595958,
+          "nodes": 7,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.0030040830024518073,
+          "nodes": 1,
+          "lp_iterations": 68,
+          "reductions": null
+        }
+      }
+    },
+    "cover_905731_integer": {
+      "group": "cover_905731",
+      "model_sha256": "acabca69778089214e801d9d5bb31e395a893132457c21347cfc08826cba4dab",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.389904792,
+          "nodes": 1,
+          "lp_iterations": 18962,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.001574667,
+          "nodes": 7,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 41.0,
+          "bound": 41.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.00427150001632981,
+          "nodes": 1,
+          "lp_iterations": 68,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 1,
+        "node_limit": 1,
+        "status": "limit_reached",
+        "objective": 41.0,
+        "bound": 39.0,
+        "nodes": 1,
+        "reductions": 0,
+        "callback_count": 1
+      }
+    },
+    "strict_cover_base": {
+      "group": "strict_cover_base",
+      "model_sha256": "795e55d14017fd732dbd9e59b43857fb0d0d3424a5df2319190720f9556fcc79",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 1.0,
+          "bound": 1.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.000143708,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 1.0,
+          "bound": 1.0,
+          "callback_count": 1,
+          "elapsed_secs": 8.8333e-05,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 1.0,
+          "bound": 1.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.000237083004321903,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "strict_cover": {
+      "group": "strict_cover",
+      "model_sha256": "3e5c70d9e302def95eb69a6062977d1f73a8f4c3c293b107e1161a2d47d75225",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 3.0,
+          "bound": 3.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.00039825,
+          "nodes": 1,
+          "lp_iterations": 106,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 3.0,
+          "bound": 3.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.000217125,
+          "nodes": 1,
+          "lp_iterations": 9,
+          "reductions": 31
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 3.0,
+          "bound": 3.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.00020687500364147127,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 1,
+        "node_limit": 1,
+        "status": "optimal",
+        "objective": 3.0,
+        "bound": 3.0,
+        "nodes": 1,
+        "reductions": 31,
+        "callback_count": 1
+      }
+    },
+    "pack_905743": {
+      "group": "pack_905743",
+      "model_sha256": "894da75ab043ef80b1ec5bc64621145fb465a58487e720f2b58d4a7562cec0ab",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 2,
+          "elapsed_secs": 1.964580583,
+          "nodes": 2921,
+          "lp_iterations": 30,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.003189375,
+          "nodes": 538,
+          "lp_iterations": 30,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.057415249990299344,
+          "nodes": 461,
+          "lp_iterations": 2789,
+          "reductions": null
+        }
+      }
+    },
+    "pack_905743_scaled": {
+      "group": "pack_905743",
+      "model_sha256": "366f1163eaeb437e927fd1e644516ef697f12cd3c231bc87c20921bd8eb6f2d4",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.106324791,
+          "nodes": 1247,
+          "lp_iterations": 16303,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.003198583,
+          "nodes": 538,
+          "lp_iterations": 30,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 720.0,
+          "bound": 720.0,
+          "callback_count": 4,
+          "elapsed_secs": 0.054333291976945475,
+          "nodes": 461,
+          "lp_iterations": 2789,
+          "reductions": null
+        }
+      }
+    },
+    "pack_905747": {
+      "group": "pack_905747",
+      "model_sha256": "ae6ba269bc53fe6a2d37925d4f91beb756cd7d873dfb8e1f1f6bc1f1fba025a8",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 3,
+          "elapsed_secs": 2.666113541,
+          "nodes": 10990,
+          "lp_iterations": 28,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.008003458,
+          "nodes": 2658,
+          "lp_iterations": 28,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.08148479100782424,
+          "nodes": 1075,
+          "lp_iterations": 5741,
+          "reductions": null
+        }
+      }
+    },
+    "pack_905747_scaled": {
+      "group": "pack_905747",
+      "model_sha256": "068a321f9c9d097b5bbe5d5685fe127e9381c2f6fd57e611cdef71200b577e60",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.298160208,
+          "nodes": 3881,
+          "lp_iterations": 46082,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.008184875,
+          "nodes": 2658,
+          "lp_iterations": 28,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 677.0,
+          "bound": 677.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.07992054201895371,
+          "nodes": 1075,
+          "lp_iterations": 5741,
+          "reductions": null
+        }
+      }
+    },
+    "pack_medium_905749": {
+      "group": "pack_medium_905749",
+      "model_sha256": "6c96853ed728c3fccc80ee76dfd446264291c16af8ed3710588ca383443cc29b",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 3,
+          "elapsed_secs": 1.636968125,
+          "nodes": 81967,
+          "lp_iterations": 80,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.042425667,
+          "nodes": 42446,
+          "lp_iterations": 80,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 9,
+          "elapsed_secs": 0.5645738749881275,
+          "nodes": 6904,
+          "lp_iterations": 34875,
+          "reductions": null
+        }
+      }
+    },
+    "pack_medium_905749_scaled": {
+      "group": "pack_medium_905749",
+      "model_sha256": "61c7737331abba8397dd09c85fb589c5285663f2f0be17fd7e14d19fa8e6af0d",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 8,
+          "elapsed_secs": 3.453111625,
+          "nodes": 41097,
+          "lp_iterations": 617202,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.042970208,
+          "nodes": 42446,
+          "lp_iterations": 80,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 3103.0,
+          "bound": 3103.0,
+          "callback_count": 9,
+          "elapsed_secs": 0.573816791002173,
+          "nodes": 6904,
+          "lp_iterations": 34875,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 1,
+        "node_limit": 1,
+        "status": "limit_reached",
+        "objective": 3059.0,
+        "bound": 3130.0,
+        "nodes": 1,
+        "reductions": 0,
+        "callback_count": 1
+      }
+    },
+    "lp": {
+      "group": "lp",
+      "model_sha256": "377f69b83a6d82cdd25e89de3dac842c848b63d00719e01f83eb11e8479bbbcd",
+      "rational_oracle": [
+        "optimal",
+        23.8
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 3.7e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 2.9917e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.8,
+          "bound": 23.8,
+          "callback_count": 0,
+          "elapsed_secs": 0.0002813749888446182,
+          "nodes": 0,
+          "lp_iterations": 1,
+          "reductions": null
+        }
+      }
+    },
+    "lp_redundant": {
+      "group": "lp",
+      "model_sha256": "cef78f4a70b5f8823a660f131dfe0126e3ee7c1d0f3f81ffb4fe5ef19d94c686",
+      "rational_oracle": [
+        "optimal",
+        23.8
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 3.5708e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 2.95e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 4
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.8,
+          "bound": 23.8,
+          "callback_count": 0,
+          "elapsed_secs": 0.0003437910054344684,
+          "nodes": 0,
+          "lp_iterations": 2,
+          "reductions": null
+        }
+      }
+    },
+    "mip": {
+      "group": "mip",
+      "model_sha256": "cca1d290cda68fab57c9abdd2842a416a13a7ebd02692191bd312f8d79ce41ab",
+      "rational_oracle": [
+        "optimal",
+        23.5
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 5.7542e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 5.8375e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 0.0006017090054228902,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "mip_redundant": {
+      "group": "mip",
+      "model_sha256": "f3e0d5d546b50cf1394668af6e773291bb379e4864acd62507e0587204b85baa",
+      "rational_oracle": [
+        "optimal",
+        23.5
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 7.1583e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 5.1125e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 4
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.5,
+          "bound": 23.5,
+          "callback_count": 2,
+          "elapsed_secs": 0.0006606249953620136,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 2,
+        "node_limit": 2000000,
+        "status": "optimal",
+        "objective": 23.5,
+        "bound": 23.5,
+        "nodes": 1,
+        "reductions": 4,
+        "callback_count": 0
+      }
+    },
+    "ip": {
+      "group": "ip",
+      "model_sha256": "1b5bda547e048340efb4d66a443a2901d642cb40cc56f44b705bdd50026238fd",
+      "rational_oracle": [
+        "optimal",
+        23.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 2,
+          "elapsed_secs": 6.2708e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 2,
+          "elapsed_secs": 4.7667e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.000631624978268519,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "ip_redundant": {
+      "group": "ip",
+      "model_sha256": "25747f7f71537f35c36aa4b78ab03ea023d0e5d64a57a2c9170fa7af75c35adc",
+      "rational_oracle": [
+        "optimal",
+        23.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 2,
+          "elapsed_secs": 7.65e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 2,
+          "elapsed_secs": 4.85e-05,
+          "nodes": 1,
+          "lp_iterations": 7,
+          "reductions": 4
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.0,
+          "bound": 23.0,
+          "callback_count": 3,
+          "elapsed_secs": 0.000778916000854224,
+          "nodes": 1,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "equalities": {
+      "group": "equalities",
+      "model_sha256": "bcbca028be0753285887c85174bbc5fe1bd9b8da8b7fd9d838b55bb8af54152b",
+      "rational_oracle": [
+        "optimal",
+        23.8
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 3.45e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 2.3834e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.8,
+          "bound": 23.8,
+          "callback_count": 0,
+          "elapsed_secs": 0.0002760420029517263,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "equalities_redundant": {
+      "group": "equalities",
+      "model_sha256": "27f08460542c14fd9a2702c8efcdf91d35d6e6a47df110b507e15a980b21e54e",
+      "rational_oracle": [
+        "optimal",
+        23.8
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 3.5042e-05,
+          "nodes": 1,
+          "lp_iterations": 4,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 23.799999999999997,
+          "bound": 23.799999999999997,
+          "callback_count": 1,
+          "elapsed_secs": 2.4083e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 3
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 23.8,
+          "bound": 23.8,
+          "callback_count": 0,
+          "elapsed_secs": 0.00028491701232269406,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "incompatible": {
+      "group": "incompatible",
+      "model_sha256": "f12d042d35e28609ac1717ef27f6f5c880be11ebdc58e863f977ef9b4ddff183",
+      "rational_oracle": [
+        "infeasible",
+        null
+      ],
+      "runs": {
+        "old": {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "callback_count": 0,
+          "elapsed_secs": 2.8833e-05,
+          "nodes": 1,
+          "lp_iterations": 1,
+          "reductions": 0
+        },
+        "new": {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "callback_count": 0,
+          "elapsed_secs": 2.6167e-05,
+          "nodes": 1,
+          "lp_iterations": 1,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "infeasible",
+          "objective": null,
+          "bound": null,
+          "callback_count": 0,
+          "elapsed_secs": 0.0001732500095386058,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "near_parallel": {
+      "group": "near_parallel",
+      "model_sha256": "80e0e36532872112fdfc67355d3e93c3b0ff219244eef9be1ea77a3daa99362c",
+      "rational_oracle": [
+        "optimal",
+        16384.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 16384.0,
+          "bound": 16384.0,
+          "callback_count": 1,
+          "elapsed_secs": 3.0417e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 16384.0,
+          "bound": 16384.0,
+          "callback_count": 1,
+          "elapsed_secs": 2.4542e-05,
+          "nodes": 1,
+          "lp_iterations": 2,
+          "reductions": 0
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 16384.0,
+          "bound": 16384.0,
+          "callback_count": 0,
+          "elapsed_secs": 0.00032687498605810106,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 2,
+        "node_limit": 2000000,
+        "status": "optimal",
+        "objective": 16384.0,
+        "bound": 16384.0,
+        "nodes": 1,
+        "reductions": 0,
+        "callback_count": 0
+      }
+    },
+    "rational_0": {
+      "group": "rational_0",
+      "model_sha256": "d5bfe9466c5b7835fb26fde117667d30386f01aea1fb7d9e6029f801172dd4d1",
+      "rational_oracle": [
+        "optimal",
+        84.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 84.0,
+          "bound": 84.0,
+          "callback_count": 1,
+          "elapsed_secs": 5.5709e-05,
+          "nodes": 1,
+          "lp_iterations": 17,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 84.0,
+          "bound": 84.0,
+          "callback_count": 1,
+          "elapsed_secs": 2.9958e-05,
+          "nodes": 1,
+          "lp_iterations": 5,
+          "reductions": 12
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 84.0,
+          "bound": 84.0,
+          "callback_count": 0,
+          "elapsed_secs": 0.0002477919915691018,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_1": {
+      "group": "rational_1",
+      "model_sha256": "24c585ecc70b49ae000bcbfbb2b7b9ddfa5c8e58e9b20c239cdcb98a2146bea2",
+      "rational_oracle": [
+        "optimal",
+        60.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 60.0,
+          "bound": 60.0,
+          "callback_count": 1,
+          "elapsed_secs": 8.0458e-05,
+          "nodes": 1,
+          "lp_iterations": 26,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 60.0,
+          "bound": 60.0,
+          "callback_count": 1,
+          "elapsed_secs": 4.6791e-05,
+          "nodes": 1,
+          "lp_iterations": 12,
+          "reductions": 11
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 60.0,
+          "bound": 60.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.0004452499852050096,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_2": {
+      "group": "rational_2",
+      "model_sha256": "367f80ff15f7670c2d60a02eeb91e28f0c61eeae2e8d5872555c6bdb2b9f8d9b",
+      "rational_oracle": [
+        "optimal",
+        24.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 24.0,
+          "bound": 24.0,
+          "callback_count": 1,
+          "elapsed_secs": 7.225e-05,
+          "nodes": 1,
+          "lp_iterations": 8,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 24.0,
+          "bound": 24.0,
+          "callback_count": 1,
+          "elapsed_secs": 4.4292e-05,
+          "nodes": 1,
+          "lp_iterations": 4,
+          "reductions": 10
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 24.0,
+          "bound": 24.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.0002377079799771309,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_3": {
+      "group": "rational_3",
+      "model_sha256": "f49b69571fe6a004d40dee33bd46dab6f357b39d1b2b0a5a28e5098a7edbffdd",
+      "rational_oracle": [
+        "optimal",
+        65.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 65.0,
+          "bound": 65.0,
+          "callback_count": 1,
+          "elapsed_secs": 4.9667e-05,
+          "nodes": 1,
+          "lp_iterations": 9,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 65.0,
+          "bound": 65.0,
+          "callback_count": 1,
+          "elapsed_secs": 3.2333e-05,
+          "nodes": 1,
+          "lp_iterations": 4,
+          "reductions": 11
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 65.0,
+          "bound": 65.0,
+          "callback_count": 0,
+          "elapsed_secs": 0.00024329099687747657,
+          "nodes": 0,
+          "lp_iterations": 1,
+          "reductions": null
+        }
+      }
+    },
+    "rational_4": {
+      "group": "rational_4",
+      "model_sha256": "82cae81693d1544a06f65680e6feb6cf72f20a20c6fff1be14d5d5b2216e45a1",
+      "rational_oracle": [
+        "optimal",
+        66.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 66.0,
+          "bound": 66.00000000000001,
+          "callback_count": 1,
+          "elapsed_secs": 7.9709e-05,
+          "nodes": 1,
+          "lp_iterations": 18,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 66.0,
+          "bound": 66.00000000000001,
+          "callback_count": 1,
+          "elapsed_secs": 5.3833e-05,
+          "nodes": 1,
+          "lp_iterations": 10,
+          "reductions": 10
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 66.0,
+          "bound": 66.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.00021016702521592379,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_5": {
+      "group": "rational_5",
+      "model_sha256": "f30c2dfb3c3b06164991375d508b89a7a0566418528b349dfd60a6c7564c25c7",
+      "rational_oracle": [
+        "optimal",
+        96.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 96.0,
+          "bound": 96.0,
+          "callback_count": 1,
+          "elapsed_secs": 7.9334e-05,
+          "nodes": 1,
+          "lp_iterations": 18,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 96.0,
+          "bound": 96.0,
+          "callback_count": 1,
+          "elapsed_secs": 4.0333e-05,
+          "nodes": 1,
+          "lp_iterations": 10,
+          "reductions": 11
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 96.0,
+          "bound": 96.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.0001797500008251518,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_6": {
+      "group": "rational_6",
+      "model_sha256": "4c9ea29b2d1497c094af7f90e05cc0c34c3a97f94bb8a214e13fb9b41e496ca3",
+      "rational_oracle": [
+        "optimal",
+        52.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 52.0,
+          "bound": 51.99999999999999,
+          "callback_count": 1,
+          "elapsed_secs": 5.475e-05,
+          "nodes": 1,
+          "lp_iterations": 14,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 52.0,
+          "bound": 51.99999999999999,
+          "callback_count": 1,
+          "elapsed_secs": 3.0292e-05,
+          "nodes": 1,
+          "lp_iterations": 6,
+          "reductions": 11
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 52.0,
+          "bound": 52.0,
+          "callback_count": 0,
+          "elapsed_secs": 0.0001859170151874423,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_7": {
+      "group": "rational_7",
+      "model_sha256": "4c41e4a0708d7930fe650d238d654eef56ddd6a433299ad33a6dcfe5a582f45d",
+      "rational_oracle": [
+        "optimal",
+        44.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 44.0,
+          "bound": 44.0,
+          "callback_count": 1,
+          "elapsed_secs": 7.35e-05,
+          "nodes": 1,
+          "lp_iterations": 8,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 44.0,
+          "bound": 44.0,
+          "callback_count": 1,
+          "elapsed_secs": 4.3958e-05,
+          "nodes": 1,
+          "lp_iterations": 4,
+          "reductions": 11
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 44.0,
+          "bound": 44.0,
+          "callback_count": 2,
+          "elapsed_secs": 0.00037125000380910933,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "rational_8": {
+      "group": "rational_8",
+      "model_sha256": "263ef5a76c1808ea86605fe332b09be5b27c9c97c3038a94568c18bdc57a47b9",
+      "rational_oracle": [
+        "optimal",
+        17.0
+      ],
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 17.0,
+          "bound": 17.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.000101542,
+          "nodes": 1,
+          "lp_iterations": 22,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 17.0,
+          "bound": 17.0,
+          "callback_count": 1,
+          "elapsed_secs": 5.9625e-05,
+          "nodes": 1,
+          "lp_iterations": 14,
+          "reductions": 10
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 17.0,
+          "bound": 17.0,
+          "callback_count": 1,
+          "elapsed_secs": 0.0002130419888999313,
+          "nodes": 0,
+          "lp_iterations": 0,
+          "reductions": null
+        }
+      }
+    },
+    "redundant_lp": {
+      "group": "redundant_lp",
+      "model_sha256": "5c52103282a24a26b77a6208b00d82b67baf7b0b7ae814ca7a875bb5036e2d08",
+      "rational_oracle": null,
+      "runs": {
+        "old": {
+          "status": "optimal",
+          "objective": 497.44894615321175,
+          "bound": 497.4489461532117,
+          "callback_count": 1,
+          "elapsed_secs": 0.028089584,
+          "nodes": 1,
+          "lp_iterations": 213,
+          "reductions": 0
+        },
+        "new": {
+          "status": "optimal",
+          "objective": 497.44894615321164,
+          "bound": 497.4489461532116,
+          "callback_count": 1,
+          "elapsed_secs": 0.0020675,
+          "nodes": 1,
+          "lp_iterations": 213,
+          "reductions": 500
+        },
+        "gurobi": {
+          "status": "optimal",
+          "objective": 497.44894615321175,
+          "bound": 497.4489461532118,
+          "callback_count": 0,
+          "elapsed_secs": 0.0016018330061342567,
+          "nodes": 0,
+          "lp_iterations": 115,
+          "reductions": null
+        }
+      },
+      "additional": {
+        "threads": 2,
+        "node_limit": 2000000,
+        "status": "optimal",
+        "objective": 497.44894615321164,
+        "bound": 497.4489461532116,
+        "nodes": 1,
+        "reductions": 500,
+        "callback_count": 0
+      }
+    }
+  }
+}

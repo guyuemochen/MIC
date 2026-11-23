@@ -28,6 +28,8 @@
 //!   （最优解可同时取多个同权物品，knapsack 族目标全面错误）——详见
 //!   docs/parallel-profiling.md §14。
 //!
+//! 五轮规则结束后，识别左端精确成比例的存活行，每个方向保留最紧的原始上下界。
+//! 该检查不使用变量界或活动区间，不重启传播。
 //! binary_coefficient_strengthening 在完整 R1..R5 结束后，
 //! 仅加强 Le/Ge 行归一化后的自由二元负系数；不改右端，不重启界传播，
 //! 不处理等式或聚合 Integer 变量。活动度区间不能认证时保持原行。
@@ -42,6 +44,7 @@ use crate::binary_propagation::PreservedBinaryRows;
 
 #[cfg(feature = "binary_mutex_row_fixing")]
 mod binary_mutex;
+mod parallel_rows;
 use crate::model::{Constraint, LinearExpr, Problem, RelOp, Tolerances, VarType, Variable};
 
 /// 预处理轮数上限（轮内无 reductions 即提前停止）。
@@ -566,6 +569,8 @@ pub(crate) fn presolve_for_solve(
             break;
         }
     }
+
+    parallel_rows::reduce(&mut rows, tol.zero, &mut dropped_rows);
 
     // —— 构建缩减问题（存活变量重编号；行保持原始相对顺序）——
     // W5：聚合变量（j ≥ n，Integer 型）占缩减下标位，但 var_map 槽位放

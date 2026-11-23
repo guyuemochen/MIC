@@ -421,6 +421,44 @@ pub fn objective_is_integral(problem: &Problem) -> bool {
     })
 }
 
+/// 返回奇数尾数与二进制指数，不通过近似取整猜测格点。
+pub(crate) fn dyadic(value: f64) -> Option<(i128, i32)> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value == 0.0 {
+        return Some((0, 0));
+    }
+    let bits = value.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let mut mantissa = bits & ((1_u64 << 52) - 1);
+    let mut power = if exponent == 0 {
+        -1074
+    } else {
+        exponent - 1023 - 52
+    };
+    if exponent != 0 {
+        mantissa |= 1_u64 << 52;
+    }
+    let zeros = mantissa.trailing_zeros();
+    mantissa >>= zeros;
+    power += zeros as i32;
+    let signed = if bits >> 63 == 0 {
+        mantissa as i128
+    } else {
+        -(mantissa as i128)
+    };
+    Some((signed, power))
+}
+
+/// 两个非负整数的最大公约数。
+pub(crate) fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
 /// 校验一条稀疏表达式：下标有效、系数有限且非零、下标严格升序（蕴含无重复）。
 fn validate_terms(expr: &LinearExpr, num_vars: usize, what: &str) -> Result<()> {
     for window in expr.terms.windows(2) {

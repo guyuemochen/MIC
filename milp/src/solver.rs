@@ -162,52 +162,111 @@ fn solve_controlled_impl(
     let eligible = opts.use_presolve
         && ctrl.threads == 1
         && !(opts.bb.node_rule == NodeRule::HybridBestBound && opts.bb.local_cuts);
-    let form = if eligible {
-        if opts.bb.heuristics && !ctrl.mipgap_percent.is_some_and(|gap| gap > 0.0) {
-            if let Some(report) = solve_integer_structure(
+    if !eligible {
+        return solve_prepared(problem, opts, ctrl, hooks, incumbent_observer, start, None);
+    }
+    let normalized = crate::binary_form::for_recognition(problem, opts.tol, deadline);
+    let Some(structure) = normalized else {
+        return solve_with_structures(
+            problem, None, opts, ctrl, hooks, incumbent_observer, start, deadline,
+        );
+    };
+    // 规范行只供识别。对外发布的每个候选和终解都在调用者传来的原行上复核。
+    let check = |values: &mut [f64], objective: f64| -> Result<()> {
+        if values.len() != problem.vars.len() {
+            return Err(MilpError::Numerical("结构候选的变量数不符".into()));
+        }
+        final_check(problem, values)?;
+        if values.iter().zip(&problem.vars).any(|(&v, col)| !(col.lb <= v && v <= col.ub))
+            || problem.obj.eval(values) + problem.obj_offset != objective
+        {
+            return Err(MilpError::Numerical("结构候选的原变量界或原目标不符".into()));
+        }
+        Ok(())
+    };
+    let error = std::cell::Cell::new(None);
+    let checked = |when, objective, point: &[f64]| {
+        let mut x = point.to_vec();
+        match check(&mut x, objective) {
+            Ok(()) => {
+                if let Some(observe) = incumbent_observer {
+                    observe(when, objective, &x);
+                }
+            }
+            Err(e) => error.set(Some(e)),
+        }
+    };
+    let observer = incumbent_observer.map(|_| &checked as &dyn Fn(Instant, f64, &[f64]));
+    let mut result = solve_with_structures(
+        problem, Some(structure), opts, ctrl, hooks, observer, start, deadline,
+    )?;
+    if let Some(e) = error.take() {
+        return Err(e);
+    }
+    if let (Some(x), Some(value)) = (&mut result.report.values, result.report.objective) {
+        check(x, value)?;
+    }
+    if deadline.is_some_and(|end| Instant::now() >= end) {
+        result.report.status = SolveStatus::LimitReached;
+    }
+    result.report.stats.time_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    Ok(result)
+}
+
+fn solve_with_structures(
+    problem: &Problem,
+    normalized: Option<Problem>,
+    opts: &SolveOptions,
+    ctrl: &SearchControl,
+    hooks: Option<&SearchHooks>,
+    incumbent_observer: IncumbentObserver<'_>,
+    start: Instant,
+    deadline: Option<Instant>,
+) -> Result<ControlledSolveReport> {
+    let structure = normalized.as_ref().unwrap_or(problem);
+    if opts.bb.heuristics && !ctrl.mipgap_percent.is_some_and(|gap| gap > 0.0) {
+        if let Some(report) = solve_integer_structure(
+            structure,
+            opts,
+            ctrl,
+            start,
+            deadline,
+            hooks,
+            incumbent_observer,
+        )? {
+            return Ok(report);
+        }
+        if let Some(form) =
+            crate::classification_conflicts::reformulate(problem, opts.tol, deadline)
+        {
+            return solve_classification(
                 problem,
+                form,
                 opts,
                 ctrl,
-                start,
-                deadline,
                 hooks,
                 incumbent_observer,
-            )? {
-                return Ok(report);
-            }
-            if let Some(form) =
-                crate::classification_conflicts::reformulate(problem, opts.tol, deadline)
-            {
-                return solve_classification(
-                    problem,
-                    form,
-                    opts,
-                    ctrl,
-                    hooks,
-                    incumbent_observer,
-                    start,
-                    deadline,
-                );
-            }
-        }
-        let form = conditional_rows::reformulate(problem, opts.tol, deadline);
-        if deadline.is_some_and(|end| Instant::now() >= end) {
-            let stopped = PresolveOutcome {
                 start,
                 deadline,
-                stats: BbStats::default(),
-                best: None,
-                bound: None,
-                status: Some(SolveStatus::LimitReached),
-            };
-            return Ok(stopped.report(problem, hooks, 0));
+            );
         }
-        form
-    } else {
-        None
-    };
+    }
+    let form = conditional_rows::reformulate(structure, opts.tol, deadline);
+    if deadline.is_some_and(|end| Instant::now() >= end) {
+        let stopped = PresolveOutcome {
+            start,
+            deadline,
+            stats: BbStats::default(),
+            best: None,
+            bound: None,
+            status: Some(SolveStatus::LimitReached),
+        };
+        return Ok(stopped.report(problem, hooks, 0));
+    }
     let Some(form) = form else {
-        return solve_prepared(problem, opts, ctrl, hooks, incumbent_observer, start, None);
+        let prior = structured_prelude(structure, opts, ctrl, start, incumbent_observer);
+        drop(normalized);
+        return solve_prepared(problem, opts, ctrl, hooks, incumbent_observer, start, prior);
     };
     form.problem.validate()?;
     // 每个选项只代表一个整数组合。原空间和选项空间的目标（含常数）须相同。
@@ -219,10 +278,7 @@ fn solve_controlled_impl(
             || x.iter()
                 .zip(&problem.vars)
                 .any(|(&v, var)| !(v == 0.0 || v == 1.0) || v < var.lb || v > var.ub)
-            || problem
-                .constraints
-                .iter()
-                .any(|row| !(row.expr.eval(&x) <= row.rhs))
+            || structure.constraints.iter().any(|row| !(row.expr.eval(&x) <= row.rhs))
             || problem.obj.eval(&x) + problem.obj_offset != objective
         {
             return Err(MilpError::Numerical("二元选项解未通过原模型复核".into()));
@@ -239,7 +295,8 @@ fn solve_controlled_impl(
         }
     };
     let observer = incumbent_observer.map(|_| &lift_event as &dyn Fn(Instant, f64, &[f64]));
-    let mut result = solve_prepared(&form.problem, opts, ctrl, hooks, observer, start, None)?;
+    let prior = structured_prelude(&form.problem, opts, ctrl, start, observer);
+    let mut result = solve_prepared(&form.problem, opts, ctrl, hooks, observer, start, prior)?;
     if let Some(error) = callback_error.take() {
         return Err(error);
     }
@@ -379,11 +436,9 @@ fn solve_prepared(
     hooks: Option<&SearchHooks>,
     incumbent_observer: IncumbentObserver<'_>,
     start: Instant,
-    prior: Option<PresolveOutcome>,
+    mut route: Option<PresolveOutcome>,
 ) -> Result<ControlledSolveReport> {
     let num_orig_vars = problem.vars.len();
-    let mut route =
-        prior.or_else(|| structured_prelude(problem, opts, ctrl, start, incumbent_observer));
     if let Some(r) = route.take_if(|r| r.status.is_some()) {
         return Ok(r.report(problem, hooks, 0));
     }

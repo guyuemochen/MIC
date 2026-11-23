@@ -11,7 +11,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::time::Instant;
 
-use crate::model::{Constraint, Problem, RelOp, Tolerances, VarType, Variable};
+use crate::model::{dyadic, Constraint, Problem, RelOp, Tolerances, VarType, Variable};
 use crate::simplex::Bounds;
 
 // 测试在同一生产传播入口精确触发限时；线程隔离、离开作用域恢复旧状态。
@@ -251,36 +251,6 @@ pub(crate) struct BinaryPropagation {
     queue: BinaryHeap<Reverse<usize>>,
     queued: Vec<bool>,
     pub(crate) stats: PropagationStats,
-}
-
-/// 返回奇数尾数与二进制指数，不通过近似取整猜测格点。
-fn dyadic(value: f64) -> Option<(i128, i32)> {
-    if !value.is_finite() {
-        return None;
-    }
-    if value == 0.0 {
-        return Some((0, 0));
-    }
-    let bits = value.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i32;
-    let mut mantissa = bits & ((1_u64 << 52) - 1);
-    let mut power = if exponent == 0 {
-        -1074
-    } else {
-        exponent - 1023 - 52
-    };
-    if exponent != 0 {
-        mantissa |= 1_u64 << 52;
-    }
-    let zeros = mantissa.trailing_zeros();
-    mantissa >>= zeros;
-    power += zeros as i32;
-    let signed = if bits >> 63 == 0 {
-        mantissa as i128
-    } else {
-        -(mantissa as i128)
-    };
-    Some((signed, power))
 }
 
 fn on_grid(value: f64, exponent: i32) -> Option<i128> {
