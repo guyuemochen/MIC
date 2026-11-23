@@ -30,7 +30,7 @@ impl Model {
         let m = p.constraints.len();
         let n = p.vars.len();
         if !(9..=WIDTH).contains(&m)
-            || !(384..=768).contains(&n)
+            || !(192..=768).contains(&n)
             || p.sense != Sense::Maximize
             || p.obj_offset.fract() != 0.0
             || p.obj_offset.abs() > (1u64 << 40) as f64

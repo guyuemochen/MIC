@@ -22,7 +22,7 @@ fn expired(deadline: Option<Instant>) -> bool {
 impl Cover {
     fn detect(p: &Problem, tol: Tolerances) -> Option<Self> {
         let n = p.vars.len();
-        if !(256..=1024).contains(&n)
+        if !(64..=1024).contains(&n)
             || !(32..=1024).contains(&p.constraints.len())
             || p.sense != Sense::Minimize
             || p.obj.terms.len() != n

@@ -4362,3 +4362,20 @@ python3 bench/large_scale_rounds/results/bnatt-external/certificate/verify.py
 用第 52 节的本地版本重跑 100 例，MIC 证优 88 例、证不可行 2 例、证无界 1 例，9 例触限。和同机、同输入、同预算的 Gurobi 10.0.3 归档对照，双方均证优的 86 例中，有 8 例 MIC 多花至少一秒，绝对差距最大的是 `boundary_m17` 和 `neos17`。`icir97_tension` 是唯一 Gurobi 证优而 MIC 仍触限的算例。`s1234` 在根节点寻找初始可行基时遇到数值奇异，约 0.15 秒即返回，无可行解和下界。[100 例逐项结论与剩余差距](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/comparison.md)
 
 临时放宽算法的列数下限后，4 个加权覆盖算例和 2 个稠密装载算例均证得原最优值。`covering_120x200_s12109` 从 1.369 秒降至 10.16 毫秒，`boundary_m17` 从 30.132 秒降至 2.580 秒。覆盖临时版在 `setcover-100x150` 上触发了现有验收中要求通用搜索提交割的断言。两项门槛改动均只在临时副本中测量。[覆盖试验及验收结果](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/cover-experiment.json) · [装载试验](../bench/large_scale_rounds/results/remaining-after-weighted-setcover/pack-experiment.json)
+
+## 54. 将覆盖与稠密装载优化扩展到六个较小算例
+
+加权覆盖的最少列数从 256 降到 64，稠密装载从 384 降到 192。两处调整均进入默认求解路径。上一轮识别出的六个算例都证得与 Gurobi 相同的最优值。
+
+| 算例 | 最优值 | 原 MIC | 当前 MIC | Gurobi 10.0.3 |
+|---|---:|---:|---:|---:|
+| `boundary_m17` | 6753 | 31.336 秒 | 2.634 秒 | 6.628 秒 |
+| `mknap-10x200` | 1791 | 6.023 秒 | 1.165 秒 | 1.647 秒 |
+| `covering_120x200_s12109` | 58 | 1.361 秒 | 9.72 毫秒 | 131.90 毫秒 |
+| `setcover-100x150` | 276 | 161.17 毫秒 | 2.55 毫秒 | 10.32 毫秒 |
+| `setcover-60x100` | 243 | 3.62 毫秒 | 0.95 毫秒 | 0.98 毫秒 |
+| `covering_60x100_s12101` | 32 | 5.08 毫秒 | 0.73 毫秒 | 1.11 毫秒 |
+
+同一台 Apple M4、单线程、60 秒、200 万节点、零目标间隙，三个求解器轮换顺序各跑三遍。计时从加载完成后开始。54 个最终可行向量与 225 个回调可行向量均通过原始行、变量界和费用核验。两个 MIC 版本各自的三次解向量和搜索工作量一致。[逐遍计时与程序指纹](../bench/large_scale_rounds/results/cover-packing-six/timing.json) · [原始解和回调](../bench/large_scale_rounds/results/cover-packing-six/runs.jsonl.gz)
+
+默认单线程验收检查覆盖搜索在两次运行中均证得 276、返回相同向量且线性松弛迭代为零。割回滚验收显式使用通用稠密单纯形，分别在开、关根割时证优并核对迭代统计，保留已提交割的断言及多线程对账。16 项发布版验收全部通过。

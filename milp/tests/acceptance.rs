@@ -24,11 +24,8 @@
 //! 在 acceptance_cli_mipgap 做 CLI 级验收。）
 //!
 //! # 重负载验收（L4 门禁拆分）
-//! setcover-100x150 依赖的两项验收（`acceptance_setcover_100x150_unlocked_optimal`
-//! / `acceptance_default_path_deterministic_two_runs`）debug 构建下合计
-//! ~130s（release 亚秒~秒级），已标 `#[ignore]` 移出默认快路径：默认
-//! `cargo test` 只跑轻验收；门禁以 `cargo test --test acceptance --
-//! --ignored` 显式补跑（脚本门禁另有 release 全量验收兜底），覆盖不丢。
+//! 默认单线程覆盖搜索的双跑确定性列入常规测试。显式通用引擎的割回滚及
+//! 多线程对账较慢，发布版验收使用 `--include-ignored` 一并运行。
 
 use std::path::Path;
 use std::process::Command;
@@ -927,29 +924,23 @@ fn bench_instance_path(name: &str) -> String {
     format!("{}/../bench/instances/{name}.milp", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// （P0-1 验收 + 割轮 IterationLimit 分流）setcover-100x150：根割循环
-/// 的迭代失败不能冒充整树终态；失败轮回滚增量，已提交的根割保留。
-/// 本验收检查保留割的语义，不绑定启发式具体生成的割条数：
-/// - t1/t4 均 Optimal 且目标 276（节点数 > 1：搜索越过根节点）；
-/// - threads≥2 + adaptive 与 t1 目标一致（子树不丢、不误终态）；
-/// - 记账完整：默认路径 lp_iterations **严格大于**关割路径；
-/// - 割保留如实：stats.cuts > 0；具体条数的跨次一致性由双跑验收覆盖。
-///
-/// 重负载门禁（L4）：debug 构建下 8 次 setcover-100x150 求解（t1 + 关割
-/// + threads∈{2,4}×3 重复，含并行根预割启发式轮）实测 ~100s、release
-/// ~1s/次——默认 `cargo test` 跳过（#[ignore]），独立门禁显式运行：
-/// `cargo test --test acceptance -- --ignored`；脚本门禁另跑 release 全量
-/// 验收兜底。验收覆盖不丢，只是移出默认快路径。
-#[ignore = "setcover-100x150 重负载：debug ~100s；门禁显式 `cargo test -- --ignored` 运行（release 验收兜底）"]
+/// 显式选用通用稠密引擎，在相同输入和分支设置下检查开关根割的差别。
+/// 失败轮回滚后仍要保留已提交的割，并计入根割的迭代。另对账多线程求解。
+#[ignore = "通用引擎及多线程对账耗时较长，发布版验收显式运行"]
 #[test]
 fn acceptance_setcover_100x150_unlocked_optimal() {
     let path = bench_instance_path("setcover-100x150");
     let problem = load_instance(Path::new(&path))
         .unwrap_or_else(|error| panic!("算例 setcover-100x150 加载失败：{error}"));
 
-    // t1 默认路径：Optimal 276。
-    let seq = solve_default(&problem)
-        .unwrap_or_else(|error| panic!("setcover-100x150 t1 求解失败：{error}"));
+    let generic = SolveOptions {
+        bb: BbOptions {
+            lp_engine: milp::simplex_sparse::LpEngineKind::Tableau,
+            ..BbOptions::default()
+        },
+        ..SolveOptions::default()
+    };
+    let seq = solve(&problem, &generic).unwrap();
     assert_eq!(seq.status, SolveStatus::Optimal, "t1 终态");
     assert!(
         (seq.objective.unwrap() - 276.0).abs() <= 1e-6,
@@ -962,11 +953,8 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
 
     // 记账完整：lp_iterations 包含根 LP 和割循环的工作量。
     let opts_nocuts = SolveOptions {
-        bb: BbOptions {
-            root_cuts: false,
-            ..BbOptions::default()
-        },
-        ..SolveOptions::default()
+        bb: BbOptions { root_cuts: false, ..generic.bb },
+        ..generic
     };
     let nocuts = solve(&problem, &opts_nocuts)
         .unwrap_or_else(|error| panic!("setcover-100x150 关割求解失败：{error}"));
@@ -974,7 +962,7 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
     assert!((nocuts.objective.unwrap() - 276.0).abs() <= 1e-6);
     assert!(
         seq.stats.lp_iterations > nocuts.stats.lp_iterations,
-        "默认路径 lp_iterations={} 须 > 关割={}（包含根割循环迭代）",
+        "通用引擎开割 lp_iterations={} 须 > 关割={}（包含根割循环迭代）",
         seq.stats.lp_iterations,
         nocuts.stats.lp_iterations
     );
@@ -1006,21 +994,18 @@ fn acceptance_setcover_100x150_unlocked_optimal() {
     }
 }
 
-/// （确定性验收）固定 node_limit（默认 2M）、time_limit=0 下默认路径
-/// （Pseudocost + 可靠性探测预算 8）两次运行逐项一致：探测预算按
-/// 节点/迭代计、绝不读墙钟——无时间上限时自适应/降级的时间面也不
-/// 参与决策，搜索全确定。
-///
-/// 重负载门禁（L4，与 setcover 主验收同因）：2 次 setcover-100x150
-/// 默认求解在 debug 下实测 ~33s（release 亚秒）——#[ignore] 移出默认
-/// 快路径，门禁 `cargo test --test acceptance -- --ignored` 显式运行。
-#[ignore = "setcover-100x150 重负载（2 次默认求解 debug ~33s）；门禁显式 `cargo test -- --ignored` 运行"]
+/// 默认单线程的加权覆盖搜索应证优，无须调用单纯形。相同预算下，
+/// 两次求解的解向量、节点数和工作量都应一致。
 #[test]
 fn acceptance_default_path_deterministic_two_runs() {
     let path = bench_instance_path("setcover-100x150");
     let problem = load_instance(Path::new(&path)).unwrap();
     let r1 = solve_default(&problem).unwrap();
     let r2 = solve_default(&problem).unwrap();
+    assert_eq!(r1.status, SolveStatus::Optimal);
+    assert_eq!(r1.objective, Some(276.0));
+    assert_eq!(r1.stats.lp_iterations, 0);
+    assert_eq!(r1.values, r2.values);
     assert_eq!(r1.status, r2.status);
     assert_eq!(r1.objective, r2.objective);
     assert_eq!(r1.stats.nodes, r2.stats.nodes, "节点数跨次一致");
