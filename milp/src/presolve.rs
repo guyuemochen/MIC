@@ -28,6 +28,7 @@
 //!   （最优解可同时取多个同权物品，knapsack 族目标全面错误）——详见
 //!   docs/parallel-profiling.md §14。
 //!
+//! 进入五轮前，免费且只起放宽容量作用的二元开关取启用值并整批代入。
 //! 五轮规则结束后，识别左端精确成比例的存活行，每个方向保留最紧的原始上下界。
 //! 该检查不使用变量界或活动区间，不重启传播。
 //! binary_coefficient_strengthening 在完整 R1..R5 结束后，
@@ -282,6 +283,25 @@ pub(crate) fn presolve_for_solve(
         })
         .collect();
     let mut fixed: Vec<(usize, f64)> = Vec::new();
+    let switches = crate::capacity_gate::free_switches(p);
+    if !switches.is_empty() {
+        let mut enabled_at_one = vec![false; n];
+        for (j, enabled) in switches {
+            var_alive[j] = false;
+            enabled_at_one[j] = enabled;
+            fixed.push((j, if enabled { 1.0 } else { 0.0 }));
+        }
+        for row in &mut rows {
+            // 每行至多一个此类开关。以 1 启用时原右端为零，取相反数逐位精确；
+            // 以 0 启用时右端不动。所有固定列的目标系数均为零。
+            row.terms.retain(|&(j, a)| {
+                if enabled_at_one[j] {
+                    row.rhs = -a;
+                }
+                var_alive[j]
+            });
+        }
+    }
     let mut dropped_rows: Vec<usize> = Vec::new();
     // W5：变量类型镜像（R5 聚合会追加 Integer 变量，p.vars 覆盖不到）。
     let mut types: Vec<VarType> = p.vars.iter().map(|v| v.var_type).collect();
@@ -1259,7 +1279,9 @@ mod binary_strengthening_tests {
 
     #[test]
     fn deterministic_and_postsolve_mapping_unchanged() {
-        let p = toy(RelOp::Le);
+        let mut p = toy(RelOp::Le);
+        // 付费开关必须留给系数加强，以便此处独立检查加强后的还原映射。
+        p.set_objective(vec![(0, 1.0)], 0.0).unwrap();
         let (a, map_a) = presolve(&p, &Tolerances::default()).unwrap();
         let (b, map_b) = presolve(&p, &Tolerances::default()).unwrap();
         assert_eq!(bits(&a), bits(&b));

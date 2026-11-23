@@ -492,7 +492,7 @@ fn solve_prepared(
             lp_iterations: r.stats.lp_iterations,
             incumbent: r.best.as_ref().and_then(|incumbent| {
                 work_seed(
-                    &work, map.as_ref(), smap.as_ref(), incumbent, opts.tol, &restore_values,
+                    problem, &work, map.as_ref(), smap.as_ref(), incumbent, opts.tol, &restore_values,
                 )
             }),
         });
@@ -784,6 +784,30 @@ fn structured_prelude(
         bound: None,
         status: None,
     };
+    // 先取已证的界，短预算在构造可行点时耗尽也能交回证明进展。
+    r.bound = crate::disjunctive_bound::objective_bound(problem, deadline);
+    // 流量点须先还原全部开关和辅助列，通过原模型复核后才可进树或发布。
+    let mut accept_flow = |point: &[f64]| {
+        let Some(inc) = checked_incumbent(problem, point.to_vec()) else { return };
+        if r.best.as_ref().is_none_or(|old| better(problem.sense, inc.objective, old.objective)) {
+            if let Some(observe) = observe {
+                observe(Instant::now(), inc.objective, &inc.values);
+            }
+            r.best = Some(inc);
+        }
+    };
+    let flow = crate::fixed_charge::primal(
+        problem, &mut || deadline.is_some_and(|d| Instant::now() >= d), &mut accept_flow,
+    );
+    if let Some(point) = flow {
+        accept_flow(&point);
+    }
+    if r.best.is_some() || r.bound.is_some() {
+        if r.time_exceeded() {
+            r.status = Some(SolveStatus::LimitReached);
+        }
+        return Some(r);
+    }
     let Some(model) = RouteModel::detect(problem) else {
         let mut report_cover = |values: &[f64]| {
             if let Some(observe) = observe {
@@ -937,9 +961,22 @@ fn structured_prelude(
     Some(r)
 }
 
-/// 缩放和预处理后先往返核验。原空间的候选由调用方单独保留，以防
-/// 工作映射中的舍入或交换重复列改变了已核验的向量。
+fn checked_incumbent(p: &Problem, mut values: Vec<f64>) -> Option<Incumbent> {
+    if values.len() != p.vars.len() || values.iter().any(|x| !x.is_finite()) {
+        return None;
+    }
+    final_check(p, &mut values).ok()?;
+    if values.iter().zip(&p.vars).any(|(&x, v)| x < v.lb || x > v.ub) {
+        return None;
+    }
+    let objective = p.obj.eval(&values) + p.obj_offset;
+    objective.is_finite().then_some(Incumbent { objective, values })
+}
+
+/// 缩放和预处理后先往返核验。还原可能开启免费容量或交换等价列，
+/// 此时还原点须通过原模型复核，并与原候选及树内候选具有相同目标。
 fn work_seed(
+    original: &Problem,
     work: &Problem,
     map: Option<&presolve::PostsolveMap>,
     scale: Option<&crate::scaling::ScaleMap>,
@@ -972,7 +1009,14 @@ fn work_seed(
         scaled
     };
     let candidate = heuristics::round_and_check(work, &Bounds::from_problem(work), &reduced, &tol)?;
-    (restore(candidate.values.clone()) == incumbent.values).then_some(candidate)
+    let restored = restore(candidate.values.clone());
+    if restored != incumbent.values {
+        let cost = checked_incumbent(original, restored)?.objective;
+        if cost != incumbent.objective || cost != candidate.objective {
+            return None;
+        }
+    }
+    Some(candidate)
 }
 
 /// 统一求解入口（签名不变；默认受控路径的薄委托——
