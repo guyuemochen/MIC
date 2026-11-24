@@ -1,0 +1,5 @@
+sha256	bytes	original
+00247b87e65a6af8370c390e6cc1246dde3188e9197838d6a38ec934c5ee288b	3918882	bnatt-phase1-capture/capture.json
+c26de327c1ccc644b5009b70af0d2d039a09558610545e386e3fd0e735fcbb2f	5975831	bnatt-phase1-capture/offline-checked.json
+df66a7a96f02ecbf72b50d21b6dd03254ef22451eb5052412babeb5c179cc21c	5975759	bnatt-phase1-capture/offline-initial.json
+19350aa7eaeae3177390ae103a0966dbe39adc9375149e82eeb6a5544b27d7d5	7073793	dense-optimal-profile/p0201-root.stdout

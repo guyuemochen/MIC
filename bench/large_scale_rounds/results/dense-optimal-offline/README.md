@@ -2,7 +2,7 @@
 
 本目录仅整理已完成计算，没有重跑。主报告见 `mic-dense-optimal-audit-report.md`；完整结果见 `mic-dense-optimal-exact-audit.json`；计算脚本见 `mic_dense_optimal_exact_audit.py`。
 
-输入 artifact：`/tmp/mic-dense-failure-profile/bench/large_scale_rounds/results/dense-optimal-profile/p0201-root.stdout`
+原始输入以 gzip 保存在 [p0201-root.stdout.gz](../dense-optimal-profile/p0201-root.stdout.gz)。
 
 SHA256：`19350aa7eaeae3177390ae103a0966dbe39adc9375149e82eeb6a5544b27d7d5`。诊断源码 d200934，证据提交 f90e33e。只验证 `normalized_current_lp` 保存的 binary64 输入；不假定外部 MIP 坐标映射。
 
@@ -12,4 +12,8 @@ SHA256：`19350aa7eaeae3177390ae103a0966dbe39adc9375149e82eeb6a5544b27d7d5`。�
 - 已做有限的逐分量有理化候选尝试，未得到严格可行点。目标为 7227 的候选仍违反若干行，不能用作反证。
 - 后续精确可行点修复/反证、对偶符号投影、183/184 定点补采均未执行；留待 root 后续 CPU 窗口。没有矩阵求解、优化器调用或生产代码修改。
 
-脚本保留计算时的绝对输入/输出路径；如搬迁归档，运行前需调整路径。R11 计时期间不要重跑。
+复核脚本可直接读取归档，从仓库根运行即可在标准输出取得重算的 JSON 报告。
+
+```sh
+python3 bench/large_scale_rounds/results/dense-optimal-offline/mic_dense_optimal_exact_audit.py
+```

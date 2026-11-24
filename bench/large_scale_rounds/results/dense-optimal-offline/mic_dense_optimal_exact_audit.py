@@ -1,8 +1,17 @@
-import json, struct, math, hashlib
+import argparse
+import gzip
+import hashlib
+import json
+import struct
 from fractions import Fraction as F
 from pathlib import Path
 
-SRC = Path('/tmp/mic-dense-failure-profile/bench/large_scale_rounds/results/dense-optimal-profile/p0201-root.stdout')
+parser = argparse.ArgumentParser(description='从归档快照重算 p0201 稠密单纯形离线核验')
+parser.add_argument('--input', type=Path,
+                    default=Path(__file__).resolve().parents[1] / 'dense-optimal-profile/p0201-root.stdout.gz',
+                    help='原始快照或 gzip 归档')
+parser.add_argument('--output', type=Path, help='新报告路径，省略时将 JSON 打印到标准输出')
+args = parser.parse_args()
 def fl(b): return struct.unpack('>d', struct.pack('>Q', b))[0]
 def fs(bits): return [fl(b) for b in bits]
 def qs(bits): return [F(fl(b)) for b in bits]
@@ -11,7 +20,10 @@ def extreme(items):
     i,v=max(items, key=lambda p:abs(p[1]))
     return {'index': i, **num(v)}
 
-data=json.loads(SRC.read_text())
+payload = args.input.read_bytes()
+if args.input.suffix == '.gz':
+    payload = gzip.decompress(payload)
+data = json.loads(payload)
 results=[]
 for s in data['dense_optimal_profile']['samples']:
     n=s['num_structural']; nc=s['num_static']; basis=s['basis']
@@ -66,9 +78,11 @@ for s in data['dense_optimal_profile']['samples']:
             break
     stats['rationalized_candidates']=attempts
     results.append(stats)
-out={'input':str(SRC), 'input_sha256':hashlib.sha256(SRC.read_bytes()).hexdigest(),
+out={'input':str(args.input), 'input_sha256':hashlib.sha256(payload).hexdigest(),
     'scope':'只核验保存的规范化当前LP binary64输入；无矩阵求解或优化器', 'samples':results}
-Path('/tmp/mic-dense-optimal-exact-audit.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
-for r in results:
-    print(json.dumps({k:v for k,v in r.items() if k!='rationalized_candidates'},ensure_ascii=False))
-    print('candidates',json.dumps([{k:v for k,v in a.items() if k!='witness_x'} for a in r['rationalized_candidates']],ensure_ascii=False))
+report = json.dumps(out, ensure_ascii=False, indent=2)
+if args.output is None:
+    print(report)
+else:
+    with args.output.open('x', encoding='utf-8') as stream:
+        stream.write(report + '\n')

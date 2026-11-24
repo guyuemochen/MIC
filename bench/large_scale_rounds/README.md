@@ -3,6 +3,31 @@
 基线 b7f11a1。每轮先冻结判据，再运行测量；不并发编译或求解，不覆盖旧记录和真值。
 零新增 Rust 依赖、无 unsafe；单线程破键、状态诚实性和 FFI ABI 1 保持。
 
+## 恢复 Gurobi 对照的重复输入
+
+五批 `all-gurobi10-*` 和一批 `main-gurobi10-100-60s` 对照的 `inputs/`、`models/`、
+`mps/` 中，压缩文件字节完全相同的副本共用一份仓库保留文件。
+[归档清单](gurobi-duplicate-inputs.tsv) 逐条记载原路径、保留路径、字节数和压缩文件的
+SHA-256。路径以本目录下的 `results/` 为根。各轮的原始运行记录、核验结果和报告仍在原处。
+
+从仓库根运行以下命令。第一条核对保留文件和仍在原处的副本。需要运行依赖历史路径的核验或重放脚本时，
+在运行前执行第二条。恢复会验证哈希，已有文件与清单冲突时会报错。
+
+```sh
+python3 bench/large_scale_rounds/restore_gurobi_inputs.py
+python3 bench/large_scale_rounds/restore_gurobi_inputs.py --restore
+```
+
+## 恢复 bnatt500 和 p0201 诊断证据
+
+[诊断证据清单](diagnostic-artifacts.tsv) 记录四份原件的路径、字节数和 SHA-256。
+压缩件与对应报告存放在同一目录，从仓库根运行以下命令可核对并按原路径解压。
+
+```sh
+python3 bench/large_scale_rounds/restore_diagnostic_artifacts.py
+python3 bench/large_scale_rounds/restore_diagnostic_artifacts.py --restore
+```
+
 ## 第一轮：稀疏缩放
 
 只改变缩放工作矩阵的表示，合法模型的因子、系数、界和右端须逐位一致。
