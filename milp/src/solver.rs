@@ -1663,8 +1663,7 @@ mod tests {
         assert_eq!(full.status, SolveStatus::Optimal);
     }
 
-    /// S4 类自适应规则解析：m×(n+m) ≥ 10^6 ⇒ revised，否则 tableau；
-    /// 显式指定覆盖优先；SolveOptions/BbOptions 默认 Auto。
+    /// 小规模及预处理可消去的单项行使用稠密引擎，百万格以上使用稀疏引擎。
     #[test]
     fn auto_engine_resolution_rule() {
         use crate::simplex_sparse::{
@@ -1698,7 +1697,7 @@ mod tests {
         assert_eq!(
             effective_engine(&small, LpEngineKind::Auto),
             LpEngineKind::Tableau,
-            "270k 格 < 10^6 ⇒ tableau"
+            "单项行只给变量定界"
         );
         assert_eq!(
             effective_engine(&big, LpEngineKind::Auto),
@@ -1715,6 +1714,33 @@ mod tests {
             LpEngineKind::Revised
         );
         assert_eq!(ENGINE_AUTO_CELL_THRESHOLD, 1_000_000);
+    }
+
+    #[test]
+    fn medium_sparse_engine_density_boundary_and_parallel_entry() {
+        use crate::simplex_sparse::{effective_engine, LpEngineKind};
+        let mut p = Problem::new("稀疏度边界", Sense::Minimize);
+        for j in 0..384 {
+            p.add_var(&format!("x{j}"), VarType::Continuous).unwrap();
+        }
+        for i in 0..128 {
+            let terms = (0..24).map(|k| ((3 * i + k) % 384, 1.0)).collect();
+            p.add_constraint(None, terms, RelOp::Le, 1.0).unwrap();
+        }
+        let auto = LpEngineKind::Auto;
+        assert_eq!(effective_engine(&p, auto), LpEngineKind::Revised);
+        assert_eq!(effective_engine(&p, LpEngineKind::Tableau), LpEngineKind::Tableau);
+        // 相同规模，多一个非零项就超过当前的密度阈值。
+        p.constraints[0].expr.add_term(24, 1.0);
+        assert_eq!(effective_engine(&p, auto), LpEngineKind::Tableau);
+        p.constraints[0].expr.add_term(24, -1.0);
+        // 相同稀疏度，少一行使表格低于规模阈值。
+        let last = p.constraints.pop().unwrap();
+        assert_eq!(effective_engine(&p, auto), LpEngineKind::Tableau);
+        p.constraints.push(last);
+        let ctrl = SearchControl { threads: 2, ..SearchControl::default() };
+        let report = solve_controlled(&p, &opts_no_presolve(), &ctrl, None).unwrap().report;
+        assert_eq!((report.status, report.objective), (SolveStatus::Optimal, Some(0.0)));
     }
 
     /// Auto 默认在小算例上走 tableau（与显式 tableau 同目标；默认组合

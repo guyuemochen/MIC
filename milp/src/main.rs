@@ -119,8 +119,8 @@ struct Config {
     /// ⇒ global，其余 ⇒ local；显式 local/global 覆盖优先。
     work_stack: WorkStackCli,
     /// LP 引擎（`--lp-engine auto|tableau|revised`，S3 接线 / S4 默认翻
-    /// auto）；默认 auto = 类自适应（表格规模 m×(n+m) ≥ 10^6 格 ⇒
-    /// revised，否则 tableau；定档证据见 simplex_sparse::effective_engine）。
+    /// auto）；单线程 auto 按表格规模和非零项比例选择引擎。
+    /// 具体规则见 simplex_sparse::effective_engine。
     /// 显式 tableau/revised 覆盖优先。**revised 仅支持 threads=1**（显式
     /// revised × threads≥2 解析层拒绝；auto 在大算例上解析为 revised ×
     /// threads≥2 由库层求解入口拒绝——解析层不知算例规模）。
@@ -623,7 +623,7 @@ fn parse_args(args: &[String]) -> Result<Config, String> {
         // 默认 wall（W3：现状零变化）；budget 仅 threads=1（解析层交叉校验
         // 已拒绝与 ≥2 的组合）。
         determinism,
-        // 默认 auto（S4 类自适应：表格 ≥10^6 格走 revised，阈下 tableau）；
+        // 单线程默认按表格规模和非零项比例选择引擎；
         // revised 仅 threads=1。
         lp_engine,
         // S13-C：默认 on（对齐 BbOptions.root_rc_fixing 库默认）；off 关闭

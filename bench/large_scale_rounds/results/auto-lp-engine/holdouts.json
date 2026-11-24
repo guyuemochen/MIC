@@ -1,0 +1,767 @@
+{
+  "probe_sha256": "1957cf5d31268d2bb7fa6f74c2d849d399eb2f534de3943bf56ef7460d31594b",
+  "seconds": 12,
+  "threads": 1,
+  "node_limit": 2000000,
+  "models": {
+    "matching_110_5_1_9317": {
+      "sha256": "47eaa3cf97196fe13910226a6cde61708a62e055967caf93923358ebc0d7c3d6",
+      "optimum": 3242,
+      "presolved_rows": 218,
+      "presolved_cols": 548,
+      "presolved_nnz": 1096,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.044547625,
+          "lp_iterations": 1278,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.011281333,
+          "lp_iterations": 1278,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.011221875,
+          "lp_iterations": 1278,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.045102292,
+          "lp_iterations": 1278,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.0458485,
+          "lp_iterations": 1278,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 3242.0,
+          "bound": 3242.0,
+          "elapsed_secs": 0.011346208,
+          "lp_iterations": 1278,
+          "nodes": 1
+        }
+      ]
+    },
+    "grid_16_0_2707": {
+      "sha256": "8160bd6af9a4c6bcc43261fcaa37e8e2beb57bdb5bb3144a8df66f66c521a2ed",
+      "optimum": 11,
+      "presolved_rows": 256,
+      "presolved_cols": 480,
+      "presolved_nnz": 960,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.005854417,
+          "lp_iterations": 352,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.001521334,
+          "lp_iterations": 352,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.001529792,
+          "lp_iterations": 352,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.005796542,
+          "lp_iterations": 352,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.005804583,
+          "lp_iterations": 352,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 11.0,
+          "bound": 11.0,
+          "elapsed_secs": 0.001509917,
+          "lp_iterations": 352,
+          "nodes": 1
+        }
+      ]
+    },
+    "capacity_360_4_1_6323": {
+      "sha256": "357ffdda3b1b85ea3a624a09f7a687e07cdf82702036416ce41545ee26eed40a",
+      "optimum": 147535,
+      "presolved_rows": 360,
+      "presolved_cols": 360,
+      "presolved_nnz": 1440,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147534.99999999997,
+          "elapsed_secs": 0.025258708,
+          "lp_iterations": 363,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147535.0,
+          "elapsed_secs": 0.00549925,
+          "lp_iterations": 363,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147535.0,
+          "elapsed_secs": 0.00520875,
+          "lp_iterations": 363,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147534.99999999997,
+          "elapsed_secs": 0.026090709,
+          "lp_iterations": 363,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147534.99999999997,
+          "elapsed_secs": 0.025977917,
+          "lp_iterations": 363,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 147535.0,
+          "bound": 147535.0,
+          "elapsed_secs": 0.005475417,
+          "lp_iterations": 363,
+          "nodes": 1
+        }
+      ]
+    },
+    "capacity_360_4_0_6323": {
+      "sha256": "32128baf22020045cab21d6b89e69a9f86c2f080449b27172a86c3af0fafa0ff",
+      "optimum": 151496,
+      "presolved_rows": 360,
+      "presolved_cols": 360,
+      "presolved_nnz": 1440,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999997,
+          "elapsed_secs": 0.029298167,
+          "lp_iterations": 366,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999994,
+          "elapsed_secs": 0.006948667,
+          "lp_iterations": 366,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999994,
+          "elapsed_secs": 0.006673917,
+          "lp_iterations": 366,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999997,
+          "elapsed_secs": 0.02924225,
+          "lp_iterations": 366,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999997,
+          "elapsed_secs": 0.029566458,
+          "lp_iterations": 366,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 151496.0,
+          "bound": 151495.99999999994,
+          "elapsed_secs": 0.007091625,
+          "lp_iterations": 366,
+          "nodes": 1
+        }
+      ]
+    },
+    "matching_160_4_0_2273": {
+      "sha256": "fd1435bf657cf124dfd1dd045aa4554fba90f77e438e199db6c4d1bf76eb3d93",
+      "optimum": 4914,
+      "presolved_rows": 315,
+      "presolved_cols": 635,
+      "presolved_nnz": 1270,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.048580417,
+          "lp_iterations": 874,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.007718458,
+          "lp_iterations": 874,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.007668916,
+          "lp_iterations": 874,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.048012667,
+          "lp_iterations": 874,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.048309041,
+          "lp_iterations": 874,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 4914.0,
+          "bound": 4914.0,
+          "elapsed_secs": 0.007803334,
+          "lp_iterations": 874,
+          "nodes": 1
+        }
+      ]
+    },
+    "grid_19_1_4517": {
+      "sha256": "75a583cbd4bb8e662aa6ee1207521d48a8031fc074840355b62741318bec01aa",
+      "optimum": -1,
+      "presolved_rows": 361,
+      "presolved_cols": 684,
+      "presolved_nnz": 1368,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.029538,
+          "lp_iterations": 1074,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.009702917,
+          "lp_iterations": 1074,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.009750916,
+          "lp_iterations": 1074,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.029309292,
+          "lp_iterations": 1074,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.029477375,
+          "lp_iterations": 1074,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": -1.0,
+          "bound": -1.0,
+          "elapsed_secs": 0.009390625,
+          "lp_iterations": 1074,
+          "nodes": 1
+        }
+      ]
+    },
+    "capacity_240_8_1_6089": {
+      "sha256": "3419d648d715396b7d74fb98aad41cc2e12779130f3f5ce2035993181763c530",
+      "optimum": 198648,
+      "presolved_rows": 240,
+      "presolved_cols": 240,
+      "presolved_nnz": 1920,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0,
+          "elapsed_secs": 0.011557584,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0000000002,
+          "elapsed_secs": 0.004734,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0000000002,
+          "elapsed_secs": 0.004748417,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0,
+          "elapsed_secs": 0.011528792,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0,
+          "elapsed_secs": 0.011507667,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 198648.0,
+          "bound": 198648.0000000002,
+          "elapsed_secs": 0.004744791,
+          "lp_iterations": 240,
+          "nodes": 1
+        }
+      ]
+    },
+    "capacity_240_8_0_6089": {
+      "sha256": "102273728af164542df915345054c134fc31dd16bc8e22f37f915ca5df3ff523",
+      "optimum": 216212,
+      "presolved_rows": 240,
+      "presolved_cols": 240,
+      "presolved_nnz": 1920,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0,
+          "elapsed_secs": 0.011804042,
+          "lp_iterations": 241,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0000000006,
+          "elapsed_secs": 0.005655833,
+          "lp_iterations": 241,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0000000006,
+          "elapsed_secs": 0.005807583,
+          "lp_iterations": 241,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0,
+          "elapsed_secs": 0.012487,
+          "lp_iterations": 241,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0,
+          "elapsed_secs": 0.012047292,
+          "lp_iterations": 241,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 216212.0,
+          "bound": 216212.0000000006,
+          "elapsed_secs": 0.00526325,
+          "lp_iterations": 241,
+          "nodes": 1
+        }
+      ]
+    },
+    "capacity_240_60_0_6089": {
+      "sha256": "a3626bacde569b21a361dac8b403ba5d020e4d67adc257700a4468dd4e77a347",
+      "optimum": 1676359,
+      "presolved_rows": 240,
+      "presolved_cols": 240,
+      "presolved_nnz": 14400,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.013812917,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.016300667,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.019104708,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.014217833,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.014305708,
+          "lp_iterations": 240,
+          "nodes": 1
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 1676359.0,
+          "bound": 1676359.0,
+          "elapsed_secs": 0.017195916,
+          "lp_iterations": 240,
+          "nodes": 1
+        }
+      ]
+    },
+    "conflict_64_4_7193": {
+      "sha256": "013112adcaf67fc7367d4ca45eae3d3d539f6930274ac6f18e950c5b677e2e30",
+      "optimum": 483,
+      "presolved_rows": 194,
+      "presolved_cols": 258,
+      "presolved_nnz": 582,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 2.317969667,
+          "lp_iterations": 46780,
+          "nodes": 2709
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 0.17588725,
+          "lp_iterations": 22508,
+          "nodes": 1027
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 0.176278833,
+          "lp_iterations": 22508,
+          "nodes": 1027
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 2.322562833,
+          "lp_iterations": 46780,
+          "nodes": 2709
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 2.324345084,
+          "lp_iterations": 46780,
+          "nodes": 2709
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 483.0,
+          "bound": 483.0,
+          "elapsed_secs": 0.176739709,
+          "lp_iterations": 22508,
+          "nodes": 1027
+        }
+      ]
+    },
+    "conflict_112_4_6011": {
+      "sha256": "304b1d44a54098179d6131346afd80014eeb0b491c712a97a6a9fcc138096fb0",
+      "optimum": 849,
+      "presolved_rows": 331,
+      "presolved_cols": 443,
+      "presolved_nnz": 993,
+      "runs": [
+        {
+          "engine": "tableau",
+          "rep": 0,
+          "status": "limit_reached",
+          "objective": 847.0,
+          "bound": 877.75,
+          "elapsed_secs": 12.000147416,
+          "lp_iterations": 160478,
+          "nodes": 8971
+        },
+        {
+          "engine": "revised",
+          "rep": 0,
+          "status": "optimal",
+          "objective": 849.0,
+          "bound": 849.0,
+          "elapsed_secs": 2.736548833,
+          "lp_iterations": 216859,
+          "nodes": 8953
+        },
+        {
+          "engine": "revised",
+          "rep": 1,
+          "status": "optimal",
+          "objective": 849.0,
+          "bound": 849.0,
+          "elapsed_secs": 4.042958333,
+          "lp_iterations": 216859,
+          "nodes": 8953
+        },
+        {
+          "engine": "tableau",
+          "rep": 1,
+          "status": "limit_reached",
+          "objective": 847.0,
+          "bound": 877.75,
+          "elapsed_secs": 12.000236625,
+          "lp_iterations": 158781,
+          "nodes": 8834
+        },
+        {
+          "engine": "tableau",
+          "rep": 2,
+          "status": "limit_reached",
+          "objective": 847.0,
+          "bound": 877.75,
+          "elapsed_secs": 12.000105834,
+          "lp_iterations": 158966,
+          "nodes": 8851
+        },
+        {
+          "engine": "revised",
+          "rep": 2,
+          "status": "optimal",
+          "objective": 849.0,
+          "bound": 849.0,
+          "elapsed_secs": 2.575129167,
+          "lp_iterations": 216859,
+          "nodes": 8953
+        }
+      ]
+    }
+  }
+}

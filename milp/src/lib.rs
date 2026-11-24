@@ -39,8 +39,7 @@ pub mod parallel_bb;
 pub mod scaling;
 // S2-S4：稀疏修正单纯形（CSC + GP 稀疏 LU + FTRAN/BTRAN + 稀疏 ETA +
 // 有界原单纯形 + 对偶热修复 + add_row）；S4 起类自适应默认 Auto 的
-// revised 侧（m×(n+m) ≥ 10^6 格 ⇒ revised，否则 tableau；显式指定覆盖
-// 优先，revised 仅 threads=1）。
+// revised 侧（单线程按表格规模和矩阵稀疏度分档，显式指定优先）。
 pub mod simplex_sparse;
 
 mod binary_propagation;

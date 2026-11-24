@@ -231,9 +231,9 @@ pub struct BbOptions {
     /// 调整 6 的机制 spike 结论）。仅顺序路径；并行 worker 不施加（窃取
     /// 交错会使局部割泄漏到子树外——共享 Simplex 无行作用域）。默认 true。
     pub local_cuts: bool,
-    /// LP 引擎选择：默认 [`LpEngineKind::Auto`]（S4 类自适应——表格规模
-    /// m×(n+m) ≥ 10^6 格 ⇒ revised，否则 tableau；定档证据见
-    /// `simplex_sparse::effective_engine` 文档）；CLI
+    /// LP 引擎选择。默认 [`LpEngineKind::Auto`] 在单线程考虑表格大小及
+    /// 工作矩阵的非零项比例，规则见 [`crate::simplex_sparse::effective_engine`]。
+    /// 支持 CLI
     /// `--lp-engine auto|tableau|revised` / 库字段两层接线，显式指定
     /// 覆盖优先。`Revised` **仅接线顺序路径**：threads ≥ 2 在
     /// [`branch_and_bound_controlled`] 入口按**有效引擎**显式报错（并行
@@ -544,8 +544,10 @@ pub(crate) fn branch_and_bound_with_preserved(
         // 旗标会形成文档外行为分叉）。S4：按**有效引擎**判定——Auto 在
         // 大算例（m×(n+m) ≥ 10^6）上解析为 revised 时同样被拦（消息点名
         // 有效引擎与成因，CLI 解析层只拦显式 revised × threads≥2）。
-        let eff = crate::simplex_sparse::effective_engine(problem, opts.lp_engine);
-        if eff == LpEngineKind::Revised {
+        let large_auto = opts.lp_engine == LpEngineKind::Auto
+            && crate::simplex_sparse::tableau_cells(problem)
+                >= crate::simplex_sparse::ENGINE_AUTO_CELL_THRESHOLD;
+        if opts.lp_engine == LpEngineKind::Revised || large_auto {
             return Err(MilpError::InvalidModel(format!(
                 "LP 引擎 {} 在 threads≥2 下不可用（revised 仅接线顺序路径：\
                  并行引擎直接构造稠密 Simplex；显式 --lp-engine tableau 可回表格式）",
@@ -556,7 +558,9 @@ pub(crate) fn branch_and_bound_with_preserved(
                 }
             )));
         }
-        return parallel_entry(problem, opts, ctrl, tol, hooks);
+        // 百万格以下的并行 Auto 继续用稠密引擎；探测前缀临时切到单线程时也一致。
+        resolved_opts.lp_engine = LpEngineKind::Tableau;
+        return parallel_entry(problem, &resolved_opts, ctrl, tol, hooks);
     }
     sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer, prelude)
 }

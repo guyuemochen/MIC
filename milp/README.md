@@ -23,7 +23,7 @@
   大规模优化轮（R1–R8，W7 起阈值为 2^16）后，表格单元数超阈值的大算例（如 bench 的
   lp-sparse-4000x800、setcover-400x800）启用稀疏簿记路径以压低每迭代成本
 （小算例逐字节走旧稠密路径，行为零扰动）；S2–S4 起再加一层引擎级类自适应
-（`--lp-engine auto` 默认：表格 m×(n+m) ≥ 10^6 格走稀疏修正单纯形 revised
+（`--lp-engine auto` 默认：单线程对大表或中等规模的稀疏矩阵使用稀疏修正单纯形 revised
 引擎，lp-sparse-4000x800 大幅提速、目标恒同——迭代序列 S6 起随 Devex
 定价有意分叉，见「双引擎架构」一节）。分支定界使用显式 dense 表格，
   内存 ≈ m×(n+m+a)×8B（2000 行 × 500 变量约 72MB 量级）；运行时间随分支
@@ -70,7 +70,7 @@ milp <算例路径> [--time-limit-secs N] [--threads N] [--log-secs F] [--mipgap
 | `--mitm=on\|off` | 子集和 MITM 可行性启发式（R5：全 Eq + 全 Binary 等式类的最后手段，见「启发式」一节） | `on` | 非 `on\|off` token / 重复出现报错 |
 | `--work-stack auto\|local\|global` | 并行工作栈模式（R6 接线，W1 默认按类选栈；仅 `--threads ≥ 2` 生效，threads=1 不受影响）：`auto` **多线程默认**——类检测命中多维背包类（全 Binary + 正系数 Le 行 + 行数 2..=64）⇒ `global`，单行背包/等式行/Ge 行/连续列类 ⇒ `local`；`local` 本地亲和 + 偷取；`global` 单一全局 DFS 栈，并行探索序对齐顺序 DFS | `auto` | 非 `auto\|local\|global` token / 重复出现报错 |
 | `--determinism wall\|budget` | 确定性模式（W3）：`wall`（默认）= 现状（时限/自适应/降级按墙钟判定，长跑终态随机器状态漂移）；`budget` = 纯预算制——`--time-limit-secs` 换算为节点预算（6,000 节点/秒），全部墙钟判定改为等价节点数预算，决策路径零墙钟读点 ⇒ **同参数双跑全部行为字段逐字节相同**（仅 `--threads 1`，与 ≥2 组合报错；慢机上墙钟可超名义值——确定性优先） | `wall` | 非 `wall\|budget` token / 重复出现报错 |
-| `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）= 类自适应——表格规模 m×(n+m) ≥ 10^6 格 ⇒ revised，阈下留 tableau（小算例走旧路径防 codegen 扰动）；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
+| `--lp-engine auto\|tableau\|revised` | LP 引擎选择（S3 接线、S4 默认 auto，见「双引擎架构」一节）：`tableau` = 稠密表格两阶段单纯形（`simplex.rs`，历史默认路径）；`revised` = 稀疏修正单纯形（`simplex_sparse.rs`：CSC + 稀疏 LU + ETA + 对偶修复热启动，lp-sparse-4000x800 大幅提速、目标恒同——定价规模分档：m×(n+m) ≥ 10^6 格阈上 Devex（S6）、阈下 Dantzig 逐字节兼容旧版，迭代序列不承诺与稠密引擎逐次一致）；`auto`（默认）按表格大小和工作矩阵稀疏度选择，具体门槛见下文；显式指定覆盖优先 | `auto` | 未知 token / 缺参 / 重复出现报错；`revised` × `--threads ≥2` 报错（S3 范围仅 t1；auto 解析为大算例 revised × ≥2 由库层按有效引擎拒绝，不静默分叉） |
 | `--root-rc-fixing on\|off` | reduced-cost 变量固定**两级总开关**（大规模轮 S12 根阶段固定 + S13 树内再应用同门控，映射 `BbOptions.root_rc_fixing`）：`on` = 根阶段按对偶界固定非基贴界整数列 + 树内 incumbent 严格改进时以更小 τ 对同一根基快照再固定（均保最优，见「深度优先分支定界」一节）；`off` = 两级全关（不捕获快照、不挂触发、取交零开销直通），复现 S12 之前的旧行为 | `on` | 非 `on\|off` token / 缺参 / 重复出现报错（等号/空格两式） |
 | `--binary-propagation auto\|on\|off` | 精确二元静态行传播：`auto` 按用户请求的线程数一次解析，单线程开启、多线程关闭（包括内部顺序小树探测）；`on` 显式开启，`off` 完全关闭。只接受能认证为共同二进制格点、且格距严格大于验收容差的二元行，其余交回 LP；不读取根割或局部割 | `auto` | 显式 `on` 与多线程组合报错；缺参、重复或未知值报错，支持等号和空格形式 |
 | `--verbose` | Optimal 时先输出固定机制统计三行（`rc_fixed` / `rc_reapplies` / `rc_refixed`，S13；全 0 也如实输出），再逐行输出变量取值 | 关 | — |
@@ -471,8 +471,7 @@ LP 求解器有两个实现，是**同一 LP 语义的两个实现**（比值测
   并从原始数据重算 x_B（漂移双保险）+ 界变化后的对偶修复热启动（对偶
   可行性保持时数步旋转恢复原始可行，异常回退整基重建 + Phase-1）。7 项
   共享常量与 Bland/W4/R8 触发语义与稠密引擎逐款对齐（S5 契约测试钉值）。
-  **定价规模分档（S6）**：构造期按原始 m×(n+m) ≥ 10^6 格（与 auto 定档
-  同阈同维）定死——阈上 = revised 的 auto 默认域 ⇒ **Devex** 定价
+  **定价规模分档（S6）**：构造期按原始 m×(n+m) ≥ 10^6 格确定——阈上 ⇒ **Devex** 定价
   （Forrest–Goldfarb 参考框架近似最陡边：入基打分 rc²/w_j，权重随主元
   更新、任一越阈 1e6 即重置参考框架，solve/resolve 入口与 Phase-1→2
   切换亦重置）；阈下保持 **Dantzig**、与本引擎 Devex 化之前逐字节同
@@ -484,11 +483,7 @@ LP 求解器有两个实现，是**同一 LP 语义的两个实现**（比值测
 
 两实现经 `LpEngine` trait（15 方法 = branch_bound/cuts/heuristics 全
 消费面）统一接入 B&B（持有 `Box<dyn LpEngine>`；W6 局部割快照走 trait
-`snapshot()`）。`auto`（S4 起默认）按表格规模定档：m×(n+m) ≥
-`ENGINE_AUTO_CELL_THRESHOLD` = 10^6 格 ⇒ revised，阈下 tableau——阈值
-落在 setcover-400x800（480k）与 lp-sparse-4000x800（3.84M）之间的整数
-量级空带（「表格超百万格」一句话可解释）；显式 `tableau`/`revised`
-覆盖优先。`revised` 仅支持 `--threads 1`（并行 worker 直接构造稠密
+`snapshot()`）。单线程 `auto` 对 m×(n+m) 至少一百万格的表格采用 revised。较小的工作模型中，记 r 为至少含两项的行数，n 为结构变量数。若 r×(r+n) 至少 65,536 格，且这些行的非零项不超过 r×n 的 1/16，也采用 revised；其余采用 tableau。密度只统计约束的结构列。显式 `tableau` 或 `revised` 优先。并行 `auto` 在百万格以下使用 tableau。`revised` 仅支持 `--threads 1`（并行 worker 直接构造稠密
 Simplex，旗标与 ≥2 组合显式报错，不静默分叉）。
 
 实测（S2–S5 目标恒同为前提；迭代序列 Dantzig 期曾与稠密引擎逐次一致

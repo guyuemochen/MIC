@@ -74,7 +74,7 @@
 //! - x_B 维护与表格引擎同款口径：主元步 x_B[k] −= δt·α_k、x_B[r] =
 //!   入基旧界值 + δt；界翻转 x_B[k] −= Δ·α_k；
 //! - 定价（**规模分档**：构造期按原始 m×(n+m) 与 [`ENGINE_AUTO_CELL_THRESHOLD`]
-//!   比较定死，割行追加不翻转——阈上 = revised 的 auto 默认域 ⇒ **Devex**
+//!   比较定死，割行追加不翻转。达到阈值使用 **Devex**
 //!   （Forrest–Goldfarb 参考框架近似最陡边）；阈下 ⇒ Dantzig，与本引擎
 //!   Devex 化之前逐字节同入基序列（A/B 兼容锚）。分档依据（S6 三算例
 //!   A/B + 确定性节点预算探针实测）：Devex 在大规模纯 LP 主导类大赢——
@@ -209,9 +209,9 @@ use crate::simplex::{
 
 /// LP 引擎选择（CLI `--lp-engine` / 库 `BbOptions::lp_engine` 两层）。
 ///
-/// 默认 [`LpEngineKind::Auto`]（S4 类自适应定档）：表格规模
-/// m×(n+m) ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]（10^6 格）⇒ [`LpEngineKind::Revised`]
-///（稀疏修正单纯形），否则 [`LpEngineKind::Tableau`]（稠密表格）。显式
+/// 默认 [`LpEngineKind::Auto`]：百万格以上的表格，以及中等规模且非零项
+/// 稀少的工作矩阵，单线程使用 [`LpEngineKind::Revised`]（稀疏修正单纯形）。
+/// 其余使用 [`LpEngineKind::Tableau`]（稠密表格）。显式
 /// `Tableau`/`Revised` 覆盖优先。`Revised` **仅接线顺序路径**（threads=1）：
 /// 并行引擎（parallel_bb）直接构造稠密 Simplex，revised × threads≥2 在
 /// `branch_and_bound_controlled` 入口显式报错（F5 冷审：静默忽略旗标会
@@ -227,7 +227,7 @@ use crate::simplex::{
 ///（R1 教训：+1-2% 不可复现噪声）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LpEngineKind {
-    /// 类自适应（默认）：按 [`effective_engine`] 的规模规则解析。
+    /// 类自适应（默认）：按工作表格的规模和矩阵非零项比例选择。
     Auto,
     /// 稠密表格两阶段单纯形（simplex.rs）。
     Tableau,
@@ -246,20 +246,40 @@ impl Default for LpEngineKind {
 /// 规则简单可解释（『表格超百万格』）。
 pub const ENGINE_AUTO_CELL_THRESHOLD: u64 = 1_000_000;
 
-/// 解析有效引擎（S4 类自适应）：`Auto` 按表格规模定档，显式指定原样
-/// 返回（覆盖优先）。m = 约束行数、n = 变量数、ncols ≈ n + m（松弛列）。
+pub(crate) fn tableau_cells(problem: &Problem) -> u64 {
+    let rows = problem.constraints.len() as u64;
+    rows.saturating_mul(rows.saturating_add(problem.vars.len() as u64))
+}
+
+/// 单线程 Auto 在中等规模上考虑真实约束列的稀疏度。松弛列都是单位列，
+/// 把它们算进密度会误把稠密约束判为稀疏。单项行在预处理中只是变量界。
 pub fn effective_engine(problem: &Problem, kind: LpEngineKind) -> LpEngineKind {
-    match kind {
-        LpEngineKind::Auto => {
-            let m = problem.constraints.len() as u64;
-            let n = problem.vars.len() as u64;
-            if m.saturating_mul(n + m) >= ENGINE_AUTO_CELL_THRESHOLD {
-                LpEngineKind::Revised
-            } else {
-                LpEngineKind::Tableau
-            }
+    if kind != LpEngineKind::Auto {
+        return kind;
+    }
+    let cells = tableau_cells(problem);
+    if cells >= ENGINE_AUTO_CELL_THRESHOLD {
+        return LpEngineKind::Revised;
+    }
+    // 65,536 个 f64 表格元素约占 512 KiB。先用廉价的尺寸检查避开小 LP。
+    const MEDIUM_CELLS: u64 = 65_536;
+    if cells < MEDIUM_CELLS {
+        return LpEngineKind::Tableau;
+    }
+    let n = problem.vars.len() as u64;
+    let mut rows = 0u64;
+    let mut nonzeros = 0u64;
+    for row in &problem.constraints {
+        let len = row.expr.terms.len();
+        if len >= 2 {
+            rows += 1;
+            nonzeros += len as u64;
         }
-        explicit => explicit,
+    }
+    if rows * (rows + n) >= MEDIUM_CELLS && nonzeros <= rows * n / 16 {
+        LpEngineKind::Revised
+    } else {
+        LpEngineKind::Tableau
     }
 }
 
@@ -1956,7 +1976,7 @@ pub struct SparseSimplex {
     /// `devex_update`。
     devex_w: Vec<f64>,
     /// Devex 规模分档（构造期按原始 m×(n+m) 定死，割行追加不翻转）：
-    /// ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]（revised 的 auto 默认域）才启用
+    /// ≥ [`ENGINE_AUTO_CELL_THRESHOLD`]（百万格）才启用
     /// Devex 定价与权重维护；阈下保持 Dantzig——与分档前的 Dantzig 版
     /// 逐字节同入基序列（A/B 兼容锚）。分档依据见模块头定价节。
     devex_active: bool,
