@@ -59,6 +59,8 @@ pub enum Metaheuristic {
     LateAcceptance { history_len: usize },
 }
 
+pub(crate) const DEFAULT_SAMPLES_PER_STEP: usize = 32;
+
 /// 局部搜索配置（默认值全文唯一来源）。
 #[derive(Debug, Clone)]
 pub struct LocalSearchConfig {
@@ -83,7 +85,7 @@ impl Default for LocalSearchConfig {
             seed: 42,
             termination: Termination::Steps(50_000),
             move_kind: MoveKind::default(),
-            samples_per_step: 32,
+            samples_per_step: DEFAULT_SAMPLES_PER_STEP,
         }
     }
 }
@@ -108,6 +110,17 @@ pub struct SearchResult {
 #[inline]
 fn scalar(score: HardSoftScore, w: i128) -> i128 {
     i128::from(score.hard) * w + i128::from(score.soft)
+}
+
+/// 两种规划模型共用退火温度与接受概率。调用方提供本模型的整数分差。
+pub(crate) fn annealing_accepts(
+    delta: i128, step: usize, start_temp: f64, end_temp: f64, rng: &mut Rng,
+) -> bool {
+    if delta <= 0 {
+        return true;
+    }
+    let temperature = end_temp.max(start_temp * 0.999f64.powf(step as f64));
+    rng.gen_ratio((-(delta as f64) / temperature).exp())
 }
 
 /// 局部搜索主循环。
@@ -243,15 +256,11 @@ pub fn local_search(
                     .map(|&c| i128::from(c))
                     .sum::<i128>();
             while running(steps) {
-                let t_k = end_temp.max(start_temp * 0.999f64.powf(steps as f64));
                 if let Some(mv) = random_move(&sol, &inc, &mut rng, cfg.move_kind) {
                     let preview = mv.preview(&inc);
                     // Δ 全程 i128；Δ ≤ 0 判定不过 f64
                     let delta = scalar(preview, w) - scalar(inc.score(), w);
-                    let accept = delta <= 0 || {
-                        let p = (-(delta as f64) / t_k).exp();
-                        rng.gen_ratio(p)
-                    };
+                    let accept = annealing_accepts(delta, steps, start_temp, end_temp, &mut rng);
                     if accept {
                         mv.apply(&mut sol, &mut inc);
                         // best 按真实 HardSoftScore 维护（已访问解的最优快照）

@@ -5,7 +5,7 @@ MIC 是一组完全独立的 Rust 求解器 crate：**M**ixed-**I**nteger 精确
 | 目录 | 求解器 | 核心算法 | 验证状态 |
 |---|---|---|---|
 | [`milp/`](milp/README.md) | 混合整数线性规划（MILP）**精确**求解器 | 单纯形法解 LP 松弛**双引擎**（稠密表格 / 稀疏修正单纯形，`--lp-engine auto` 类自适应默认：单线程按表格大小和矩阵稀疏度选引擎；另有大表稀疏簿记、退化停滞的 Bland 释放）+ 分支定界（类自适应分支）+ Gomory/聚合 MIR 割（循环预算回滚、树内局部割、分离边界数值卫生闸——清洁化/密度闸/violation 复核）+ 数值缩放 + 预处理/潜水/根节点 sub-MIP（RENS）/子集和 MITM 启发式 + reduced-cost 变量固定（对偶界驱动、保最优：根阶段 S12 + 树内 incumbent 改进再应用 S13，默认开启）；多线程（工作栈按类选栈/本地亲和/全局 DFS，2026-10 W1 起多线程默认按类选栈）、Gurobi 式进度日志、自适应启发式与策略级自动降级、t1 预算制确定性模式（`--determinism budget`） | 6 个已知最优解算例全部精确命中；CLI 端到端一致；大规模基准（bench gate/full 计时矩阵，18 算例 t1/t4）九轮逐轮 A/B 验证（八轮保留 + 一轮空集回退）并经两轮独立复核（无正确性阻断项）；稀疏核心与批量接口轮 S1–S5 全保留（lp-sparse-4000x800 默认引擎约 3.5×、目标恒同），micpython 与 CBC/HiGHS/SCIP 外部交叉验证 14 算例全对账；5000 变量背包与独立 DP 真值一致 |
-| [`planner/`](planner/README.md) | OptaPlanner 式**启发式**约束求解器 | HardSoftScore 硬软评分 + First/Best Fit 构造启发式 + 禁忌/模拟退火/迟到接受局部搜索 | 6 个算例的可行性（hard=0）、搜索改进、固定种子可复现全部满足 |
+| [`planner/`](planner/README.md) | OptaPlanner 式**启发式**约束求解器 | HardSoftScore 硬软评分 + First/Best Fit 构造启发式 + 禁忌/模拟退火/迟到接受局部搜索 | 原有 6 个算例通过验收；通用模型在 Rust、Python 和 Java 上逐项对账排班、排课、车辆配送及生产排程 |
 
 ## 目录结构
 
@@ -21,6 +21,8 @@ MIC/
 │   ├── instances/      6 个算例（排班 / 云分配 / 课程表 / 指派）
 │   ├── tests/          验收测试 + 基准测试
 │   └── README.md       算例格式、CLI、编程 API
+├── planner-ffi/        通用规划器动态库（ABI v1）
+├── planner-java/       Java 8+ 规划建模接口与 JNI 薄桥
 ├── milp-ffi/           milp 的 C ABI 绑定 crate（cdylib，std-only）
 ├── micpython/          gurobipy 风格 Python 包（ctypes，零第三方依赖）
 │   ├── examples/       knapsack.py 端到端示例
@@ -69,6 +71,8 @@ cargo run --manifest-path milp/Cargo.toml --release -- bench/instances/setcover-
 88526，与生成器独立 DP 真值一致。）
 
 ### planner（启发式求解，可行 + 快速）
+
+Python 和 Java 可在自己的应用进程中建立排班、排课、配送和生产模型，再调用 `Model.optimize()`。Rust 负责构造、搜索和增量评分。[跨语言建模指南](planner/BUSINESS.md)
 
 ```bash
 cargo run --manifest-path planner/Cargo.toml --release -- planner/instances/roster-small.txt \

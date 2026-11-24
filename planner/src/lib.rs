@@ -54,3 +54,6 @@ pub use moves::{Move, MoveKind, random_move};
 pub use localsearch::{Termination, Metaheuristic, LocalSearchConfig, SearchResult, local_search};
 pub use solver::{SolverConfig, solve};
 pub use parallel::{solve_parallel, solve_parallel_detailed, ParallelReport};
+
+/// 通用业务建模、表达式评分、列表排序及跨语言建模协议。
+pub mod business;

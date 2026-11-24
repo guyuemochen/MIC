@@ -1,0 +1,73 @@
+{
+  "time_utc": "2026-11-24T06:00:13.725675+00:00",
+  "platform": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M4",
+  "git": "31c099ecfc56f9a68f31dff310ed5a0a6505fa36",
+  "rust": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "java": "openjdk version \"21.0.12\" 2026-07-21\nOpenJDK Runtime Environment Homebrew (build 21.0.12)\nOpenJDK 64-Bit Server VM Homebrew (build 21.0.12, mixed mode, sharing)",
+  "jvm_flags": [
+    "-XX:ActiveProcessorCount=1",
+    "-XX:+UseSerialGC",
+    "-Xms512m",
+    "-Xmx512m"
+  ],
+  "solver_threads": 1,
+  "optaplanner": "8.44.0.Final",
+  "budget_ms": 10000,
+  "seeds": [
+    7,
+    19,
+    43,
+    73,
+    101
+  ],
+  "warmup_ms": 2000,
+  "warmup_seeds": [
+    991,
+    997
+  ],
+  "artifact_sha256": {
+    "mic_binary": "c9a580c715835bbf2bedd0b46cfdd0fe34550a2b8b39732d54ceb2a27934e5ef",
+    "optaplanner_jar": "32df6bbf996bb9c7b42e014a0f49b4bc72c94a58ad59f20a21a91f6008a0d3ff"
+  },
+  "cases_sha256": {
+    "roster": "11600404d6d989909d377a55aaa3039fa151599f8c4c39bec72e4126d794d910",
+    "timetable": "1060f98650b14f5203dfea45a01fd8d8cdbd24948ebfd6134f22526ce24bfede",
+    "delivery": "f6068cd1c99fcf4a9b03d289b67df38a4eb670630fe239efc9c68a164bf3bf22",
+    "factory": "87fefa3ef99775e666ad83b360974df6b8250e64fd2fbb0c55e257bc4c529b5f"
+  },
+  "mic_wire_sha256": {
+    "roster": "5fdfab1942867fa558c3f69674129453042b73c9dde48e2fd4ca5b648446c4a6",
+    "timetable": "9b60317fa60f0272425327cd9e06732924bd9df7a22399717222861b32d9f99d",
+    "delivery": "444ad729bcaf668618ab6791caaa1d23c2678679a861e19ab1888352b15f44d2",
+    "factory": "8a6a8b385040000e13cffdb0b5e05af3920b017d2749ba4ecdf9538404928249"
+  },
+  "source_sha256": {
+    "bench/planner_comparison/cases.py": "10a049e3d75594147df0689f798834c69f5d5c08e7d51193f9df7034af1ee577",
+    "bench/planner_comparison/mic_model.py": "127abe572aaec5a0eaa0cb6eb7ddc31efedb8055ebec18ab9d5c5cc7fddda712",
+    "bench/planner_comparison/opta/pom.xml": "56d826b9a4f2bb95f77dc011def91a35d3d365cf99d7d0b07338fa06039b28b2",
+    "bench/planner_comparison/opta/src/main/java/benchmark/Domain.java": "253bc32534b991ffddc76e4356d305728d1f67e2367ab12a8da9d9d04b6e68f3",
+    "bench/planner_comparison/opta/src/main/java/benchmark/Score.java": "554da4ca8b013c584aab0570340b0f0f486677e79105bae1b1c972229d189563",
+    "bench/planner_comparison/opta/src/main/java/benchmark/Worker.java": "af10571f9c0b8c3a9998862f102d22d4784793432c2a67ff861a1ae769131816",
+    "bench/planner_comparison/run.py": "1a6c7a2b01307c70854ef3fd042fbb78c5ffc41f501e585ec74d4079ca916a55",
+    "planner/examples/compare_worker.rs": "4e1159608bc3da4d3cb3a36ba21826dada5c881d6e236adf230790348cf59126",
+    "planner/src/business/mod.rs": "6706b1f444b924df09c84bca2141493c01f20904f5bd5749a2290e7eff410fdb",
+    "planner/src/business/score/tests.rs": "d738698561bdb73944c10f0bf5c06b93c5bf30846ba208b700407fa554374095",
+    "planner/src/business/score.rs": "c7be7796a5a08d9878255e8f0b33c426c3255a338eca35593f056fd295432ddc",
+    "planner/src/business/search.rs": "1fa281bc475f99ee360ed27a02eb3fe043d981e910db426ea471fc91ec4e9de8",
+    "planner/src/business/sequence/tests.rs": "cdebe0d97466fde4cf0ac7852d653e1b181cfdd65b3dfc4890cdf20a391974da",
+    "planner/src/business/sequence.rs": "0ada0268cd02b1584ab6627c8bf7412e6a686501931453fdedb56999cbd397ed",
+    "planner/src/business/wire.rs": "00b90dcf00300ae0f60a2af692364ccccd20285a5da87c56f7e8722f173014f3",
+    "planner/src/construct.rs": "ace88c3abc261b570a325ff1ac74a98525c109d2903c5ab211e5281961ec6273",
+    "planner/src/format.rs": "ab26c2a6c7abac372c215ad625db9840a8bf0a79585450617fad143faa5fcc6c",
+    "planner/src/lib.rs": "5fd960429fdbc097512ebd301a3fe47f8e9157f9ace2011557cb794feacf1100",
+    "planner/src/localsearch.rs": "db55a9086379ef1d4a1ddcfab1c219704ed6b87fabc92066202e5cca36a4220e",
+    "planner/src/main.rs": "5200faed455430a512606cc560b3ba144caf02a2ca80d39e17fc093f75a9ab0c",
+    "planner/src/model.rs": "ef8cea479fdca6634036f1f27766e31505a0c9f85d47e11ef12449fa3f52c0ba",
+    "planner/src/moves.rs": "e8b2d2afbe722816339dbfeeca54806b9c6949b62972b9ddfbe770c5f6af6f02",
+    "planner/src/parallel.rs": "81fc9da3004a1c6b079f7e816607e9b04737b65361334a2fdd5ecfe7024acae5",
+    "planner/src/rng.rs": "d88e7e367f4b18e045bf8dc8e17d476f09b07c2579ddeb62288f9d61683d41a6",
+    "planner/src/score.rs": "e45433015a524b21c09a752bef3fcf01f30b6d8dca6dc98e59b9693a06e9acb6",
+    "planner/src/solver.rs": "87437799252534f03b59d17adce34479fda1236d5305bb1d03b8cd97846c7f3b"
+  }
+}

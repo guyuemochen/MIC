@@ -1,0 +1,456 @@
+--- a/planner/src/business/score/tests.rs
++++ b/planner/src/business/score/tests.rs
+@@ -342,135 +342,3 @@
+     inc.update(&m, &s, &[], &inv).unwrap();
+     assert_score(&m, &s, &inc);
+ }
+-
+-fn pair_terms(model: &mut Model, keys: &[usize]) -> Vec<usize> {
+-    let mut terms = Vec::new();
+-    for (i, &a) in keys.iter().enumerate() {
+-        for &b in &keys[..i] {
+-            terms.push(model.expr(Expr::Eq(a, b)));
+-        }
+-    }
+-    terms
+-}
+-
+-#[test]
+-fn conflict_groups_match_every_partial_move_swap_and_undo() {
+-    let mut m = Model::default();
+-    m.domains = vec![vec![-2, 0, 1, 2]; 9];
+-    let mut keys: Vec<_> = (0..9).map(|v| m.expr(Expr::Var(v))).collect();
+-    let two = m.expr(Expr::Const(2));
+-    keys[0] = m.expr(Expr::Mul(keys[0], two));
+-    let mut terms = pair_terms(&mut m, &keys[..5]);
+-    let shared = terms[0];
+-    let pruned = terms[1];
+-    terms.extend(pair_terms(&mut m, &keys[5..]));
+-    let sum = m.expr(Expr::Sum(terms));
+-    m.rules.push(rule("各组内部冲突", true, 2, sum));
+-    m.rules.push(rule("同一指标带权", false, 5, sum));
+-    m.rules.push(rule("另用单项比较", false, 3, shared));
+-    m.objective = Some(sum);
+-    let mut state = State::empty(&m);
+-    let mut scorer = Scorer::new(&m, &state).unwrap();
+-    assert!(matches!(scorer.aggregates[sum], Some(Aggregate::Pairs(_))));
+-    assert!(scorer.parents.iter().flatten().any(|&(p, _)| p == shared));
+-    assert!(!scorer.parents.iter().flatten().any(|&(p, _)| p == pruned));
+-    let mut rng = Rng::new(51870);
+-    let domain = [None, Some(-2), Some(0), Some(1), Some(2)];
+-    for step in 0..400 {
+-        let (x, y) = (rng.gen_range(0, 9), rng.gen_range(0, 9));
+-        let (old_x, old_y) = (state.values[x], state.values[y]);
+-        if step % 3 == 0 {
+-            state.values.swap(x, y);
+-        } else {
+-            state.values[x] = domain[rng.gen_range(0, domain.len())];
+-            state.values[y] = domain[rng.gen_range(0, domain.len())];
+-        }
+-        scorer.update(&m, &state, &[x, y], &[]).unwrap();
+-        assert_score(&m, &state, &scorer);
+-        if step % 4 == 0 {
+-            state.values[x] = old_x;
+-            state.values[y] = old_y;
+-            scorer.update(&m, &state, &[y, x], &[]).unwrap();
+-            assert_score(&m, &state, &scorer);
+-        }
+-    }
+-}
+-
+-#[test]
+-fn incomplete_repeated_and_self_comparisons_keep_the_original_sum() {
+-    let mut m = Model::default();
+-    m.domains = vec![vec![0, 1]; 4];
+-    let keys: Vec<_> = (0..4).map(|v| m.expr(Expr::Var(v))).collect();
+-    let edges = pair_terms(&mut m, &keys);
+-    let flipped = m.expr(Expr::Eq(keys[0], keys[1]));
+-    let same = m.expr(Expr::Eq(keys[0], keys[0]));
+-    for (case, replacement) in [None, Some(edges[0]), Some(flipped), Some(same)]
+-        .into_iter()
+-        .enumerate()
+-    {
+-        let mut altered = edges.clone();
+-        altered.pop();
+-        altered.extend(replacement);
+-        let sum = m.expr(Expr::Sum(altered));
+-        m.rules
+-            .push(rule(&format!("不规则冲突{case}"), true, 1, sum));
+-    }
+-    let mut state = State::empty(&m);
+-    let mut scorer = Scorer::new(&m, &state).unwrap();
+-    assert!(m
+-        .rules
+-        .iter()
+-        .all(|r| matches!(scorer.aggregates[r.expr], Some(Aggregate::Sum(_)))));
+-    for i in 0..4 {
+-        state.values[i] = Some(0);
+-        scorer.update(&m, &state, &[i], &[]).unwrap();
+-        assert_score(&m, &state, &scorer);
+-    }
+-}
+-
+-#[test]
+-fn conflict_bucket_fault_order_and_rollback_match_original_comparisons() {
+-    let mut m = Model::default();
+-    m.domains = vec![vec![0, 1, 2]; 3];
+-    let switch = m.expr(Expr::Var(0));
+-    let x = m.expr(Expr::Var(1));
+-    let y = m.expr(Expr::Var(2));
+-    let a = m.expr(Expr::Lookup(vec![0], x));
+-    let b = m.expr(Expr::Lookup(vec![1, 0], y));
+-    let zero = m.expr(Expr::Const(0));
+-    let terms = pair_terms(&mut m, &[a, b, zero]);
+-    let sum = m.expr(Expr::Sum(terms));
+-    let guarded = m.expr(Expr::If(switch, sum, zero));
+-    m.objective = Some(guarded);
+-    let mut state = State::empty(&m);
+-    state.values = vec![Some(0), Some(1), Some(2)];
+-    let mut scorer = Scorer::new(&m, &state).unwrap();
+-    assert!(matches!(scorer.aggregates[sum], Some(Aggregate::Pairs(_))));
+-    // x、y 同时越界，原比较先读 b。触及多个键的失败候选必须恢复原桶和错误。
+-    for candidate in [
+-        [1, 1, 2],
+-        [1, 1, 0],
+-        [1, 0, 2],
+-        [0, 0, 1],
+-        [1, 0, 1],
+-        [1, 1, 2],
+-        [1, 0, 0],
+-    ] {
+-        let before = state.values.clone();
+-        state.values = candidate.map(Some).to_vec();
+-        match full(&m, &state) {
+-            Ok(expected) => {
+-                scorer.update(&m, &state, &[0, 1, 2], &[]).unwrap();
+-                assert_eq!(scorer.scores, expected);
+-            }
+-            Err(expected) => {
+-                assert_eq!(
+-                    scorer.update(&m, &state, &[0, 1, 2], &[]).unwrap_err(),
+-                    expected
+-                );
+-                state.values = before;
+-                assert_score(&m, &state, &scorer);
+-            }
+-        }
+-    }
+-}
+--- a/planner/src/business/score.rs
++++ b/planner/src/business/score.rs
+@@ -6,11 +6,8 @@
+ 
+ use std::collections::{BTreeMap, BTreeSet, VecDeque};
+ 
+-mod collisions;
+-
+ use super::sequence::{self, Edit, Schedule};
+ use super::{Expr, ListSpec, Model, State};
+-use collisions::PairCounts;
+ 
+ /// 各规则的罚分按声明顺序返回，软分还包括目标表达式。
+ #[derive(Clone, Debug, PartialEq, Eq)]
+@@ -481,7 +478,6 @@
+ enum Aggregate {
+     Sum(i128),
+     Max(BTreeMap<i64, usize>),
+-    Pairs(Box<PairCounts>),
+ }
+ 
+ impl Aggregate {
+@@ -501,9 +497,8 @@
+         }
+     }
+ 
+-    fn replace(&mut self, group: usize, old: Value, new: Value) {
++    fn replace(&mut self, old: Value, new: Value) {
+         match self {
+-            Self::Pairs(pairs) => pairs.replace(group, old, new),
+             Self::Sum(total) => {
+                 *total += i128::from(new.unwrap_or(0)) - i128::from(old.unwrap_or(0))
+             }
+@@ -524,7 +519,6 @@
+ 
+     fn value(&self) -> Result<Value, String> {
+         match self {
+-            Self::Pairs(pairs) => checked(pairs.total()).map(Some),
+             Self::Sum(total) => Ok(Some(checked(*total)?)),
+             Self::Max(counts) => Ok(Some(counts.last_key_value().map_or(0, |(&v, _)| v))),
+         }
+@@ -542,7 +536,7 @@
+     values: Vec<Value>,
+     faults: Faults,
+     rules: Vec<Vec<usize>>,
+-    parents: Vec<Vec<(usize, usize)>>,
++    parents: Vec<Vec<usize>>,
+     variables: Vec<Vec<usize>>,
+     lists: Vec<ListInputs>,
+     schedules: Vec<Option<Schedule>>,
+@@ -554,41 +548,20 @@
+     pub fn new(model: &Model, state: &State) -> Result<Self, String> {
+         validate(model)?;
+         check_state(model, state)?;
+-        let (values, mut faults) = initial_values(model, state, &used_nodes(model))?;
++        let used = used_nodes(model);
++        let (values, faults) = initial_values(model, state, &used)?;
+         let scores = breakdown(model, &values, &faults)?;
+         let n = model.nodes.len();
+         let mut parents = vec![vec![]; n];
+         let mut rules = vec![vec![]; n];
+-        let mut used = vec![false; n];
+-        for i in model.rules.iter().map(|r| r.expr).chain(model.objective) {
+-            used[i] = true;
+-        }
+-        let mut aggregates = (0..n).map(|_| None).collect::<Vec<_>>();
+-        // 从规则向下编译。被冲突桶替代的比较若还有其它用处，会经普通依赖保留。
+-        for i in (0..n).rev() {
+-            if !used[i] {
+-                continue;
+-            }
+-            let expr = &model.nodes[i];
+-            let mut subscribe = |child: usize, group| {
+-                used[child] = true;
+-                parents[child].push((i, group));
+-            };
+-            if let Some(pairs) = PairCounts::compile(model, expr, &values, &mut subscribe) {
+-                aggregates[i] = Some(Aggregate::Pairs(Box::new(pairs)));
+-            } else {
+-                for child in inputs(expr) {
+-                    subscribe(child, 0);
+-                }
+-                aggregates[i] = Aggregate::new(expr, &values);
+-            }
+-        }
+-        faults.retain(|&i, _| used[i]);
+         let mut variables = vec![vec![]; model.domains.len()];
+         let mut lists: Vec<_> = model.lists.iter().map(|_| ListInputs::default()).collect();
+         for (i, node) in model.nodes.iter().enumerate() {
+             if !used[i] {
+                 continue;
++            }
++            for j in inputs(node) {
++                parents[j].push(i);
+             }
+             match node {
+                 Expr::Var(v) => variables[*v].push(i),
+@@ -616,6 +589,18 @@
+                 },
+             );
+         }
++        let aggregates = model
++            .nodes
++            .iter()
++            .enumerate()
++            .map(|(i, expr)| {
++                if used[i] {
++                    Aggregate::new(expr, &values)
++                } else {
++                    None
++                }
++            })
++            .collect();
+         Ok(Self {
+             scores,
+             values,
+@@ -705,22 +690,16 @@
+             // 父表达式总在子表达式之后定义；按编号出队即可在同一步合并多个子项的变化。
+             while let Some(i) = dirty.pop_first() {
+                 let old = self.values[i];
+-                let fault = if self.faults.is_empty() {
+-                    None
+-                } else if let Some(Aggregate::Pairs(pairs)) = &self.aggregates[i] {
+-                    pairs.fault(&self.faults)
+-                } else {
+-                    inherited_fault(&model.nodes[i], &self.values, &self.faults)
+-                };
+-                let result = if let Some(e) = fault {
+-                    Err(e)
+-                } else if let Some(v) = leaves.remove(&i) {
+-                    v
+-                } else if let Some(a) = &self.aggregates[i] {
+-                    a.value()
+-                } else {
+-                    evaluate(&model.nodes[i], &self.values, state)
+-                };
++                let result =
++                    if let Some(e) = inherited_fault(&model.nodes[i], &self.values, &self.faults) {
++                        Err(e)
++                    } else if let Some(v) = leaves.remove(&i) {
++                        v
++                    } else if let Some(a) = &self.aggregates[i] {
++                        a.value()
++                    } else {
++                        evaluate(&model.nodes[i], &self.values, state)
++                    };
+                 let (new, error) = match result {
+                     Ok(v) => (v, None),
+                     Err(e) => (None, Some(e)),
+@@ -740,9 +719,9 @@
+                 };
+                 changes.push((i, old, old_error));
+                 self.values[i] = new;
+-                for &(p, group) in &self.parents[i] {
++                for &p in &self.parents[i] {
+                     if let Some(a) = &mut self.aggregates[p] {
+-                        a.replace(group, old, new);
++                        a.replace(old, new);
+                     }
+                     dirty.insert(p);
+                 }
+@@ -780,9 +759,9 @@
+                         self.faults.remove(&i);
+                     }
+                     let new = std::mem::replace(&mut self.values[i], old);
+-                    for &(p, group) in &self.parents[i] {
++                    for &p in &self.parents[i] {
+                         if let Some(a) = &mut self.aggregates[p] {
+-                            a.replace(group, new, old);
++                            a.replace(new, old);
+                         }
+                     }
+                 }
+--- a/planner/src/business/search.rs
++++ b/planner/src/business/search.rs
+@@ -1,7 +1,4 @@
+ //! 先构造初始解，再对分配和列表进行局部搜索。试探与提交共用同一条增量评分路径。
+-
+-mod pairs;
+-use pairs::Pairs;
+ 
+ use super::{
+     score::{self, Breakdown, Scorer},
+@@ -106,8 +103,6 @@
+ enum Action {
+     Assign(usize, usize),
+     Exchange(usize, usize),
+-    AssignPair(usize, usize, usize, usize),
+-    ExchangePairs([usize; 2], [usize; 2]),
+     Insert {
+         group: usize,
+         owner: usize,
+@@ -192,22 +187,6 @@
+                     .extend([(i, self.state.values[i]), (j, self.state.values[j])]);
+                 self.state.values.swap(i, j);
+             }
+-            Action::AssignPair(a, x, b, y) => {
+-                for (var, idx) in [(a, x), (b, y)] {
+-                    let value = self.model.domains[var][idx];
+-                    change
+-                        .values
+-                        .push((var, self.state.values[var].replace(value)));
+-                }
+-            }
+-            Action::ExchangePairs([a, b], [c, d]) => {
+-                for (i, j) in [(a, c), (b, d)] {
+-                    change
+-                        .values
+-                        .extend([(i, self.state.values[i]), (j, self.state.values[j])]);
+-                    self.state.values.swap(i, j);
+-                }
+-            }
+             Action::Insert {
+                 group,
+                 owner,
+@@ -303,22 +282,11 @@
+ fn construct(
+     model: &Model,
+     cfg: &Config,
+-    pairs: &Pairs,
+     clock: SearchClock,
+ ) -> PlanResult<(State, Option<Duration>)> {
+     let mut work = Working::new(model, State::empty(model))?;
+     let mut last_commit = clock.commit_time();
+     for (i, domain) in model.domains.iter().enumerate() {
+-        if let Some(j) = pairs.partner(i) {
+-            if j < i {
+-                continue;
+-            }
+-            let Some(at) = pairs::choose_pair(&mut work, i, j, clock)? else {
+-                return Ok((work.state, None));
+-            };
+-            last_commit = Some(at);
+-            continue;
+-        }
+         let actions = (0..domain.len()).map(|idx| Action::Assign(i, idx));
+         let Some(at) = choose(
+             &mut work,
+@@ -398,13 +366,10 @@
+         Self { variables, groups }
+     }
+ 
+-    fn sample(&self, model: &Model, pairs: &Pairs, state: &State, rng: &mut Rng) -> Option<Action> {
++    fn sample(&self, model: &Model, state: &State, rng: &mut Rng) -> Option<Action> {
+         let choice = pick(rng, self.variables.len() + self.groups.len());
+         if choice < self.variables.len() {
+             let i = self.variables[choice];
+-            if let Some(action) = pairs.sample(i, model, state, rng) {
+-                return Some(action);
+-            }
+             if self.variables.len() > 1 && rng.gen_ratio(0.25) {
+                 let j = self.variables[pick(rng, self.variables.len())];
+                 let (x, y) = (state.values[i]?, state.values[j]?);
+@@ -491,7 +456,6 @@
+     model: &Model,
+     cfg: &Config,
+     initial: &State,
+-    pairs: &Pairs,
+     capture_first: bool,
+     clock: SearchClock,
+     seed: u64,
+@@ -526,8 +490,7 @@
+                     if clock.expired() {
+                         break;
+                     }
+-                    let Some(action) = neighborhood.sample(model, pairs, &work.state, &mut rng)
+-                    else {
++                    let Some(action) = neighborhood.sample(model, &work.state, &mut rng) else {
+                         continue;
+                     };
+                     let Some(change) = work.apply(action)? else {
+@@ -551,7 +514,7 @@
+                 }
+             }
+             _ => {
+-                if let Some(action) = neighborhood.sample(model, pairs, &work.state, &mut rng) {
++                if let Some(action) = neighborhood.sample(model, &work.state, &mut rng) {
+                     if let Some(change) = work.apply(action)? {
+                         let rank = work.scorer.score();
+                         let accept = match cfg.algorithm {
+@@ -658,11 +621,7 @@
+         _ => (),
+     }
+     score::validate(model)?;
+-    let pairs = match cfg.construction {
+-        ConstructionHeuristic::BestFit => Pairs::discover(model),
+-        ConstructionHeuristic::FirstFit => Pairs::default(),
+-    };
+-    let (initial, at) = construct(model, cfg, &pairs, clock)?;
++    let (initial, at) = construct(model, cfg, clock)?;
+     let initial_feasible = at.filter(|_| capture).map(|at| FirstFeasible {
+         at,
+         state: initial.clone(),
+@@ -678,14 +637,12 @@
+         return Err("构造结束时仍有未分配的元素".into());
+     }
+     if cfg.threads == 1 {
+-        let (result, first) =
+-            improve(model, cfg, &initial, &pairs, capture_first, clock, cfg.seed)?;
++        let (result, first) = improve(model, cfg, &initial, capture_first, clock, cfg.seed)?;
+         return Ok((result, initial_feasible.or(first)));
+     }
+     thread::scope(|scope| {
+         let mut workers = Vec::new();
+         let initial = &initial;
+-        let pairs = &pairs;
+         for idx in 0..cfg.threads {
+             let seed = if idx == 0 {
+                 cfg.seed
+@@ -695,7 +652,7 @@
+             workers.push(
+                 thread::Builder::new()
+                     .spawn_scoped(scope, move || {
+-                        improve(model, cfg, initial, pairs, capture_first, clock, seed)
++                        improve(model, cfg, initial, capture_first, clock, seed)
+                     })
+                     .map_err(|e| format!("无法启动搜索线程：{e}"))?,
+             );

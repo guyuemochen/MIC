@@ -1,5 +1,7 @@
 # planner
 
+通用业务模型支持为同一实体选择多个变量，也支持配送和加工顺序。Rust、Python 3.8+ 和 Java 8+ 使用同一个启发式内核。[业务建模、构建命令和四个完整示例](BUSINESS.md)
+
 OptaPlanner 式启发式约束求解器：纯 Rust、**仅标准库、零依赖、无 `unsafe`**——
 threads=1 时单线程路径不变（性能来自增量评分）；`--threads N` 多起点并行（仅标准库
 scoped threads、零共享可变状态、无 unsafe）。求解流程：

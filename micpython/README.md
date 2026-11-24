@@ -1,5 +1,7 @@
 # micpython — milp 求解器的 gurobipy 风格 Python 绑定
 
+启发式业务规划使用 `from micpython.planner import Model`，支持分配、路线和工序排序。[规划器建模与示例](../planner/BUSINESS.md)
+
 零第三方依赖（ctypes + 标准库），Python 3.8+。目标求解器为本地 FFI 库
 **milp-ffi**（`milp-ffi/src/api.rs` 的 23 个 C ABI 符号），底层是 `milp`
 crate 的 `solve_controlled` 精确分支定界引擎。`import micpython` 无副作用

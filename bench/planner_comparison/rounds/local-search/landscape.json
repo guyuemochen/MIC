@@ -1,0 +1,262 @@
+{
+  "seeds": [
+    7,
+    19,
+    43,
+    73,
+    101
+  ],
+  "input_sha256": "1060f98650b14f5203dfea45a01fd8d8cdbd24948ebfd6134f22526ce24bfede",
+  "runs_sha256": "61abaede8876a63b013d6597bfb8120bfecc5250cc7f38285bf43a3d9853ce85",
+  "same_start_and_final_for_all_seeds": true,
+  "initial_soft": 109,
+  "strict_descent": [
+    {
+      "course_time_room": [
+        [
+          129,
+          17,
+          6
+        ],
+        [
+          139,
+          7,
+          5
+        ]
+      ],
+      "soft": 105
+    },
+    {
+      "course_time_room": [
+        [
+          55,
+          0,
+          5
+        ],
+        [
+          127,
+          5,
+          4
+        ]
+      ],
+      "soft": 103
+    },
+    {
+      "course_time_room": [
+        [
+          60,
+          14,
+          7
+        ],
+        [
+          131,
+          9,
+          4
+        ]
+      ],
+      "soft": 101
+    },
+    {
+      "course_time_room": [
+        [
+          67,
+          5,
+          7
+        ],
+        [
+          110,
+          6,
+          2
+        ]
+      ],
+      "soft": 99
+    },
+    {
+      "course_time_room": [
+        [
+          81,
+          16,
+          6
+        ],
+        [
+          137,
+          14,
+          5
+        ]
+      ],
+      "soft": 97
+    },
+    {
+      "course_time_room": [
+        [
+          120,
+          14,
+          5
+        ],
+        [
+          137,
+          6,
+          5
+        ]
+      ],
+      "soft": 95
+    },
+    {
+      "course_time_room": [
+        [
+          118,
+          6,
+          7
+        ]
+      ],
+      "soft": 91
+    },
+    {
+      "course_time_room": [
+        [
+          55,
+          2,
+          2
+        ]
+      ],
+      "soft": 89
+    }
+  ],
+  "initial_scalar_swaps": {
+    "total_valid_nontrivial": 24542,
+    "feasible": 617,
+    "improving": 0,
+    "equal": 439,
+    "worse": 178
+  },
+  "initial_improving_scalar_swaps": [],
+  "initial_neighborhood": {
+    "relocate": {
+      "total": 22260,
+      "feasible": 1079,
+      "improving": 0,
+      "equal": 121,
+      "worse": 958
+    },
+    "swap": {
+      "total": 9730,
+      "feasible": 1579,
+      "improving": 6,
+      "equal": 495,
+      "worse": 1078
+    }
+  },
+  "initial_improving_moves": [
+    {
+      "delta": -4,
+      "course_time_room": [
+        [
+          129,
+          17,
+          6
+        ],
+        [
+          139,
+          7,
+          5
+        ]
+      ]
+    },
+    {
+      "delta": -2,
+      "course_time_room": [
+        [
+          55,
+          0,
+          5
+        ],
+        [
+          127,
+          5,
+          4
+        ]
+      ]
+    },
+    {
+      "delta": -2,
+      "course_time_room": [
+        [
+          55,
+          2,
+          2
+        ],
+        [
+          118,
+          5,
+          4
+        ]
+      ]
+    },
+    {
+      "delta": -2,
+      "course_time_room": [
+        [
+          60,
+          14,
+          7
+        ],
+        [
+          131,
+          9,
+          4
+        ]
+      ]
+    },
+    {
+      "delta": -2,
+      "course_time_room": [
+        [
+          81,
+          16,
+          6
+        ],
+        [
+          137,
+          14,
+          5
+        ]
+      ]
+    },
+    {
+      "delta": -2,
+      "course_time_room": [
+        [
+          120,
+          16,
+          6
+        ],
+        [
+          137,
+          6,
+          5
+        ]
+      ]
+    }
+  ],
+  "last_neighborhood": {
+    "relocate": {
+      "total": 22260,
+      "feasible": 1107,
+      "improving": 0,
+      "equal": 116,
+      "worse": 991
+    },
+    "swap": {
+      "total": 9730,
+      "feasible": 1573,
+      "improving": 0,
+      "equal": 479,
+      "worse": 1094
+    }
+  },
+  "final_soft": 89,
+  "old_sampler_at_initial_state": {
+    "single_draw_improves_probability": 0.00011562178828365879,
+    "at_least_one_in_32_independent_draws_probability": 0.003693274159845328
+  }
+}

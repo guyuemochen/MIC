@@ -1,0 +1,278 @@
+--- a/planner/src/business/search.rs
++++ b/planner/src/business/search.rs
+@@ -507,8 +507,6 @@
+         Metaheuristic::LateAcceptance { history_len } => vec![best; history_len],
+         _ => Vec::new(),
+     };
+-    let mut inspect_best = best.0 == 0;
+-    let mut away_steps = 0;
+     let mut steps = 0;
+     let reason = loop {
+         if clock.expired() {
+@@ -523,60 +521,33 @@
+         let before = work.scorer.score();
+         match cfg.algorithm {
+             Metaheuristic::TabuSearch { tabu_size } => {
+-                // 给禁忌搜索一段离开最好解的探索期。持续偏离一轮仍未回到最好分数时，
+-                // 从保存的方案重新采样，沿用随机数进度，避免一直在较差的区域搜索。
+-                if pairs.len() > 0 && best.0 == 0 && away_steps >= pairs.len().max(tabu_size) {
+-                    work = Working::new(model, best_state.clone())?;
+-                    tabu.clear();
+-                    away_steps = 0;
+-                    inspect_best = false;
+-                }
+-                // 严格改善历史最好解的移动本来就享有禁忌豁免。优先检查容易漏采的复合键。
+-                let descent = if inspect_best {
+-                    inspect_best = false;
+-                    pairs.best_improvement(&mut work, clock)?
+-                } else {
+-                    None
+-                };
+-                let selected = if let Some(action) = descent {
+-                    Some(action)
+-                } else {
+-                    let mut winner: Option<(Rank, Action)> = None;
+-                    for _ in 0..DEFAULT_SAMPLES_PER_STEP {
+-                        if clock.expired() {
+-                            break;
+-                        }
+-                        let Some(action) = neighborhood.sample(model, pairs, &work.state, &mut rng)
+-                        else {
+-                            continue;
+-                        };
+-                        let Some(change) = work.apply(action)? else {
+-                            continue;
+-                        };
+-                        let rank = work.scorer.score();
+-                        let allowed = rank < best
+-                            || change
+-                                .keys()
+-                                .all(|key| tabu.get(&key).copied().unwrap_or(0) <= steps);
+-                        if allowed && winner.is_none_or(|old| (rank, action) < old) {
+-                            winner = Some((rank, action));
+-                        }
+-                        work.rollback(change)?;
++                let mut winner: Option<(Rank, Action)> = None;
++                for _ in 0..DEFAULT_SAMPLES_PER_STEP {
++                    if clock.expired() {
++                        break;
+                     }
+-                    winner.map(|(_, action)| action)
+-                };
+-                if let Some(winner) = selected {
++                    let Some(action) = neighborhood.sample(model, pairs, &work.state, &mut rng)
++                    else {
++                        continue;
++                    };
++                    let Some(change) = work.apply(action)? else {
++                        continue;
++                    };
++                    let rank = work.scorer.score();
++                    let allowed = rank < best
++                        || change
++                            .keys()
++                            .all(|key| tabu.get(&key).copied().unwrap_or(0) <= steps);
++                    if allowed && winner.is_none_or(|old| (rank, action) < old) {
++                        winner = Some((rank, action));
++                    }
++                    work.rollback(change)?;
++                }
++                if let Some((_, winner)) = winner {
+                     let change = work.apply(winner)?.ok_or("已验证的搜索移动出现环")?;
+-                    // 同分的另一种排法可能开放新的改善移动，例如先挪动一间教室。
+-                    inspect_best = best.0 == 0 && work.scorer.score() == best;
+                     for key in change.keys() {
+                         tabu.insert(key, steps.saturating_add(tabu_size));
+                     }
+-                }
+-                if work.scorer.score() > best {
+-                    away_steps += 1;
+-                } else {
+-                    away_steps = 0;
+                 }
+             }
+             _ => {
+@@ -618,7 +589,6 @@
+                 break StopReason::Time;
+             };
+             best = work.scorer.score();
+-            inspect_best = best.0 == 0;
+             if capture_first && best.0 == 0 && first_feasible.is_none() {
+                 first_feasible = Some(FirstFeasible {
+                     at,
+--- a/planner/src/business/search/pairs.rs
++++ b/planner/src/business/search/pairs.rs
+@@ -35,10 +35,6 @@
+ }
+ 
+ impl Pairs {
+-    pub(super) fn len(&self) -> usize {
+-        self.members.len()
+-    }
+-
+     pub(super) fn discover(model: &Model) -> Self {
+         let mut keys = BTreeSet::new();
+         let mut visit = |id: usize| {
+@@ -98,75 +94,6 @@
+     pub(super) fn partner(&self, var: usize) -> Option<usize> {
+         let [a, b] = self.members[self.indices.get(var).copied().flatten()?];
+         Some(if a == var { b } else { a })
+-    }
+-
+-    fn exchange(&self, model: &Model, state: &State, i: usize, j: usize) -> Option<Action> {
+-        let left @ [a, b] = self.members[i.min(j)];
+-        let right @ [c, d] = self.members[i.max(j)];
+-        let compatible = |x: usize, y: usize| {
+-            model.domains[x].contains(&state.values[y].unwrap())
+-                && model.domains[y].contains(&state.values[x].unwrap())
+-        };
+-        ((state.values[a], state.values[b]) != (state.values[c], state.values[d])
+-            && compatible(a, c)
+-            && compatible(b, d))
+-        .then_some(Action::ExchangePairs(left, right))
+-    }
+-
+-    /// 在可行的最好解附近检查完整复合键移动，保留严格改善最大的动作。
+-    /// 流式枚举不缓存邻域；选出的动作用普通提交路径再次确认时间和分数。
+-    pub(super) fn best_improvement(
+-        &self,
+-        work: &mut Working<'_>,
+-        clock: SearchClock,
+-    ) -> PlanResult<Option<Action>> {
+-        if self.members.is_empty() {
+-            return Ok(None);
+-        }
+-        // 大邻域可能来不及扫完，给提交已发现的候选和普通禁忌搜索留出时间。
+-        let scan_clock = SearchClock {
+-            start: clock.start,
+-            limit: clock.limit.map(|limit| {
+-                let left = limit.saturating_sub(clock.start.elapsed());
+-                limit - left / 2
+-            }),
+-        };
+-        let current = work.scorer.score();
+-        let mut best = None;
+-        let mut consider = |work: &mut Working<'_>, action| -> PlanResult<()> {
+-            if let Some(rank) = work.preview(action)? {
+-                if rank < current && best.is_none_or(|old| (rank, action) < old) {
+-                    best = Some((rank, action));
+-                }
+-            }
+-            Ok(())
+-        };
+-        'rows: for (i, &[a, b]) in self.members.iter().enumerate() {
+-            for j in i + 1..self.members.len() {
+-                if scan_clock.expired() {
+-                    break 'rows;
+-                }
+-                if let Some(action) = self.exchange(work.model, &work.state, i, j) {
+-                    consider(work, action)?;
+-                }
+-            }
+-            for x in 0..work.model.domains[a].len() {
+-                for y in 0..work.model.domains[b].len() {
+-                    if scan_clock.expired() {
+-                        break 'rows;
+-                    }
+-                    if (work.state.values[a], work.state.values[b])
+-                        != (
+-                            Some(work.model.domains[a][x]),
+-                            Some(work.model.domains[b][y]),
+-                        )
+-                    {
+-                        consider(work, Action::AssignPair(a, x, b, y))?;
+-                    }
+-                }
+-            }
+-        }
+-        Ok(best.map(|(_, action)| action))
+     }
+ 
+     /// 互换整对属性让两项决策直接交换占用的键，无需先经过一次撞键的中间状态。
+@@ -185,8 +112,19 @@
+         if self.members.len() > 1 && rng.gen_ratio(0.75) {
+             let other = pick(rng, self.members.len() - 1);
+             let j = if other < i { other } else { other + 1 };
+-            if let Some(action) = self.exchange(model, state, i, j) {
+-                return Some(action);
++            let [c, d] = self.members[j];
++            let compatible = |x: usize, y: usize| {
++                model.domains[x].contains(&state.values[y].unwrap())
++                    && model.domains[y].contains(&state.values[x].unwrap())
++            };
++            if (state.values[a], state.values[b]) != (state.values[c], state.values[d])
++                && compatible(a, c)
++                && compatible(b, d)
++            {
++                return Some(Action::ExchangePairs(
++                    self.members[i.min(j)],
++                    self.members[i.max(j)],
++                ));
+             }
+         }
+         let x = pick(rng, model.domains[a].len());
+@@ -312,64 +250,6 @@
+     }
+ 
+     #[test]
+-    fn tabu_finds_the_best_feasible_exchange_in_one_step() {
+-        // 两个低代价位置已占满。第三项只有和前两项之一同时交换，才能从 9 降分。
+-        let mut m = model(2);
+-        let mut costs = Vec::new();
+-        for (i, price) in [(0, 2), (2, 4), (4, 9)] {
+-            let var = m.expr(Expr::Var(i));
+-            costs.push(m.expr(Expr::Lookup(vec![0, price], var)));
+-        }
+-        m.objective = Some(m.expr(Expr::Sum(costs)));
+-        for seed in [0, 19] {
+-            let cfg = Config {
+-                seed,
+-                steps: 1,
+-                construction: ConstructionHeuristic::BestFit,
+-                algorithm: crate::Metaheuristic::TabuSearch { tabu_size: 8 },
+-                ..Config::default()
+-            };
+-            let (result, first) = optimize_timed(&m, &cfg).unwrap();
+-            let initial = first.unwrap().state;
+-            let score = score::full(&m, &initial).unwrap();
+-            assert_eq!((score.hard, score.soft), (0, 9));
+-            assert_eq!(result.steps, 1);
+-            assert_eq!((result.score.hard, result.score.soft), (0, 2));
+-            assert_eq!(result.score, score::full(&m, &result.state).unwrap());
+-        }
+-    }
+-
+-    #[test]
+-    fn descent_respects_domains_and_restores_its_starting_state() {
+-        let mut m = model(4);
+-        m.domains[1] = vec![2, 3];
+-        let mut state = State::empty(&m);
+-        state.values = [1, 2, 0, 0, 0, 1].map(Some).to_vec();
+-        let pairs = Pairs::discover(&m);
+-        assert!(pairs.exchange(&m, &state, 0, 1).is_none());
+-        let mut work = Working::new(&m, state.clone()).unwrap();
+-        let clock = SearchClock {
+-            start: Instant::now(),
+-            limit: Some(Duration::ZERO),
+-        };
+-        assert_eq!(pairs.best_improvement(&mut work, clock).unwrap(), None);
+-        assert_eq!(work.state, state);
+-        let action = pairs
+-            .best_improvement(
+-                &mut work,
+-                SearchClock {
+-                    limit: None,
+-                    ..clock
+-                },
+-            )
+-            .unwrap();
+-        // 原位置 (1,2) 可改成空闲的 (0,2)，不需要和不兼容的变量对互换。
+-        assert_eq!(action, Some(Action::AssignPair(0, 0, 1, 0)));
+-        assert_eq!(work.state, state);
+-        assert_eq!(work.scorer.score(), (0, 1));
+-    }
+-
+-    #[test]
+     fn ambiguous_nonunique_and_large_keys_fall_back() {
+         let m = model(1);
+         assert!(Pairs::discover(&m).members.is_empty());
