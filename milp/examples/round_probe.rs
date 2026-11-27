@@ -109,6 +109,8 @@ fn solve(
         adaptive_heuristics: true,
         ..SearchControl::default()
     };
+    #[cfg(feature = "proof_profile")]
+    let mut failure_samples = milp::proof_profile::FailureSamples::First;
     let mut pairs = args.chunks_exact(2);
     if !pairs.remainder().is_empty() {
         return Err("求解选项必须成对给出".into());
@@ -153,6 +155,15 @@ fn solve(
                 "off" => BinaryPropagationMode::Off,
                 _ => return Err(format!("未知传播模式 {value}，期望 auto|on|off").into()),
             },
+            #[cfg(feature = "proof_profile")]
+            "--lp-failure-samples" => {
+                use milp::proof_profile::FailureSamples;
+                failure_samples = match value {
+                    "first" => FailureSamples::First,
+                    "exceptional" => FailureSamples::Exceptional,
+                    _ => return Err(format!("未知 LP 失败采样方式 {value}，期望 first|exceptional").into()),
+                };
+            }
             "--early-stop" => {
                 ctrl.degrade = if toggle(value)? {
                     DegradePolicy::default()
@@ -170,7 +181,7 @@ fn solve(
         return Err("线程数至少为 1".into());
     }
     #[cfg(feature = "proof_profile")]
-    milp::proof_profile::reset(ctrl.threads);
+    milp::proof_profile::reset_with_failure_samples(ctrl.threads, failure_samples);
     let events = RefCell::new(Vec::new());
     let start = Instant::now();
     let result = if observe_incumbents {

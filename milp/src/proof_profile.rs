@@ -78,6 +78,20 @@ pub struct ProbeTotals {
     pub time_limit: u64,
     pub unbounded: u64,
 }
+/// 普通不可行节点很多时，可把有限的样本位置留给数值异常和其他非最优终态。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FailureSamples {
+    #[default]
+    First,
+    Exceptional,
+}
+
+impl FailureSamples {
+    fn includes(self, status: LpStatus, numerical_error: bool) -> bool {
+        self == Self::First || status != LpStatus::Infeasible || numerical_error
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Trace {
     pub available: bool,
@@ -87,6 +101,7 @@ pub struct Trace {
     pub chosen_omitted: u64,
     pub failures_omitted: u64,
     failure_samples: usize,
+    failure_sampling: FailureSamples,
     pub tree_lp_calls: u64,
     pub tree_lp_iterations: u64,
     pub unresolved_lp_nodes: u64,
@@ -102,9 +117,15 @@ pub struct Trace {
 }
 thread_local! { static TRACE:RefCell<Trace> = RefCell::new(Trace::default()); }
 pub fn reset(requested_threads: usize) {
+    reset_with_failure_samples(requested_threads, FailureSamples::First)
+}
+
+/// 两种策略均最多保存 64 条失败，跳过的事件累计到 failures_omitted。
+pub fn reset_with_failure_samples(requested_threads: usize, failure_sampling: FailureSamples) {
     TRACE.with(|trace| {
         *trace.borrow_mut() = Trace {
             requested_threads,
+            failure_sampling,
             available: requested_threads == 1,
             enabled: requested_threads == 1,
             ..Trace::default()
@@ -487,23 +508,24 @@ pub fn lp_failure(
     if sol.status == LpStatus::Optimal {
         return;
     }
-    let sample = TRACE.with(|trace| {
+    let sampling = TRACE.with(|trace| {
         let mut t = trace.borrow_mut();
         if !t.enabled {
-            return false;
+            return None;
         }
         if t.failure_samples >= 64 {
             t.failures_omitted += 1;
-            false
-        } else {
-            t.failure_samples += 1;
-            true
+            return None;
         }
+        Some(t.failure_sampling)
     });
-    if !sample {
+    let Some(sampling) = sampling else { return };
+    let detail = engine.proof_diagnostics();
+    if !sampling.includes(sol.status, detail.numerical_error.is_some()) {
+        TRACE.with(|trace| trace.borrow_mut().failures_omitted += 1);
         return;
     }
-    let detail = engine.proof_diagnostics();
+    TRACE.with(|trace| trace.borrow_mut().failure_samples += 1);
     record(
         "lp_failure",
         vec![
@@ -550,6 +572,9 @@ impl Trace {
             write!(out, "}}")?;
         }
         write!(out, "],\"failures_omitted\":{},", self.failures_omitted)?;
+        if self.failure_sampling == FailureSamples::Exceptional {
+            write!(out, "\"failure_sampling\":\"exceptional\",")?;
+        }
         write!(out,"\"tree_lp_calls\":{},\"tree_lp_iterations\":{},\"unresolved_lp_nodes\":{},\"unresolved_est\":",self.tree_lp_calls,self.tree_lp_iterations,self.unresolved_lp_nodes)?;
         write_value(out, &optional(self.unresolved_est))?;
         write!(out, ",\"processed_min_depth\":")?;
@@ -798,6 +823,33 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn exceptional_failure_samples_keep_late_interrupts_and_respect_capacity() {
+        let problem = fractional_problem();
+        let engine = crate::simplex::Simplex::new(&problem, Tolerances::default()).unwrap();
+        let failure = |status| LpSolution { status, objective: f64::NAN, x: vec![], duals: vec![] };
+        assert!(FailureSamples::Exceptional.includes(LpStatus::Infeasible, true));
+        for policy in [FailureSamples::First, FailureSamples::Exceptional] {
+            reset_with_failure_samples(1, policy);
+            for _ in 0..125 {
+                lp_failure("tree", &failure(LpStatus::Infeasible), &engine);
+            }
+            for _ in 0..65 {
+                lp_failure("tree", &failure(LpStatus::IterationLimit), &engine);
+            }
+            let trace = take();
+            let expected = if policy == FailureSamples::First { "infeasible" } else { "iteration_limit" };
+            assert_eq!(trace.events.len(), 64);
+            assert_eq!(trace.failures_omitted, 126);
+            assert!(trace.events.iter().all(|e| matches!(field(e, "status"), Value::Text(actual) if *actual == expected)));
+            let mut json = Vec::new();
+            trace.write_json(&mut json).unwrap();
+            assert_eq!(String::from_utf8(json).unwrap().contains("failure_sampling"), policy == FailureSamples::Exceptional);
+        }
+        reset(1);
+        assert_eq!(take().failure_sampling, FailureSamples::First);
+    }
+
     #[test]
     fn snapshot_restore_counters_do_not_claim_new_lp_work() {
         reset(1);
