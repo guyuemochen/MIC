@@ -500,11 +500,13 @@ pub(crate) type WorkIncumbentObserver<'a> = Option<&'a dyn Fn(&[f64])>;
 
 /// 结构化求解回退时，继续沿用同一次求解的预算和工作量。
 #[derive(Default)]
-pub(crate) struct SearchPrelude {
+pub(crate) struct SearchPrelude<'a> {
     pub(crate) start: Option<Instant>,
     pub(crate) nodes: u64,
     pub(crate) lp_iterations: u64,
     pub(crate) incumbent: Option<Incumbent>,
+    /// 受限子模型可在节点边界提前交还预算。退出时保留全部未完成分支。
+    pub(crate) stop_after_node: Option<&'a dyn Fn(u64) -> bool>,
 }
 
 /// 仅统一求解编排传入本次 presolve 的旧认证行；公开入口始终携带空载荷。
@@ -516,7 +518,7 @@ pub(crate) fn branch_and_bound_with_preserved(
     hooks: Option<&SearchHooks>,
     preserved: PreservedBinaryRows,
     incumbent_observer: WorkIncumbentObserver<'_>,
-    prelude: SearchPrelude,
+    prelude: SearchPrelude<'_>,
 ) -> Result<BbResult> {
     // R3 类自适应默认（分支规则）：入口一次解析（顺序/并行两路共用；worker
     // 收到的即具体规则，确定性）。显式 branch_rule（auto=false）覆盖优先。
@@ -565,6 +567,26 @@ pub(crate) fn branch_and_bound_with_preserved(
     sequential_bb(problem, opts, ctrl, tol, hooks, preserved, incumbent_observer, prelude)
 }
 
+// 快照持有相同根界和行上的完整最优基。试探做过的工作移到外部累计，
+// 快照内已有的根迭代仍由引擎报告。调用者负责恢复阶段专用的截止时间。
+fn restore_heuristic_basis(
+    simplex: &mut Box<dyn LpEngine>,
+    snapshot: Box<dyn LpEngine>,
+    previous_iterations: &mut u64,
+) {
+    let extra = simplex.iterations().saturating_sub(snapshot.iterations());
+    *previous_iterations = previous_iterations.saturating_add(extra);
+    *simplex = snapshot;
+}
+
+// 恢复快照不执行 LP，没有引擎的超时检查点。
+fn expire_saved_root(sol: &mut LpSolution, deadline: Option<Instant>) {
+    if deadline.is_some_and(|end| Instant::now() >= end) {
+        sol.status = LpStatus::TimeLimit;
+        sol.objective = f64::NAN;
+    }
+}
+
 /// 顺序分支定界（既有 [`branch_and_bound`] 的实现体 + 全部门控的受控扩展；
 /// 门控默认全关 ⇒ 行为与原实现逐字节一致）。
 fn sequential_bb(
@@ -575,7 +597,7 @@ fn sequential_bb(
     hooks: Option<&SearchHooks>,
     mut preserved: PreservedBinaryRows,
     incumbent_observer: WorkIncumbentObserver<'_>,
-    prelude: SearchPrelude,
+    prelude: SearchPrelude<'_>,
 ) -> Result<BbResult> {
     debug_assert_ne!(opts.binary_row_propagation, BinaryPropagationMode::Auto);
     let start = prelude.start.unwrap_or_else(Instant::now);
@@ -613,9 +635,16 @@ fn sequential_bb(
         bb_time_deadline(&start, opts)
     };
     simplex.set_time_deadline(time_deadline);
+    let choice_search_enabled = !budget_mode && ctrl.threads == 1
+        && ctrl.mipgap_percent.is_some_and(|gap| gap.is_finite() && gap > 0.);
     let mut bounds = Bounds::from_problem(problem);
     // incumbent = (目标, 取值)；目标一律按取整后的值评估（WP3 复核口径）。
     let mut incumbent = prelude.incumbent.map(|inc| (inc.objective, inc.values));
+    if opts.heuristics && incumbent.is_none() {
+        if let Some(inc) = heuristics::private_slack_start(problem, &bounds, &tol, time_deadline) {
+            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+        }
+    }
     // —— 受控扩展状态（默认全关 ⇒ 零行为变化）——
     // 上行进度行的发射时刻（秒）；仅钩子启用时被写入。
     let mut last_log: Option<f64> = None;
@@ -639,6 +668,22 @@ fn sequential_bb(
     ]);
     #[cfg(feature = "proof_profile")]
     let profile_root_start = Instant::now();
+    // 结构列远多于行时，原始定价每步需扫描大量候选。允许正缺口的单线程
+    // 宽互斥模型在首个稀疏根采用对偶初始基，其余入口沿用原有选基。
+    #[cfg(feature = "choice_dual_root")]
+    let choice_start = choice_search_enabled
+        && choice_root_width(problem)
+        && crate::simplex_sparse::effective_engine(problem, opts.lp_engine) == LpEngineKind::Revised
+        && heuristics::wide_choice_columns(problem).is_some();
+    #[cfg(not(feature = "choice_dual_root"))]
+    let choice_start = false;
+    #[cfg(feature = "choice_dual_root")]
+    let mut sol = if choice_start {
+        simplex.solve_choice_root(&bounds)
+    } else {
+        simplex.solve(&bounds)
+    };
+    #[cfg(not(feature = "choice_dual_root"))]
     let mut sol = simplex.solve(&bounds);
     #[cfg(test)]
     test_root_lp_interrupt::apply("initial", &mut sol);
@@ -741,6 +786,7 @@ fn sequential_bb(
         ));
     }
 
+    let mut integer_lower_bound = None;
     let mut proven_root_bound = None;
     remember_root_bound(sense, &mut proven_root_bound, &sol);
 
@@ -816,23 +862,137 @@ fn sequential_bb(
     // 优，两轮互为补充：incumbent 只增不减（maybe_update），割生成只读表格
     // 不读 incumbent，割序不受影响。关割路径顶点唯一（割前 ≡ 割后），
     // `root_cuts=false` 时不执行 ⇒ 行为逐字节不变。
-    if opts.root_cuts && opts.heuristics {
-        // 快照在启发式改界前取得：基、非基贴界、定价历史与绝对deadline一并保留。
-        #[cfg(feature = "root_snapshot_restore")]
-        let root_snapshot = simplex.snapshot();
+    let short_choice_tree = opts.root_cuts && opts.heuristics && choice_search_enabled
+        && (opts.node_limit == 0 || opts.node_limit.saturating_sub(stats.nodes) >= 32)
+        && heuristics::short_choice_tree(problem, &sol.x, &tol);
+    let mut keep_heuristic_root = false;
+    if opts.root_cuts && opts.heuristics && !short_choice_tree {
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
-        if let Some(inc) = heuristics::dive_with_work_budget(
-            problem,
-            &mut simplex,
-            &bounds,
-            &sol.x,
-            opts.dive_max_fixes,
-            &tol,
-            root_work_budget.as_deref_mut(),
-        ) {
-            maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+        // 达到用户缺口后可以跳过余下的根工作；使用潜水前完整 LP 的界。
+        let meets_target = |incumbent: &Option<(f64, Vec<f64>)>, bound: Option<f64>| {
+            ctrl.mipgap_percent.is_some_and(|target| target > 0.0
+                && incumbent.as_ref().zip(bound).is_some_and(|((obj, _), bound)|
+                    gap_percent(sense, *obj, bound).is_some_and(|gap| gap <= target)))
+        };
+        let choice_columns = if opts.dive_max_fixes > 0
+            && !meets_target(&incumbent, proven_root_bound)
+            && !is_integral(&int_vars, &sol.x, tol.integrality)
+        {
+            heuristics::wide_choice_columns(problem)
+        } else {
+            None
+        };
+        let mut choices = None;
+        let mut skip_ordinary_dive = false;
+        if let Some(columns) = choice_columns {
+            // 宽互斥根的换基次数超过行数时，复制一次状态通常比恢复根界更便宜。
+            // 显式稠密引擎可能持有很大的表格；纯预算模式保留原来的工作量。
+            keep_heuristic_root = !budget_mode && opts.lp_engine != LpEngineKind::Tableau
+                && simplex.iterations() > problem.constraints.len() as u64;
+            if choice_search_enabled {
+                choices = crate::solver::choice_search::ChoiceSearch::prepare(
+                    problem, opts, ctrl, start, time_deadline, &*simplex,
+                );
+            }
+            if let Some(plan) = &mut choices {
+                let upper = incumbent.as_ref().map(|v| v.0);
+                let best = std::cell::RefCell::new(&mut incumbent);
+                let spent = plan.start_paired(problem, &sol, opts, tol, upper, stats.nodes, &|inc| {
+                    maybe_update(sense, *best.borrow_mut(), inc, incumbent_observer);
+                });
+                stats.nodes += spent.nodes;
+                stats.cuts += spent.cuts;
+                base_lp_iterations += spent.lp_iterations;
+                skip_ordinary_dive = plan.paired_rows;
+                if !skip_ordinary_dive {
+                    simplex.set_time_deadline(Some(plan.ordinary_deadline));
+                }
+            }
+            if !skip_ordinary_dive {
+                let (inc, iterations) = heuristics::choice_dive(
+                    problem, &*simplex, &bounds, &sol.x, &columns, opts.dive_max_fixes,
+                    &tol, root_work_budget.as_deref_mut(),
+                );
+                base_lp_iterations = base_lp_iterations.saturating_add(iterations);
+                if let Some(inc) = inc {
+                    skip_ordinary_dive = choices.is_some()
+                        && incumbent.as_ref().is_none_or(|(value, _)| inc.objective < *value);
+                    maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+                }
+            }
+        }
+        if let (Some(plan), Some((u, _))) = (&choices, &incumbent) {
+            let remaining = if opts.node_limit == 0 { u64::MAX } else {
+                opts.node_limit.saturating_sub(stats.nodes)
+            };
+            if let Some((candidate, bound, spent)) = plan.probe(problem, &sol, *u, &tol, remaining) {
+                stats.nodes = stats.nodes.saturating_add(spent.nodes);
+                stats.cuts = stats.cuts.saturating_add(spent.cuts);
+                base_lp_iterations = base_lp_iterations.saturating_add(spent.lp_iterations);
+                if let Some(inc) = candidate {
+                    maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+                }
+                if bound > sol.objective && incumbent.as_ref().is_some_and(|(u, _)| bound <= *u) {
+                    integer_lower_bound = Some(bound);
+                    proven_root_bound = Some(bound);
+                }
+            }
+        }
+        // 短潜水已改善排班时，把剩余时间留给候选模型和下界证明。
+        // 专用对偶初基可能位于不同的最优顶点。默认割分离使用常规冷基。
+        let keep_precut_root = cfg!(feature = "root_snapshot_restore")
+            || (keep_heuristic_root && !choice_start);
+        if !skip_ordinary_dive && !meets_target(&incumbent, proven_root_bound) {
+            let root_snapshot = keep_precut_root.then(|| simplex.snapshot());
+            if let Some(inc) = heuristics::dive_with_work_budget(
+                problem, &mut simplex, &bounds, &sol.x, opts.dive_max_fixes, &tol,
+                root_work_budget.as_deref_mut(),
+            ) {
+                maybe_update(sense, &mut incumbent, inc, incumbent_observer);
+            }
+            if let Some(snapshot) = root_snapshot {
+                restore_heuristic_basis(&mut simplex, snapshot, &mut base_lp_iterations);
+            }
+        }
+        if let Some(plan) = choices {
+            // 普通潜水的试探截止只约束该阶段；割和完整搜索使用原求解时限。
+            simplex.set_time_deadline(time_deadline);
+            if !meets_target(&incumbent, proven_root_bound) {
+                let (new, bound, spent) = plan.improve(
+                    problem, &sol, opts, tol, incumbent.as_ref().map(|v| v.0),
+                    proven_root_bound.unwrap_or(sol.objective), stats.nodes, incumbent_observer,
+                );
+                if let Some(inc) = new {
+                    // improve 已在接受每个更好解时发出回调。
+                    incumbent = Some((inc.objective, inc.values));
+                }
+                if bound > sol.objective {
+                    integer_lower_bound = Some(bound);
+                    proven_root_bound = Some(bound);
+                }
+                stats.nodes = stats.nodes.saturating_add(spent.nodes);
+                stats.cuts = stats.cuts.saturating_add(spent.cuts);
+                base_lp_iterations = base_lp_iterations.saturating_add(spent.lp_iterations);
+            }
+        }
+        if let (Some((value, _)), Some(bound)) = (&incumbent, proven_root_bound) {
+            if meets_target(&incumbent, proven_root_bound) {
+                let proved = bound_no_better(
+                    sense, bound, *value, obj_integral, opts.prune_abs, opts.prune_rel,
+                );
+                let timed_out = time_deadline.is_some_and(|end| Instant::now() >= end);
+                let status = if proved && !timed_out { SolveStatus::Optimal } else { SolveStatus::LimitReached };
+                let evidence = Some(if proved { *value } else { bound });
+                if let Some(h) = hooks {
+                    emit_progress(h, &start, stats.nodes, Some(*value), evidence, sense);
+                }
+                return Ok(finish(
+                    status, incumbent, &mut stats, &*simplex, start, base_lp_iterations,
+                    evidence, !proved && !timed_out, false,
+                ));
+            }
         }
         if let Some(result) = root_subset_sum(
             &bounds, &sol.x, &mut incumbent, &mut stats, &*simplex, base_lp_iterations,
@@ -846,39 +1006,23 @@ fn sequential_bb(
                 ("remaining_lp_calls", budget.lp_calls.into()),
             ]);
         }
-        // dive 扰动了 Simplex 内部基：割循环入口的防御性 resolve(bounds) 只
-        // 恢复 Optimal 性，不恢复**同一个**最优基——重退化根 LP（如背包类）
-        // 的备择最优基上 GMI 分离结果不同，割集会系统性偏离无预割路径
-        // （实测 knapsack-2000：12→4 割、594→1628 节点；knapsack-500：
-        // 360→1614 节点）。此处重建冷 Simplex + 重解根 LP（确定性求解器 ⇒
-        // 与无预割路径逐字节一致的表格），使割循环恒在冷基上分离；incumbent
-        // 已由 maybe_update 收取，不受重建影响。迭代记账先累计再重建
-        // （与下方 PruneLimit 重建路径同款），不丢数。
-        #[cfg(not(feature = "root_snapshot_restore"))]
-        {
+        // 只在原来的最优基上分离割。潜水后的另一个最优基可能给出不同的割；
+        // 未保存基或使用专用初基的路径按原策略重建常规冷基。
+        if keep_precut_root {
+            expire_saved_root(&mut sol, time_deadline);
+        } else {
             base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
             simplex = new_engine(problem, tol, opts.lp_engine)?;
             simplex.set_time_deadline(time_deadline);
             sol = simplex.solve(&bounds);
         }
-        #[cfg(feature = "root_snapshot_restore")]
-        {
-            // 快照自带根LP迭代，只把启发式新增迭代记入外部累计，避免重复记账。
-            base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations().saturating_sub(root_snapshot.iterations()));
-            simplex = root_snapshot;
-            // 恢复快照不执行LP；原sol仍对应该最优基。超时仍必须诚实终止。
-            if time_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                sol.status = LpStatus::TimeLimit;
-                sol.objective = f64::NAN;
-            }
-        }
         #[cfg(test)]
         test_root_lp_interrupt::apply("restart", &mut sol);
         remember_root_bound(sense, &mut proven_root_bound, &sol);
         #[cfg(feature = "proof_profile")]
-        crate::proof_profile::lp(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" }, &sol, simplex.iterations(), None, stats.cuts);
+        crate::proof_profile::lp(if keep_precut_root { "root_snapshot_restore" } else { "root_restart" }, &sol, simplex.iterations(), None, stats.cuts);
         #[cfg(feature = "proof_profile")]
-        crate::proof_profile::lp_failure(if cfg!(feature = "root_snapshot_restore") { "root_snapshot_restore" } else { "root_restart" },&sol,&*simplex);
+        crate::proof_profile::lp_failure(if keep_precut_root { "root_snapshot_restore" } else { "root_restart" },&sol,&*simplex);
         if let Some(status) = root_terminal(classify_node(sol.status, true))? {
             let bound = if status == SolveStatus::LimitReached {
                 bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
@@ -926,7 +1070,7 @@ fn sequential_bb(
                 crate::proof_profile::record("cut_outer_rollback_begin",vec![("discarded",applied.into()),("status",crate::proof_profile::status(st).into())]);
                 // 记账完整：重建前 Simplex 的累计迭代（根 LP + 割循环）不丢。
                 base_lp_iterations = base_lp_iterations.saturating_add(simplex.iterations());
-                stats.cuts = 0; // 割已随 Simplex 一起丢弃，如实清零
+                // 此轮根割随引擎丢弃，不计入已在独立证明中使用的割数。
                 simplex = new_engine(problem, tol, opts.lp_engine)?;
                 simplex.set_time_deadline(time_deadline);
                 sol = simplex.solve(&bounds);
@@ -966,7 +1110,7 @@ fn sequential_bb(
                 }
             }
             _ => {
-                stats.cuts = applied;
+                stats.cuts = stats.cuts.saturating_add(applied);
                 if let Some(status) = root_terminal(classify_node(st, true))? {
                     let bound = if status == SolveStatus::LimitReached {
                         bound_with_incumbent(sense, proven_root_bound, incumbent.as_ref().map(|(o, _)| *o))
@@ -1037,7 +1181,9 @@ fn sequential_bb(
         opts.root_cuts.then(||profile_cut_start.elapsed().as_secs_f64()), stats.cuts);
 
     // —— 根启发式（可选）：round_and_check + dive + sub-MIP + MITM 供应初始 incumbent ——
-    if opts.heuristics {
+    if opts.heuristics && !short_choice_tree {
+        // 这里的快照是在真实根界上完成全部根割后取得，包含所有已提交的割。
+        let postcut_snapshot = keep_heuristic_root.then(|| simplex.snapshot());
         if let Some(inc) = heuristics::round_and_check(problem, &bounds, &sol.x, &tol) {
             maybe_update(sense, &mut incumbent, inc, incumbent_observer);
         }
@@ -1084,9 +1230,13 @@ fn sequential_bb(
                 ("remaining_lp_calls", budget.lp_calls.into()),
             ]);
         }
-        // dive / sub-MIP 扰动了 Simplex 内部基：用真实界恢复根热状态（记账性
-        // resolve；sub-MIP 的嵌套 resolve 迭代数已如实累计在引擎统计里）。
-        sol = simplex.resolve(&bounds);
+        // 两种恢复都使用本轮割后的真实根界。已有完整快照时，sol 仍与它对应。
+        if let Some(snapshot) = postcut_snapshot {
+            restore_heuristic_basis(&mut simplex, snapshot, &mut base_lp_iterations);
+            expire_saved_root(&mut sol, time_deadline);
+        } else {
+            sol = simplex.resolve(&bounds);
+        }
         #[cfg(test)]
         test_root_lp_interrupt::apply("restore", &mut sol);
         remember_root_bound(sense, &mut proven_root_bound, &sol);
@@ -1161,6 +1311,18 @@ fn sequential_bb(
     // 完整传播库仍延迟到首次孩子。旧行回退试验已在 presolve 认证少量改动行，
     // 根部闭合会直接释放该载荷；不开启试验时维持旧有的完全延迟认证路径。
     let mut propagation: Option<BinaryPropagation> = None;
+
+    // 若根部的整数分支证明比连续根界更紧，该下界同样覆盖后续通用树。
+    let tree_bound = |stack: &[Pending], unresolved, inc| {
+        let frontier = frontier_bound(sense, stack, unresolved, inc);
+        match integer_lower_bound {
+            Some(lower) => {
+                let bound = frontier.map_or(lower, |v| v.max(lower));
+                bound_with_incumbent(sense, Some(bound), inc)
+            }
+            None => frontier,
+        }
+    };
 
     // —— DFS 主循环状态 ——
     let mut stack: Vec<Pending> = Vec::new();
@@ -1243,15 +1405,19 @@ fn sequential_bb(
     // incumbent（gap=0），杜绝 incumbent=X bound=none gap=inf 矛盾行）——
     if let Some(h) = hooks {
         let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-        let bound = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
+        let bound = tree_bound(&stack, unresolved_bound, inc_obj);
         emit_progress(h, &start, stats.nodes, inc_obj, bound, sense);
         last_log = Some(start.elapsed().as_secs_f64());
     }
 
     loop {
+        if !stack.is_empty() && prelude.stop_after_node.is_some_and(|stop| stop(stats.nodes)) {
+            limit_hit = true;
+            break;
+        }
         #[cfg(feature = "proof_profile")]
         crate::proof_profile::frontier(sense,stats.nodes,false,incumbent.as_ref().map(|(o,_)|*o),
-            unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
+            unresolved_bound,||tree_bound(&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
         // —— 受控扩展（默认全关 ⇒ 与原实现逐字节一致）。①/② 仅在栈非空时
         // 参与：空栈轮次直接落到下方 pop 的自然 break（Optimal/Infeasible），
         // 杜绝 incumbent=X bound=none gap=inf 矛盾周期行——
@@ -1261,7 +1427,7 @@ fn sequential_bb(
                 let now = start.elapsed().as_secs_f64();
                 if period > 0.0 && last_log.is_some_and(|t| now - t >= period) {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
+                    let db = tree_bound(&stack, unresolved_bound, inc_obj);
                     emit_progress(h, &start, stats.nodes, inc_obj, db, sense);
                     last_log = Some(now);
                 }
@@ -1271,7 +1437,7 @@ fn sequential_bb(
             if let Some(p) = ctrl.mipgap_percent {
                 if p > 0.0 {
                     let inc_obj = incumbent.as_ref().map(|(o, _)| *o);
-                    let db = frontier_bound(sense, &stack, unresolved_bound, inc_obj);
+                    let db = tree_bound(&stack, unresolved_bound, inc_obj);
                     if let (Some(inc), Some(db)) = (inc_obj, db) {
                         if let Some(g) = gap_percent(sense, inc, db) {
                             if g <= p {
@@ -1291,7 +1457,7 @@ fn sequential_bb(
             if let (Some(state), Some(budget)) = (adaptive.as_mut(), budget_progress_cap) {
                 let now = progress_units(&start, stats.nodes, budget_mode);
                 if AutoDegrade::eligible(state.degrade.cfg(), now, Some(budget)) {
-                    let db = frontier_bound(sense, &stack, unresolved_bound,
+                    let db = tree_bound(&stack, unresolved_bound,
                         incumbent.as_ref().map(|(obj, _)| *obj));
                     let snap = DegradeSnapshot {
                         sense,
@@ -1604,7 +1770,7 @@ fn sequential_bb(
 
     #[cfg(feature = "proof_profile")]
     crate::proof_profile::frontier(sense,stats.nodes,true,incumbent.as_ref().map(|(o,_)|*o),
-        unresolved_bound,||frontier_bound(sense,&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
+        unresolved_bound,||tree_bound(&stack,unresolved_bound,incumbent.as_ref().map(|(o,_)|*o)),stack.iter().map(|p|(p.est,p.depth)));
 
     // —— 终态判定（与上限诚实性整合，禁止字面分裂）：gap 达标与上限触发
     // 一律 LimitReached（诚实：未证明最优），粘滞标记优先于完备判定——
@@ -1621,7 +1787,7 @@ fn sequential_bb(
     let bound = if gap_hit {
         gap_evidence
     } else if limit_hit {
-        frontier_bound(sense, &stack, unresolved_bound, best_objective)
+        tree_bound(&stack, unresolved_bound, best_objective)
     } else if status == SolveStatus::Optimal {
         best_objective
     } else {
@@ -3055,6 +3221,41 @@ mod root_evidence_tests {
     }
 
     #[test]
+    fn postcut_basis_restores_rows_bounds_iterations_and_deadline() {
+        let p = unresolved_bound_tests::model(Sense::Minimize, false);
+        let bounds = Bounds::from_problem(&p);
+        for engine in [LpEngineKind::Tableau, LpEngineKind::Revised] {
+            let mut simplex = new_engine(&p, Tolerances::default(), engine).unwrap();
+            let uncut = simplex.solve(&bounds);
+            // b 取 0 或 1 时，原行分别推出 y 至少为 10 或 20。
+            simplex.add_row(&[(2, 1.0)], RelOp::Ge, 10.0).unwrap();
+            let mut root = simplex.resolve(&bounds);
+            assert_eq!(root.status, LpStatus::Optimal);
+            assert!(root.objective > uncut.objective);
+            let rows = simplex.num_rows();
+            let basis = simplex.basis_columns().to_vec();
+            let deadline = Instant::now().checked_add(std::time::Duration::from_secs(60));
+            simplex.set_time_deadline(deadline);
+            let snapshot = simplex.snapshot();
+            let mut trial = bounds.clone();
+            trial.lb[0] = 1.;
+            let restricted = simplex.resolve(&trial);
+            assert!(restricted.objective > root.objective);
+            let work = simplex.iterations();
+            let mut previous = 7;
+            restore_heuristic_basis(&mut simplex, snapshot, &mut previous);
+            assert_eq!(previous + simplex.iterations(), 7 + work);
+            assert_eq!(simplex.basis_columns(), basis);
+            assert_eq!(simplex.num_rows(), rows);
+            assert_eq!(simplex.time_deadline(), deadline);
+            assert_eq!(simplex.resolve(&bounds).objective, root.objective);
+            expire_saved_root(&mut root, Some(Instant::now()));
+            assert_eq!(root.status, LpStatus::TimeLimit);
+            assert!(root.objective.is_nan());
+        }
+    }
+
+    #[test]
     fn root_bound_uses_only_finite_proofs_and_conservative_incumbent_clip() {
         for sense in [Sense::Minimize, Sense::Maximize] {
             let mut saved = None;
@@ -3437,6 +3638,22 @@ fn map_parallel_outcome(outcome: crate::parallel_bb::ParallelOutcome) -> BbResul
 // 单元测试
 // ===========================================================================
 
+/// 极宽模型沿用原有对偶初基；16～31 列/行的大型互斥模型，只在等式与
+/// 有界负费用列共存较多时提前启用右端扰动。10%是基准上选择的性能门槛。
+#[cfg(feature = "choice_dual_root")]
+fn choice_root_width(p: &Problem) -> bool {
+    let width = p.vars.len().checked_div(p.constraints.len()).unwrap_or(0);
+    width >= 64 || ((16..32).contains(&width)
+        && p.constraints.iter().filter(|r| r.op == crate::model::RelOp::Eq).count() * 2
+            >= p.constraints.len()
+        && p.obj.terms.iter().filter(|&&(j, c)| {
+            p.vars[j].ub.is_finite() && match p.sense {
+                Sense::Minimize => c < 0.,
+                Sense::Maximize => c > 0.,
+            }
+        }).count() >= p.vars.len().div_ceil(10))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::simplex::Simplex;
@@ -3446,6 +3663,31 @@ mod tests {
     /// 默认容差。
     fn tol() -> Tolerances {
         Tolerances::default()
+    }
+
+    #[cfg(feature = "choice_dual_root")]
+    #[test]
+    fn narrow_choice_root_requires_bounded_reward_and_half_equalities() {
+        let mut p = Problem::new("窄根门槛", Sense::Minimize);
+        for j in 0..160 { p.add_var(&format!("x{j}"), VarType::Integer).unwrap(); }
+        for j in 0..16 { p.vars[j].ub = 1.; }
+        for i in 0..8 {
+            p.add_constraint(None, vec![(i, 1.)], if i < 4 { RelOp::Eq } else { RelOp::Le }, 1.).unwrap();
+        }
+        p.set_objective((0..16).map(|j| (j, -1.)).collect(), 0.).unwrap();
+        assert!(choice_root_width(&p));
+        p.vars[15].ub = f64::INFINITY;
+        assert!(!choice_root_width(&p));
+        p.vars[15].ub = 1.;
+        p.constraints[3].op = RelOp::Ge;
+        assert!(!choice_root_width(&p));
+        p.constraints[3].op = RelOp::Eq;
+        p.sense = Sense::Maximize;
+        assert!(!choice_root_width(&p));
+        p.set_objective((0..16).map(|j| (j, 1.)).collect(), 0.).unwrap();
+        assert!(choice_root_width(&p));
+        p.constraints.truncate(5); // 恰好32列/行，既非窄区间也未至64。
+        assert!(!choice_root_width(&p));
     }
 
     // ===================== R3：类自适应默认 ======================
@@ -3464,6 +3706,26 @@ mod tests {
             assert_eq!(result.status, SolveStatus::LimitReached);
             assert!(result.bound.unwrap() >= 2331.0 - 1e-7, "未处理节点的界必须包含真实最优值");
         }
+    }
+
+    #[test]
+    fn restricted_search_stop_keeps_unprocessed_frontier() {
+        let mut p = Problem::new("分数根", Sense::Minimize);
+        let x = p.add_var("x", VarType::Binary).unwrap();
+        let y = p.add_var("y", VarType::Binary).unwrap();
+        p.set_objective(vec![(x, -2.0), (y, -0.75)], 0.).unwrap();
+        p.add_constraint(None, vec![(x, 2.), (y, 2.)], RelOp::Le, 3.).unwrap();
+        let opts = BbOptions { heuristics: false, root_cuts: false, local_cuts: false, ..BbOptions::default() };
+        let prelude = SearchPrelude {
+            stop_after_node: Some(&|_| true),
+            ..Default::default()
+        };
+        let local = branch_and_bound_with_preserved(
+            &p, &opts, &SearchControl::default(), tol(), None, Default::default(), None, prelude,
+        ).unwrap();
+        assert_eq!(local.status, SolveStatus::LimitReached);
+        assert_eq!(local.stats.nodes, 1);
+        assert!(local.bound.unwrap() <= -2.0);
     }
 
     #[test]
@@ -5944,6 +6206,16 @@ mod tests {
         .expect("gap_terminated ⇒ gap_percent 必为 Some");
         assert!(g.is_finite() && g >= 0.0);
         assert!((g - 2.3255813953488373).abs() < 1e-9, "实际 {g}");
+
+        // 开启根割时，潜水刚给出 21.5 就可依据完整根界 22 停止。
+        let with_cuts = BbOptions { root_cuts: true, ..dive_opts() };
+        let early = branch_and_bound_controlled(&p, &with_cuts, &ctrl, tol(), None).unwrap();
+        assert_eq!(early.status, SolveStatus::LimitReached);
+        assert!(early.gap_terminated);
+        assert_eq!(early.stats.cuts, 0);
+        assert_eq!(early.stats.nodes, 1);
+        assert_close(early.best_objective.unwrap(), 21.5);
+        assert_close(early.bound.unwrap(), 22.0);
 
         // Some(2.0) ⇒ 不触发，完备最优。
         let ctrl = SearchControl {

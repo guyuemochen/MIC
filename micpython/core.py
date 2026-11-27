@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""micpython 公开 API：gurobipy 风格建模 + milp 求解（Py3.8+，零第三方依赖）。
+"""micpython 公开 API：gurobipy 风格建模 + milp 求解（Py3.7+，零第三方依赖）。
 
 能力边界与语义纪律
 ==================
@@ -45,6 +45,7 @@
 """
 
 import ctypes
+from itertools import zip_longest
 
 from . import _ffi
 from ._ffi import (
@@ -256,11 +257,13 @@ class LinExpr(object):
         new = LinExpr()
         new.constant = self.constant + sign * constant
         new._model = _merged_model(self._model, model)
-        for idx, coeff in self._terms.items():
-            new._terms[idx] = new._terms.get(idx, 0.0) + coeff
+        new._terms = self._terms.copy()
         for idx, coeff in terms.items():
-            new._terms[idx] = new._terms.get(idx, 0.0) + sign * coeff
-        _drop_zeros(new._terms)
+            combined = new._terms.get(idx, 0.0) + sign * coeff
+            if combined == 0.0:
+                new._terms.pop(idx, None)
+            else:
+                new._terms[idx] = combined
         return new
 
     def __add__(self, other):
@@ -335,6 +338,38 @@ class LinExpr(object):
 
     def __eq__(self, other):
         return self._constr(other, _RELOP_EQ)
+
+    def addTerms(self, coeffs, vars):
+        """就地累加一个系数和变量，或两个等长可迭代对象，返回 None。"""
+        missing = object()
+        if isinstance(vars, Var):
+            pairs = ((coeffs, vars),)
+        else:
+            try:
+                pairs = zip_longest(coeffs, vars, fillvalue=missing)
+            except TypeError:
+                raise ArgumentError('addTerms 需要一个系数和变量，或两条等长序列')
+        model = self._model
+        updates = {}
+        for coeff, var in pairs:
+            if coeff is missing or var is missing:
+                raise ArgumentError('addTerms 的系数和变量个数必须相等')
+            if not isinstance(var, Var):
+                raise ArgumentError('addTerms 的变量必须为 Var')
+            try:
+                value = float(coeff)
+            except (TypeError, ValueError, OverflowError):
+                raise ArgumentError('addTerms 的系数无法转为浮点数：%r' % (coeff,))
+            model = _merged_model(model, var._model)
+            index = var._index
+            updates[index] = updates.get(index, self._terms.get(index, 0.0)) + value
+        # 先验证整批，防止序列长度不符或跨模型时留下已写入的一部分。
+        for index, value in updates.items():
+            if value:
+                self._terms[index] = value
+            else:
+                self._terms.pop(index, None)
+        self._model = model
 
     def getConstant(self):
         """gurobipy 兼容：返回常数项。"""
@@ -473,7 +508,14 @@ class Var(object):
         return other - LinExpr(self)
 
     def __mul__(self, other):
-        return LinExpr(self) * other
+        if not isinstance(other, (int, float)):
+            return LinExpr(self) * other
+        factor = float(other)
+        # 单变量数乘可直接生成一个稀疏项；常数仍遵循浮点数乘法。
+        expr = LinExpr(model=self._model, constant=0.0 * factor)
+        if factor != 0.0:
+            expr._terms[self._index] = factor
+        return expr
 
     __rmul__ = __mul__
 
@@ -524,6 +566,7 @@ _PARAM_TYPES = {
     'MIPGap': float,
     'HeuristicMode': str,
     'BinaryPropagation': str,
+    'LpEngine': str,
     'LogPeriodSecs': float,
 }
 
@@ -533,6 +576,7 @@ _DEFAULT_PARAMS = {
     'MIPGap': 0.0,
     'HeuristicMode': 'on',
     'BinaryPropagation': 'auto',
+    'LpEngine': 'auto',
     'LogPeriodSecs': 0.0,
 }
 
@@ -847,7 +891,7 @@ class Model(object):
         elif name == 'Threads':
             v = _as_int(value, 'Threads')
             self._call(lib.milp_ffi_set_param_int, name_b, v)
-        else:  # 字符串参数的值域由 FFI 校验。
+        else:  # 各字符串参数的合法值由 FFI 校验。
             if not isinstance(value, str):
                 raise ArgumentError("%s 需为 str（'auto'/'on'/'off'），收到 %r"
                                     % (name, value))

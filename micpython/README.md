@@ -1,8 +1,8 @@
 # micpython — milp 求解器的 gurobipy 风格 Python 绑定
 
-启发式业务规划使用 `from micpython.planner import Model`，支持分配、路线和工序排序。[规划器建模与示例](../planner/BUSINESS.md)
+启发式业务规划使用 `from micpython.planner import Model`，支持 Python 3.8 及以上，可用于分配、路线和工序排序。[规划器建模与示例](../planner/BUSINESS.md)
 
-零第三方依赖（ctypes + 标准库），Python 3.8+。目标求解器为本地 FFI 库
+MILP 绑定支持 Python 3.7 及以上，零第三方依赖（ctypes + 标准库）。目标求解器为本地 FFI 库
 **milp-ffi**（`milp-ffi/src/api.rs` 的 23 个 C ABI 符号），底层是 `milp`
 crate 的 `solve_controlled` 精确分支定界引擎。`import micpython` 无副作用
 （惰性装载 DLL）。
@@ -26,9 +26,14 @@ macOS 为 `libmilp_ffi.dylib`；已被根 `.gitignore` 的 `target/` 规则忽�
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 指向仓库根
 ```
 
-可选：`pip install -e micpython`（`micpython/pyproject.toml` 仅文档级元数据
-声明——name、requires-python、packages，零依赖、零构建钩子，**不纳入门禁**，
-安装路径映射未经验证，首选上述路径导入方式）。
+要在仓库外导入，可在工作区根执行：
+
+```bash
+python -m pip install ./micpython
+```
+
+使用已安装的包时，将 `MIC_FFI_LIB` 设为前面构建的动态库的绝对路径。
+动态库独立构建，其操作系统和处理器架构须与 Python 解释器一致。
 
 ## DLL 装载规则
 
@@ -133,6 +138,11 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 - `Var`/`LinExpr` 支持 `+`、`-`、`*`（双侧数乘）、`-x`，以及 `==/<=/>=`
   （对常量或另一表达式，双表达式移项合并常数）→ `TempConstr`；`Var*Var`
   等二次项不在 milp 能力边界内（`TypeError`）；
+- `expr.addTerms(coeffs, vars)` 就地累加线性项并返回 `None`。可传一对系数与
+  变量，如 `expr.addTerms(2, x)`，也可传等长序列或迭代器，如
+  `expr.addTerms([2, -0.5], [x, y])`。系数按 `float` 转换，支持 NumPy 实数
+  数组和标量。重复变量按输入顺序与已有系数相加，`len(expr)` 统计归并后的
+  非零变量数。长度不符、变量跨模型或元素非法时抛 `ArgumentError`，表达式保持原值。
 - `LinExpr.getConstant()` / `getValue()`（按最近一次解求值）/ `len()`
   （变量项数）；同下标系数归并、归并为零的项丢弃（对齐 milp `LinearExpr`
   不变量）；
@@ -167,6 +177,7 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
 | `MIPGap` | float（**小数**） | ≥0；0 = 关闭 | 0.0 | 小数 ×100 → 百分比经 FFI → `SearchControl.mipgap_percent` |
 | `HeuristicMode` | str | `auto`/`on`/`off` | `'on'` | `milp_ffi_set_param_str`（off ⇒ heuristics=false；on/auto ⇒ true；auto 另置 adaptive_heuristics=true） |
 | `BinaryPropagation` | str | `auto`/`on`/`off`（大小写敏感） | `'auto'` | `milp_ffi_set_param_str` → `BbOptions.binary_row_propagation` |
+| `LpEngine` | str | `auto`/`tableau`/`revised`（大小写敏感） | `'auto'` | `milp_ffi_set_param_str` → `BbOptions.lp_engine`。需要对大模型启用多线程时显式指定 `tableau` |
 | `LogPeriodSecs` | float（秒） | ≥0；0 = 关 | 0.0 | `>0` 时注入 stdout 进度钩子（镜像 milp CLI `--log-secs`） |
 
 - **MIPGap 单位换算**：`setParam('MIPGap', 0.20)` 即 FFI 的 20.0 百分比
@@ -194,7 +205,7 @@ obj 系数在每次 `setObjective` 时自动并入未被显式覆盖的列。
   `ArgumentError`）不污染镜像；`getParam('MIPGap')` 精确回读 setParam 时
   的小数（0.07 回读 0.07，不做 ÷100 逆运算）。初始镜像：
   `{TimeLimit: INF, Threads: 1, MIPGap: 0.0, HeuristicMode: 'on',
-  BinaryPropagation: 'auto', LogPeriodSecs: 0.0}`。`getParam` 只读本地镜像、不触碰 FFI。
+  BinaryPropagation: 'auto', LpEngine: 'auto', LogPeriodSecs: 0.0}`。`getParam` 只读本地镜像、不触碰 FFI。
 
 ## 生命周期
 

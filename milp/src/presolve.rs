@@ -29,6 +29,7 @@
 //!   docs/parallel-profiling.md §14。
 //!
 //! 进入五轮前，免费且只起放宽容量作用的二元开关取启用值并整批代入。
+//! 同时在同号容量行排除单项已超额的整数列，并从精确匹配的等式和单侧行固定私有余量。
 //! 五轮规则结束后，识别左端精确成比例的存活行，每个方向保留最紧的原始上下界。
 //! 该检查不使用变量界或活动区间，不重启传播。
 //! binary_coefficient_strengthening 在完整 R1..R5 结束后，
@@ -45,6 +46,7 @@ use crate::binary_propagation::PreservedBinaryRows;
 
 #[cfg(feature = "binary_mutex_row_fixing")]
 mod binary_mutex;
+mod implied_zero;
 mod parallel_rows;
 use crate::model::{Constraint, LinearExpr, Problem, RelOp, Tolerances, VarType, Variable};
 
@@ -302,6 +304,7 @@ pub(crate) fn presolve_for_solve(
             });
         }
     }
+    implied_zero::tighten(&rows, &p.vars, &mut ub, tol);
     let mut dropped_rows: Vec<usize> = Vec::new();
     // W5：变量类型镜像（R5 聚合会追加 Integer 变量，p.vars 覆盖不到）。
     let mut types: Vec<VarType> = p.vars.iter().map(|v| v.var_type).collect();
@@ -327,11 +330,9 @@ pub(crate) fn presolve_for_solve(
         }
 
         // —— R2：固定列（|ub−lb| ≤ feas；空界列不固定）——
+        let fixed_start = fixed.len();
         for j in 0..lb.len() {
-            if !var_alive[j] || lb[j] > ub[j] {
-                continue;
-            }
-            if (ub[j] - lb[j]).abs() > tol.feasibility {
+            if !var_alive[j] || lb[j] > ub[j] || (ub[j] - lb[j]).abs() > tol.feasibility {
                 continue;
             }
             let value = normalize_zero(0.5 * (lb[j] + ub[j]));
@@ -341,35 +342,35 @@ pub(crate) fn presolve_for_solve(
                     lb[j], ub[j]
                 )));
             }
-            // 代入目标：常数移入 offset。
-            if let Some(pos) = obj_terms.iter().position(|&(t, _)| t == j) {
-                obj_offset += obj_terms[pos].1 * value;
-                if !obj_offset.is_finite() {
-                    return Err(MilpError::Numerical(format!(
-                        "固定变量 {j} 代入目标后 obj_offset 溢出"
-                    )));
-                }
-                obj_terms.remove(pos);
-            }
-            // 代入各行右端并删项。
-            for row in rows.iter_mut() {
-                if !row.alive {
-                    continue;
-                }
-                if let Some(pos) = row.terms.iter().position(|&(t, _)| t == j) {
-                    row.rhs -= row.terms[pos].1 * value;
-                    if !row.rhs.is_finite() {
-                        return Err(MilpError::Numerical(format!(
-                            "固定变量 {j} 代入行 {} 后右端溢出",
-                            row.origin
-                        )));
-                    }
-                    row.terms.remove(pos);
-                }
-            }
+            lb[j] = value;
             var_alive[j] = false;
             fixed.push((j, value));
-            reductions += 1;
+        }
+        if fixed.len() != fixed_start {
+            reductions += fixed.len() - fixed_start;
+            // 项已按列号升序。每行仅扫一次，浮点代入次序仍与逐列固定一致。
+            obj_terms.retain(|&(j, c)| {
+                if !var_alive[j] {
+                    obj_offset += c * lb[j];
+                }
+                var_alive[j]
+            });
+            if !obj_offset.is_finite() {
+                return Err(MilpError::Numerical("固定变量代入目标后 obj_offset 溢出".into()));
+            }
+            for row in rows.iter_mut().filter(|r| r.alive) {
+                row.terms.retain(|&(j, a)| {
+                    if !var_alive[j] {
+                        row.rhs -= a * lb[j];
+                    }
+                    var_alive[j]
+                });
+                if !row.rhs.is_finite() {
+                    return Err(MilpError::Numerical(format!(
+                        "固定变量代入行 {} 后右端溢出", row.origin
+                    )));
+                }
+            }
         }
 
         // —— R3：空行（所有 |a_j| ≤ tol.zero）——
@@ -481,60 +482,34 @@ pub(crate) fn presolve_for_solve(
         // 最优解可同时取多个同权物品（x_j=x_k=1），交换论证需要
         // x_j+x_k≤1 才成立——W5 首版 A/B 实测背包族目标全面错误
         //（3409→1415 等，见 docs/parallel-profiling.md §14），已删。
-        {
+        if types.contains(&VarType::Binary) {
             // 列签名（存活行上的 (行下标, 系数) 序列；行下标 = rows 序，
             // 轮内稳定）+ 目标系数（精确相等）。
-            let mut sigs: Vec<((usize, f64), usize)> = Vec::new();
-            for (ri, row) in rows.iter().enumerate() {
-                if !row.alive {
-                    continue;
-                }
+            let mut columns = vec![Vec::new(); lb.len()];
+            for (ri, row) in rows.iter().enumerate().filter(|(_, r)| r.alive) {
                 for &(j, a) in &row.terms {
-                    // 复核修复 2：成员界必须仍是精确 [0,1]——同轮先行的 R4
-                    // 可能把某成员收紧到单点（[0,0]/[1,1]，行已删、界记在
-                    // lb/ub）：收紧后的成员与其他成员不再可交换（还原拆分
-                    // 会违反其收紧界），且其界不会传导给聚合变量（x'∈[0,m]
-                    // 按成员数计）——聚合它 = 丢约束（缩减问题成松弛）。
-                    // 收紧到单点的成员由次轮 R2 正常固定替换，不进聚合。
-                    if !var_alive[j]
-                        || types[j] != VarType::Binary
-                        || lb[j] != 0.0
-                        || ub[j] != 1.0
-                    {
-                        continue;
+                    // 成员界必须仍是精确 [0,1]。同轮已被 R4 收紧的成员不能再交换。
+                    if types[j] == VarType::Binary && lb[j] == 0.0 && ub[j] == 1.0 {
+                        columns[j].push((ri, a));
                     }
-                    sigs.push(((ri, a), j));
                 }
             }
-            // 合并同变量的多项（按 (j, ri) 排序后拼接），再按签名分组。
-            sigs.sort_by(|a, b| a.1.cmp(&b.1).then(a.0 .0.cmp(&b.0 .0)));
-            let mut cols: Vec<(usize, Vec<(usize, f64)>)> = Vec::new();
-            for ((ri, a), j) in sigs {
-                match cols.last_mut() {
-                    Some(last) if last.0 == j => last.1.push((ri, a)),
-                    _ => cols.push((j, vec![(ri, a)])),
-                }
+            let mut cost = vec![0.0; lb.len()];
+            for &(j, c) in &obj_terms {
+                cost[j] = c;
             }
-            let obj_of = |j: usize| -> f64 {
-                obj_terms
-                    .iter()
-                    .find(|&&(t, _)| t == j)
-                    .map(|&(_, c)| c)
-                    .unwrap_or(0.0)
-            };
-            // 分组键 = (签名, 目标系数)：排序后扫连续段。
-            let mut keyed: Vec<(Vec<(usize, f64)>, f64, usize)> = cols
-                .into_iter()
-                .map(|(j, sig)| {
-                    let c = obj_of(j);
-                    (sig, c, j)
-                })
+            let mut keyed: Vec<_> = columns.into_iter().enumerate()
+                .filter(|(_, col)| !col.is_empty())
+                .map(|(j, col)| (col, cost[j], j))
                 .collect();
             keyed.sort_by(|a, b| {
                 sig_cmp(a.0.as_slice(), b.0.as_slice())
                     .then(a.1.total_cmp(&b.1))
                     .then(a.2.cmp(&b.2))
             });
+            let first_new_col = lb.len();
+            let mut representative = vec![None; first_new_col];
+            let mut new_costs = Vec::new();
             let mut gi = 0usize;
             while gi < keyed.len() {
                 let mut gj = gi + 1;
@@ -558,30 +533,30 @@ pub(crate) fn presolve_for_solve(
                     var_alive.push(true);
                     lb.push(0.0);
                     ub.push(m);
-                    // 行替换：删成员项、加 (merged, a)；目标同款。
-                    for row in rows.iter_mut() {
-                        if !row.alive {
-                            continue;
-                        }
-                        if row.terms.iter().any(|&(j, _)| members.contains(&j)) {
-                            let a = row
-                                .terms
-                                .iter()
-                                .find(|&&(j, _)| members.contains(&j))
-                                .map(|&(_, a)| a)
-                                .unwrap_or(0.0);
-                            row.terms.retain(|&(j, _)| !members.contains(&j));
-                            row.terms.push((merged, a));
-                            row.terms.sort_by_key(|&(j, _)| j);
-                        }
+                    // 每组只由最小成员供应系数。收集完所有组，再一次性改写每行。
+                    representative[members[0]] = Some(merged);
+                    if coeff != 0.0 {
+                        new_costs.push((merged, coeff));
                     }
-                    obj_terms.retain(|&(j, _)| !members.contains(&j));
-                    obj_terms.push((merged, coeff));
-                    obj_terms.sort_by_key(|&(j, _)| j);
-                    aggregations.push((members.clone(), merged));
                     reductions += members.len() - 1;
+                    aggregations.push((members, merged));
                 }
                 gi = gj;
+            }
+            if lb.len() > first_new_col {
+                for row in rows.iter_mut().filter(|r| r.alive) {
+                    let mut appended = Vec::new();
+                    row.terms.retain(|&(j, a)| {
+                        if let Some(merged) = representative[j] {
+                            appended.push((merged, a));
+                        }
+                        var_alive[j]
+                    });
+                    appended.sort_unstable_by_key(|&(j, _)| j);
+                    row.terms.extend(appended);
+                }
+                obj_terms.retain(|&(j, _)| var_alive[j]);
+                obj_terms.extend(new_costs);
             }
         }
 
@@ -990,6 +965,26 @@ mod tests {
         assert_eq!(full2, vec![1.0, 1.0, 0.0, 0.0]);
     }
 
+    #[test]
+    fn near_zero_side_keeps_private_integer_at_the_optimum() {
+        use crate::model::SolveStatus;
+        use crate::solver::{solve, SolveOptions};
+
+        // 两例的单侧行都会按原尺度判为空行。它不能与等式合用来固定 z。
+        for (shared, slack, scale) in [(1e-15, 1e-9, 1.0), (1e-5, 1.0, 2_f64.powi(-30))] {
+            let mut p = Problem::new("近零界行", Sense::Maximize);
+            let x = p.add_var("x", VarType::Binary).unwrap();
+            let z = p.add_var("z", VarType::Binary).unwrap();
+            p.add_constraint(None, vec![(x, shared), (z, slack)], RelOp::Eq, slack).unwrap();
+            p.add_constraint(None, vec![(x, shared * scale)], RelOp::Ge, slack * scale).unwrap();
+            p.set_objective(vec![(z, 1.0)], 0.0).unwrap();
+            let result = solve(&p, &SolveOptions { use_scaling: false, ..Default::default() }).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.objective, Some(1.0));
+            assert_eq!(result.values.unwrap()[z], 1.0);
+        }
+    }
+
     /// （复核修复 1 回归钉）聚合变量在后续轮被 R4 收紧到单点、经 R2 固定：
     /// 缩减下标 MAX + 固定值回退 Some(v)（原先扩展下标的 fixed 记录被
     /// postsolve 跳过且 MAX 下标 unwrap_or(0) 全员置 0——安全网拦截报
@@ -1064,6 +1059,50 @@ mod tests {
         let (_, map) = presolve(&p, &tol()).unwrap();
         assert!(map.aggregations.is_empty(), "收紧成员不得被聚合");
         assert!(map.fixed.contains(&(y1, 0.0)), "y1 经 R4→R2 正常固定在 0");
+    }
+
+    #[test]
+    fn aggregate_without_cost_keeps_objective_canonical() {
+        let mut p = Problem::new("无费用的同列", Sense::Minimize);
+        let x = p.add_var("x", VarType::Binary).unwrap();
+        let y = p.add_var("y", VarType::Binary).unwrap();
+        p.add_constraint(None, vec![(x, 1.), (y, 1.)], RelOp::Le, 1.).unwrap();
+        let (q, map) = presolve(&p, &tol()).unwrap();
+        q.validate().unwrap();
+        assert!(q.obj.terms.is_empty());
+        assert_eq!(map.aggregations.len(), 1);
+        assert_eq!(postsolve(&map, &[1.], 2, &tol()), [1., 0.]);
+    }
+
+    #[test]
+    fn batch_fix_and_aggregate_preserve_column_order_and_reconstruction() {
+        let mut p = Problem::new("分组批量代入", Sense::Minimize);
+        for j in 0..4 {
+            p.add_var(&format!("x{j}"), VarType::Binary).unwrap();
+        }
+        for j in 4..7 {
+            p.add_var(&format!("y{j}"), VarType::Continuous).unwrap();
+        }
+        p.set_var_bounds(4, 1.5, 1.5).unwrap();
+        p.set_var_bounds(5, 0.5, 0.5).unwrap();
+        p.set_objective(vec![(0, 7.), (1, -3.), (2, -3.), (3, 7.), (4, 2.), (5, -4.)], 4.).unwrap();
+        // 两组成员交错，第一组的代表列下标小、签名却排在第二组之后。
+        p.add_constraint(None, vec![(0, 3.), (1, 1.), (2, 1.), (3, 3.), (4, 2.), (5, 4.), (6, 1.)],
+            RelOp::Le, 14.).unwrap();
+        p.add_constraint(None, vec![(0, -2.), (3, -2.), (5, 2.), (6, 3.)], RelOp::Ge, -4.).unwrap();
+        let (q, map) = presolve(&p, &tol()).unwrap();
+        assert_eq!(map.fixed, [(4, 1.5), (5, 0.5)]);
+        assert_eq!(map.aggregations, [(vec![1, 2], 1, None), (vec![0, 3], 2, None)]);
+        assert_eq!(q.constraints[0].expr.terms, [(0, 1.), (1, 1.), (2, 3.)]);
+        assert_eq!(q.constraints[1].expr.terms, [(0, 3.), (2, -2.)]);
+        assert_eq!((q.constraints[0].rhs, q.constraints[1].rhs), (9., -5.));
+        assert_eq!(q.obj.terms, [(1, -3.), (2, 7.)]);
+        assert_eq!(q.obj_offset, 5.);
+        let reduced = vec![1., 2., 1.];
+        let full = postsolve(&map, &reduced, p.vars.len(), &tol());
+        assert_eq!(full, [1., 1., 1., 0., 1.5, 0.5, 1.]);
+        assert!(original_feasible(&p, &full));
+        assert_eq!(q.obj.eval(&reduced) + q.obj_offset, p.obj.eval(&full) + p.obj_offset);
     }
 
     /// （复核修复后的加固）presolve 开/关等价性 fuzz：随机小二元 MIP

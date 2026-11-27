@@ -1,10 +1,7 @@
-# micpython 的文档级打包元数据（不作门禁；零依赖、零构建钩子）。
+# micpython 的打包元数据（零运行时依赖、零自定义构建钩子）。
 #
-# 首选用法是「仓库根即包根」：python 自工作区根运行（或如
-# examples/knapsack.py 的 sys.path.insert 指向仓库根），无需安装。
-# 本文件仅为可安装性声明元数据；package-dir 把包根指回仓库根
-# （本文件位于 micpython/ 内，包目录在其上一级）——该安装路径未纳入
-# 门禁验证，DLL 亦按路径装载（MIC_FFI_LIB / 默认候选），不随包分发。
+# 在仓库根可直接导入，也可执行 python -m pip install ./micpython。
+# 包源码在 pyproject.toml 所在目录。动态库独立构建，安装后通过 MIC_FFI_LIB 指定。
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -14,11 +11,11 @@ name = "micpython"
 version = "1.0.0"
 description = "gurobipy 风格的 milp 求解器 Python 绑定（ctypes + milp-ffi，零第三方依赖）"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.7"
 dependencies = []
 
 [tool.setuptools]
 packages = ["micpython", "micpython.planner"]
 
 [tool.setuptools.package-dir]
-"" = ".."
+micpython = "."

@@ -2,8 +2,8 @@
 """bench/run_timings.py —— 计时矩阵驱动（第 4 轮，2026-10-09）。
 
 用法：
-  python bench/run_timings.py --set gate --threads 1 --json bench/gate_runs.json
-  python bench/run_timings.py --set full --json bench/full_runs.json
+  python bench/run_timings.py --set gate --threads 1
+  python bench/run_timings.py --set full
 
 口径（测量工具 milp/examples/profile_stats.rs，复刻 CLI 默认选项）：
 - gate 集（快速回归，单次总耗时控制在约 3 分钟内）：
@@ -22,10 +22,8 @@
   status/objective/nodes；wall_secs 取重复中位；status 取众数；
   objective/nodes 取墙钟最接近中位数的那次（与 analyze_baseline.py
   同口径；limit_reached 无 incumbent 时 objective 如实为 null）；
-- 逐次原始记录：gate → bench/raw_runs_gate.jsonl、full →
-  bench/raw_runs_full.jsonl（各自独立文件互不覆盖；每次调用覆盖本集
-  自己的文件；第 3 轮的 bench/raw_runs.jsonl 保留不动，供
-  analyze_baseline.py 继续消费）；
+- 每次在 bench/runs/ 下新建目录，保存逐次原始记录与汇总；可用 --json
+  指定新的汇总文件。第 3 轮的 bench/raw_runs.jsonl 供 analyze_baseline.py 读取；
 - wall_secs 为 solve_control 周期内计时（不含算例加载，与既往口径一致）；
 - 入口先 `cargo build --release --example profile_stats`（失败即退出）：
   杜绝源码-二进制漂移——陈旧二进制会让一切 bench 数字失去合法来源。
@@ -39,8 +37,12 @@ import time
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path(__file__).parent
-EXE = ROOT.parent / "milp" / "target" / "release" / "examples" / "profile_stats.exe"
+from run_artifacts import new_run_dir
+
+ROOT = Path(__file__).resolve().parent
+EXE = ROOT.parent / "milp" / "target" / "release" / "examples" / (
+    "profile_stats.exe" if sys.platform == "win32" else "profile_stats"
+)
 
 GATE_ORDER = [
     "knapsack-200",
@@ -92,9 +94,6 @@ FULL_SLOW = {
     "mknap-10x200",        # t1 实测 ~26s
 }
 
-RAW_BY_SET = {"gate": ROOT / "raw_runs_gate.jsonl", "full": ROOT / "raw_runs_full.jsonl"}
-JSON_DEFAULT = {"gate": ROOT / "gate_runs.json", "full": ROOT / "full_runs.json"}
-
 
 def run_one(name: str, threads: int, time_limit_secs: int) -> dict:
     path = ROOT / "instances" / f"{name}.milp"
@@ -143,8 +142,11 @@ def main() -> None:
     parser.add_argument("--threads", type=int, default=None,
                         help="gate 必填：只跑该线程数；full 固定跑 {1,4}，给出则忽略")
     parser.add_argument("--json", type=Path, default=None,
-                        help="中位数行数组输出路径（默认 gate_runs.json / full_runs.json）")
+                        help="中位数汇总的新文件路径（默认写入本次 bench/runs/ 目录）")
     args = parser.parse_args()
+
+    if args.json is not None and (args.json.exists() or args.json.is_symlink()):
+        parser.error(f"输出文件已存在：{args.json}")
 
     if args.set == "gate":
         if args.threads is None:
@@ -158,14 +160,14 @@ def main() -> None:
         time_limit, single_rep, slow = FULL_TIME_LIMIT_SECS, set(), FULL_SLOW
 
     ensure_probe_built()
-    raw_path = RAW_BY_SET[args.set]
-    json_path = args.json if args.json is not None else JSON_DEFAULT[args.set]
+    run_dir = new_run_dir(f"timings-{args.set}")
+    raw_path = run_dir / f"raw_runs_{args.set}.jsonl"
+    json_path = args.json if args.json is not None else run_dir / f"{args.set}_runs.json"
+    print(f"本次运行目录：{run_dir}", flush=True)
 
-    with raw_path.open("w", encoding="utf-8"):
-        pass  # 覆盖本集旧文件（gate/full 独立文件，互不影响）
     med_rows = []
     t_start = time.perf_counter()
-    with raw_path.open("a", encoding="utf-8") as f:
+    with raw_path.open("x", encoding="utf-8") as f:
         for name in order:
             for threads in threads_list:
                 reps = 1 if name in single_rep else (2 if name in slow else 3)
@@ -180,8 +182,9 @@ def main() -> None:
                           f"status={row['status']}", flush=True)
                 med_rows.append(median_row(runs))
     total = time.perf_counter() - t_start
-    json_path.write_text(
-        json.dumps(med_rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with json_path.open("x", encoding="utf-8") as target:
+        json.dump(med_rows, target, ensure_ascii=False, indent=2)
+        target.write("\n")
     print(f"set={args.set} 总求解耗时 {total:.1f}s；wrote {raw_path}；"
           f"{len(med_rows)} 行中位数 -> {json_path}")
 

@@ -15,7 +15,8 @@ from tempfile import TemporaryDirectory
 HERE = Path(__file__).resolve().parent
 ROUNDS = HERE.parents[2]
 FROZEN = ROUNDS / 'results/main-gurobi10-100-60s'
-sys.path.insert(0, str(ROUNDS))
+sys.path[:0] = [str(ROUNDS), str(ROUNDS.parent)]
+from run_artifacts import new_run_dir
 from summarize_all_timing import parse_milp
 
 
@@ -279,8 +280,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--runs', type=Path, default=HERE.parent / 'runs.jsonl.gz')
-    parser.add_argument('--output', type=Path, default=HERE / 'results.json')
+    parser.add_argument('--output', type=Path, help='报告的新文件路径，默认写入本次 bench/runs/ 目录')
     args = parser.parse_args()
+    if args.output is not None and (args.output.exists() or args.output.is_symlink()):
+        parser.error(f'输出文件已存在：{args.output}')
     costs, rows, _, hashes = native()
     result = dict(input_hashes=hashes, runs_sha256=sha256(args.runs.read_bytes()).hexdigest(),
                   probe_sha256=sha256(args.binary.read_bytes()).hexdigest(),
@@ -308,8 +311,12 @@ def main():
     assert all(r['bound'] is None or r['bound'] <= reference['objective'] + 1e-6 for r in checked)
     result['published_reference'] = reference
     result['best_verified_feasible'] = upper
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    output = args.output if args.output is not None else new_run_dir('s1234-validation') / 'results.json'
+    with output.open('x', encoding='utf-8') as stream:
+        json.dump(result, stream, ensure_ascii=False, indent=2)
+        stream.write('\n')
     print(f'已核实 {len(jobs)} 次原模型运行、1 个等价重排与 {len(result["exhaustive"])} 个穷举模型。')
+    print(f'报告：{output}')
 
 
 if __name__ == '__main__':

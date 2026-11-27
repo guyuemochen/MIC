@@ -5,6 +5,7 @@
 
 use milp::branch_bound::{BbStats, BinaryPropagationMode};
 use milp::model::{Problem, Sense, SolveStatus};
+use milp::simplex_sparse::LpEngineKind;
 
 /// 启发式模式（FFI `HeuristicMode` 参数的内部表示；默认 `On`）。
 ///
@@ -37,12 +38,14 @@ pub(crate) struct Params {
     pub heuristic_mode: HMode,
     /// 二元行传播模式；默认 Auto。
     pub binary_row_propagation: BinaryPropagationMode,
+    /// LP 引擎；默认按模型规模选择。
+    pub lp_engine: LpEngineKind,
     /// 进度行周期秒；None = 不注入进度钩子（0.0 关断编码）。
     pub log_period_secs: Option<f64>,
 }
 
 impl Default for Params {
-    /// 默认：无时限 / threads=1 / 无 gap / HeuristicMode=on / BinaryPropagation=auto / 无日志。
+    /// 默认：无时限 / threads=1 / 无 gap / HeuristicMode=on / BinaryPropagation=auto / LpEngine=auto / 无日志。
     fn default() -> Self {
         Params {
             time_limit_secs: None,
@@ -50,6 +53,7 @@ impl Default for Params {
             mipgap_percent: None,
             heuristic_mode: HMode::On,
             binary_row_propagation: BinaryPropagationMode::Auto,
+            lp_engine: LpEngineKind::default(),
             log_period_secs: None,
         }
     }

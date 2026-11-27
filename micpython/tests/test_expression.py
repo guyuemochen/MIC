@@ -104,6 +104,49 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(e._terms[0], 1.0)
         self.assertEqual(e._terms[4999], 1.0)
 
+    def test_add_terms_merges_in_order_and_preserves_constants(self):
+        x, y = self.m.addVars(2, name='q')
+        expr = 3 + x
+        self.assertIsNone(expr.addTerms(2, y))
+        expr.addTerms(iter((-1.0, -2, 0., 3.5)), iter((x, y, x, y)))
+        expr.addTerms([], [])
+        self.assertEqual((expr == 0)._terms, {y._index: 3.5})
+        self.assertEqual(expr.getConstant(), 3.)
+        self.assertEqual(len(expr), 1)
+        # 一次调用中的浮点累加顺序与逐项 quicksum 相同。
+        expr.addTerms([1e20, -1e20, 1], [x, x, x])
+        self.assertEqual((expr == 0)._terms[x._index], 1.)
+
+    def test_add_terms_in_model_and_value(self):
+        x = self.m.addVar(lb=1., ub=2.)
+        expr = LinExpr(5)
+        expr.addTerms(2., x)
+        self.m.addConstr(expr <= 7.)
+        # 已添加的约束保留自己的系数；修改表达式后可用作新目标。
+        expr.addTerms([2., -1.], [x, x])
+        self.m.setObjective(expr, MAXIMIZE)
+        self.assertEqual(self.m.optimize(), Status.OPTIMAL)
+        self.assertEqual(x.X, 1.)
+        self.assertEqual(expr.getValue(), 8.)
+        self.assertEqual(self.m.ObjVal, 8.)
+
+    def test_add_terms_rejects_a_partial_batch_without_mutation(self):
+        x, y = self.m.addVars(2, name='q')
+        other = Model('second')
+        self.addCleanup(other.dispose)
+        foreign = other.addVar(name='z')
+        for coeffs, variables in [([2, 3], [y]), ([2], [y, x]), ([2, 0], [y, foreign]),
+                                  ([2, 'bad'], [y, x]), ([2, 3], [y, object()])]:
+            expr = LinExpr(x, 7)
+            with self.assertRaises(ArgumentError):
+                expr.addTerms(coeffs, variables)
+            self.assertEqual((expr == 0)._terms, {x._index: 1.})
+            self.assertEqual(expr.getConstant(), 7.)
+        expr = LinExpr()
+        expr.addTerms(0, foreign)
+        with self.assertRaises(ArgumentError):
+            self.m.addConstr(expr <= 0)
+
     def test_scalar_multiplication_commutative(self):
         x = self.m.addVar(name='x')
         left = 2 * x
@@ -114,6 +157,17 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(left._terms, {x._index: 2.0})
         zero = 0 * x
         self.assertEqual(len(zero), 0, '零系数项丢弃（milp LinearExpr 不变量）')
+
+    def test_weighted_row_keeps_inputs_and_model(self):
+        x, y = self.m.addVars(2)
+        weighted = quicksum([2 * x, -3 * y])
+        row = weighted + 3 * y
+        self.assertEqual(weighted._terms, {x._index: 2.0, y._index: -3.0})
+        self.assertEqual(row._terms, {x._index: 2.0})
+        other = Model('other')
+        self.addCleanup(other.dispose)
+        with self.assertRaises(ArgumentError):
+            other.addConstr(0 * x <= 1)
 
     def test_expression_constant_enters_objective_offset(self):
         # 移植 milp/src/solver.rs:279 用例：

@@ -21,7 +21,7 @@ MIC（Mixed-Integer & Constraint Solvers）是一组互相独立的 Rust 求解�
 - `milp/` — MILP 精确求解器：两阶段有界单纯形（稠密 `simplex.rs` + 稀疏 `simplex_sparse.rs`）、DFS 分支定界、Gomory/聚合 MIR 割、presolve 与启发式、多线程。
 - `planner/` — OptaPlanner 式启发式约束求解器（构造 + 禁忌/SA/迟到接受局部搜索），与 milp 完全不共享代码。
 - `milp-ffi/` — C ABI cdylib 绑定（panic 不跨 FFI 边界）。
-- `micpython/` — gurobipy 风格的 Python 包（ctypes，零依赖，Py3.8+）。
+- `micpython/` — gurobipy 风格的 MILP Python 绑定（ctypes，零依赖，Py3.7+）。
 
 当前主要工作在 `feat/gurobi-large-scale` 分支（大规模场景优化），逐轮实测记录见 `docs/large-scale-report.md`。
 
@@ -44,8 +44,8 @@ cargo build --release --manifest-path milp-ffi/Cargo.toml
 python micpython/examples/knapsack.py
 python -m unittest discover -s micpython/tests -t .
 
-# 基准（会自动先构建 profile_stats）
-python bench/run_timings.py --set gate --threads 1 --json bench/gate_runs.json
+# 基准（会自动先构建 profile_stats，每次输出到新的 bench/runs/ 子目录）
+python bench/run_timings.py --set gate --threads 1
 ```
 
 ## 代码铁律（违反即回退，不商量）
@@ -58,6 +58,7 @@ python bench/run_timings.py --set gate --threads 1 --json bench/gate_runs.json
 
 ## 约定
 
+- 排班性能对比默认单线程、1% 相对差距，放开单日求解和外部进程的 60 秒时限。分别按各后端的总求解时间、总全流程时间计算 MIC/Gurobi 倍数。
 - 本项目不使用 RDM：不调用 RDM 技能或接口，提交不关联 RDM 任务，也不添加 RELEVANTS 或 CLOSES 字段。
 - 注释、文档、commit 信息全部用**中文**。
 - commit 前缀：`milp S2:`（大规模轮次）、`bench:`、`docs:` 这类"模块 + 轮次/主题"格式。

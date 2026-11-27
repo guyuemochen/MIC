@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""micpython 的 ctypes FFI 绑定层（零第三方依赖，仅标准库，Py3.8+）。
+"""micpython 的 ctypes FFI 绑定层（零第三方依赖，仅标准库，Py3.7+）。
 
 按 milp-ffi（WP1，``milp-ffi/src/api.rs`` 的 23 个 ``#[no_mangle] pub
 extern "C"`` 符号）的 C ABI 契约工作：

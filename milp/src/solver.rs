@@ -33,6 +33,11 @@
 //! - 终检容差为契约固定安全网值（相对 1e-6、整数 1e-5），宽于 WP3 复核
 //!   阶梯，正常路径不会被误伤；超差说明数值已失真，宁可报错也不输出错解。
 
+pub(crate) mod choice_search;
+mod restricted_primal;
+pub(crate) mod paired_primal;
+mod roster_proof;
+
 use std::time::{Duration, Instant};
 
 use crate::branch_bound::{
@@ -460,7 +465,13 @@ fn solve_prepared(
         let capture = cfg!(feature = "certified_row_fallback") && ctrl.threads == 1
             && opts.bb.binary_row_propagation.resolve(ctrl.threads)
                 == branch_bound::BinaryPropagationMode::On;
-        let (reduced, map, preserved) = presolve::presolve_for_solve(&pre_work, &opts.tol, capture)?;
+        let (mut reduced, map, preserved) = presolve::presolve_for_solve(&pre_work, &opts.tol, capture)?;
+        if ctrl.threads == 1 && ctrl.determinism == Determinism::Wall
+            && ctrl.mipgap_percent.is_some_and(|gap| gap.is_finite() && gap > 0.)
+        {
+            let end = branch_bound::bb_time_deadline(&start, &opts.bb);
+            roster_proof::group_cover::fix_zero_bounds(&mut reduced, &opts.tol, end);
+        }
         // W5：聚合掉的重复列（组成员数 − 1）一并计入消减量。
         let reductions = map.fixed.len()
             + map.dropped_rows.len()
@@ -488,6 +499,7 @@ fn solve_prepared(
         .as_ref()
         .map_or_else(SearchPrelude::default, |r| SearchPrelude {
             start: Some(r.start),
+            stop_after_node: None,
             nodes: r.stats.nodes,
             lp_iterations: r.stats.lp_iterations,
             incumbent: r.best.as_ref().and_then(|incumbent| {
@@ -1096,6 +1108,37 @@ mod tests {
                 ..crate::branch_bound::BbOptions::default()
             },
             ..SolveOptions::default()
+        }
+    }
+
+    #[test]
+    fn default_solver_preserves_an_integer_optimum_after_a_large_translation() {
+        for h in [0., (1u64 << 44) as f64] {
+            let mut p = Problem::new("平移后仍有两个整数可行点", Sense::Minimize);
+            for (name, lb, ub) in [("甲", h, h + 4.), ("乙", 0., 4.), ("丙", 0., 4.)] {
+                let j = p.add_var(name, VarType::Integer).unwrap();
+                p.set_var_bounds(j, lb, ub).unwrap();
+            }
+            for (a, rhs) in [
+                ([-3., -1., 3.], -3. * h - 1.),
+                ([0., 4., -4.], 1.),
+                ([5., -2., 5.], 5. * h + 8.),
+                ([4., -2., 1.], 4. * h + 7.),
+            ] {
+                p.add_constraint(None, a.into_iter().enumerate().collect(), RelOp::Le, rhs)
+                    .unwrap();
+            }
+            p.set_objective(vec![(0, 7.), (1, -7.), (2, -6.)], -7. * h).unwrap();
+            // 精确枚举平移后的 5³ 个整数点，只余 (1,1,1) 与 (1,0,0)。
+            let result = solve_default(&p).unwrap();
+            assert_eq!(result.status, SolveStatus::Optimal);
+            assert_eq!(result.objective, Some(-6.));
+            assert_eq!(result.values, Some(vec![h + 1., 1., 1.]));
+            if h == 0. {
+                assert!(result.stats.cuts > 0);
+            } else {
+                assert_eq!(result.stats.cuts, 0);
+            }
         }
     }
 

@@ -52,6 +52,16 @@
 //! 重分解并按原问题复核原始和对偶可行性。其余模型沿用两阶段重建和风险主元复核。
 //! 沿用当前行、界及剩余预算；热启动回退、人工清理和第二阶段不触发此重建。
 //!
+//! 大量候选列共享少量等式时，先在原模型上冷启动，换基或翻界长期未结束才轻微扰动右端选基。只有恢复原右端、
+//! 重新分解并复核全部原始行、基本界及对偶条件成功，才接受该基；否则按剩余预算重建。
+//!
+//! 允许正缺口的单线程宽互斥根可启用 `choice_dual_root`。极宽问题用原表的松弛列与固定零人工列
+//! 组成对偶初基，临时目标只用来选基；较窄且有大量有界奖励列的等式模型可先作右端扰动。
+//! 两者都须恢复原模型并验证原始可行、对偶可行，失败沿用原迭代余额与截止时间回退。
+//! 完整证明子问题可另加显式固定零列作为初基，此时仍按原约束和原目标验证。
+//! 从对偶初基修复期间只用对偶行权重。表格行若为单个原行的倍数，
+//! 仅检查该行结构列和松弛列；离基/入基选择、并列规则与原坐标验算沿用同一口径。
+//!
 //! # 修正单纯形机制（与表格引擎的实现差异；目标值恒同是红线）
 //! - 约束矩阵 CSC（按列，行索引升序）；基矩阵因子化 = **Gilbert-Peierls
 //!   左视稀疏 LU**（逐列稀疏三角求解 + 非零模式 DFS），**阈值主元**：候选
@@ -276,11 +286,25 @@ pub fn effective_engine(problem: &Problem, kind: LpEngineKind) -> LpEngineKind {
             nonzeros += len as u64;
         }
     }
-    if rows * (rows + n) >= MEDIUM_CELLS && nonzeros <= rows * n / 16 {
-        LpEngineKind::Revised
-    } else {
-        LpEngineKind::Tableau
+    if rows * (rows + n) < MEDIUM_CELLS {
+        return LpEngineKind::Tableau;
     }
+    if nonzeros <= rows * n / 16 {
+        return LpEngineKind::Revised;
+    }
+    // 同号整数等式“恰选一”形成的宽表在约 10% 密度时仍适合列扫描。
+    // 只在接近既有百万格阈值时检查互斥等式，小表的搜索顺序保持原样。
+    if cells >= ENGINE_AUTO_CELL_THRESHOLD * 3 / 4 && n >= 16 * rows && nonzeros <= rows * n / 8
+        && problem.vars.iter().all(|v| v.var_type != crate::model::VarType::Continuous && v.lb >= 0.)
+    {
+        let needed = rows.div_ceil(3) as usize;
+        let choices = problem.constraints.iter().filter(|r| {
+            r.op == crate::model::RelOp::Eq && r.rhs != 0. && r.expr.terms.len() >= 2
+                && r.expr.terms.iter().all(|&(_, a)| a == r.rhs)
+        }).take(needed).count();
+        if choices == needed { return LpEngineKind::Revised; }
+    }
+    LpEngineKind::Tableau
 }
 
 /// 特性开启时可读取的LP失败原因；缺失值只表示未知。
@@ -304,6 +328,9 @@ pub trait LpEngine {
     fn proof_diagnostics(&self) -> LpDiagnostics { LpDiagnostics::default() }
     /// 两阶段冷启动求解（忽略此前内部状态）。
     fn solve(&mut self, bounds: &Bounds) -> LpSolution;
+    /// 首次完整根可选对偶初始基；其他引擎按原方法冷启动。
+    #[cfg(feature = "choice_dual_root")]
+    fn solve_choice_root(&mut self, bounds: &Bounds) -> LpSolution { self.solve(bounds) }
     /// 热启动求解（界变化 snap+传播 → 对偶修复快路径或整基重建 → 收尾；
     /// 语义对齐 simplex.rs::resolve，见各实现的模块文档）。
     fn resolve(&mut self, bounds: &Bounds) -> LpSolution;
@@ -379,6 +406,8 @@ pub fn new_engine(
 /// Box 透传实现（`&Box<dyn LpEngine>` → `&dyn LpEngine` 的去尺寸胁迫与
 /// 泛型 `E = Box<dyn LpEngine>` 的整箱替换 `*s = rebuilt` 都需要它）。
 impl<T: LpEngine + ?Sized> LpEngine for Box<T> {
+    #[cfg(feature = "choice_dual_root")]
+    fn solve_choice_root(&mut self, bounds: &Bounds) -> LpSolution { (**self).solve_choice_root(bounds) }
     #[cfg(feature = "proof_profile")]
     fn proof_diagnostics(&self) -> LpDiagnostics { (**self).proof_diagnostics() }
     fn solve(&mut self, bounds: &Bounds) -> LpSolution {
@@ -1897,6 +1926,9 @@ pub struct SparseSimplex {
     #[cfg(feature = "phase1_progress_diagnostics")]
     diagnostic_source_id: u64,
     tol: Tolerances,
+    /// 已在原表、原目标下通过复核的对偶根，允许按固定零界修复留基人工列。
+    #[cfg(feature = "choice_dual_root")]
+    verified_dual_root: bool,
     num_structural: usize,
     num_constraints: usize,
     sense_max: bool,
@@ -2086,6 +2118,8 @@ impl SparseSimplex {
             #[cfg(feature = "phase1_progress_diagnostics")]
             diagnostic_source_id: phase1_progress_diagnostics::register_source(problem),
             tol,
+            #[cfg(feature = "choice_dual_root")]
+            verified_dual_root: false,
             num_structural: n,
             num_constraints: problem.constraints.len(),
             sense_max,
@@ -2407,6 +2441,16 @@ impl SparseSimplex {
 
     /// 两阶段冷启动求解（standalone：每次调用整基重建，忽略此前状态）。
     pub fn solve(&mut self, bounds: &Bounds) -> LpSolution {
+        self.solve_from(bounds, None, false)
+    }
+
+    /// 仅完整证明根可提供新建的固定零列；可用时改由已认证的对偶初基启动。
+    #[cfg(feature = "sparse_phase1_recovery")]
+    pub(crate) fn solve_proof(&mut self, bounds: &Bounds, first_zero: usize) -> LpSolution {
+        self.solve_from(bounds, Some(first_zero), false)
+    }
+
+    fn solve_from(&mut self, bounds: &Bounds, first_zero: Option<usize>, ordinary_root: bool) -> LpSolution {
         #[cfg(feature = "proof_profile")]
         { self.numerical_error = None; }
         self.start_call();
@@ -2418,12 +2462,150 @@ impl SparseSimplex {
         }
         self.bounds.lb.clone_from(&bounds.lb);
         self.bounds.ub.clone_from(&bounds.ub);
-        self.rebuild_initial_basis();
-        // Devex 冷启动重置：参考框架 = 初始非基集（rebuild 后、两阶段前）。
-        self.devex_reset();
-        let st = self.run_cold_two_phase_with_limit(&mut LpWorkLimit::unlimited());
+        let mut work = LpWorkLimit::unlimited();
+        let m = self.row_rhs.len();
+        // 大量等式和有界负成本列共存时，第二阶段也可能在同价顶点上反复换基。
+        // 对宽度 16～31 的这种模型开放既有扰动恢复；原先更宽模型保留原试算额度。
+        let width = self.num_structural.checked_div(m).unwrap_or(0);
+        let negative_costs = width >= 16 && width < 32
+            && self.c_internal.iter().zip(&bounds.ub).any(|(&c, &ub)| c < 0.0 && ub.is_finite());
+        let wide_equalities = self.num_structural >= 4096 && (width >= 32 || negative_costs)
+            && self.row_op.iter().filter(|&&op| op == RelOp::Eq).count() * 2 >= m;
+        #[cfg(not(feature = "choice_dual_root"))]
+        let _ = ordinary_root;
+        #[cfg(feature = "choice_dual_root")]
+        {
+            self.verified_dual_root = false;
+            // 原问题的列行比决定调用者所选路径，避免过滤近零行后误入极宽根路线。
+            // 较窄根再按实际入表的行检查已有的扰动恢复条件；不符合就正常试算。
+            let narrow = ordinary_root && self.num_structural >= 4096
+                && (16..32).contains(&self.num_structural.checked_div(self.num_constraints).unwrap_or(0));
+            if narrow && negative_costs && wide_equalities {
+                let status = self.solve_with_perturbed_basis(&mut work);
+                self.has_run = true;
+                return self.build_solution(status);
+            }
+            if ordinary_root && !narrow && self.c_internal.iter().zip(&bounds.ub).all(|(&c, &u)| c >= 0. || u.is_finite()) {
+                let status = self.choice_root_from_dual(&mut work);
+                if status == LpStatus::Optimal || self.call_stop_status(&work).is_some() {
+                    self.has_run = true;
+                    return self.build_solution(status);
+                }
+                self.numerical_error = None;
+            }
+        }
+        #[cfg(not(feature = "sparse_phase1_recovery"))]
+        let _ = first_zero;
+        #[cfg(feature = "sparse_phase1_recovery")]
+        if let Some(first) = first_zero {
+            if let Some(columns) = self.proof_start_columns(bounds, first) {
+                let status = self.recover_from_basis(&mut work, &columns);
+                if status == LpStatus::Optimal || self.call_stop_status(&work).is_some() {
+                    self.has_run = true;
+                    return self.build_solution(status);
+                }
+                // 未取到原目标的最优证明，继续使用相同预算走原来的两阶段入口。
+                self.numerical_error = None;
+            }
+        }
+        let trial_steps = 2048.max((m as u64).saturating_mul(if negative_costs { 4 } else { 16 }));
+        let st = if wide_equalities && trial_steps < self.call_iteration_limit() {
+            let original_hint = self.iter_limit_hint.replace(trial_steps);
+            let first = self.cold_start(&mut work);
+            self.iter_limit_hint = original_hint;
+            if first == LpStatus::IterationLimit && self.iter_call >= trial_steps {
+                if let Some(limit) = self.call_stop_status(&work) {
+                    limit
+                } else {
+                    // 新的辅助问题重新统计退化；工作步、绝对期限和用户上限沿用。
+                    self.reset_anti_cycle();
+                    self.numerical_error = None;
+                    self.solve_with_perturbed_basis(&mut work)
+                }
+            } else {
+                first
+            }
+        } else {
+            self.cold_start(&mut work)
+        };
         self.has_run = true;
         self.build_solution(st)
+    }
+
+    /// 选择同价顶点时，临时错开有界列的成本。所有对外变量、约束和静态列号仍沿用原表。
+    #[cfg(feature = "choice_dual_root")]
+    fn choice_root_from_dual(&mut self, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        let n = self.ncols_static();
+        let mut fixed = Vec::new();
+        let columns: Vec<_> = self.row_slack.iter().enumerate().map(|(i, &slack)| {
+            slack.unwrap_or_else(|| {
+                // 等式现有人工列在原目标阶段域为 [0,0]；该列退出后仍禁止再入基。
+                let j = n + fixed.len();
+                fixed.push((i, 1.0));
+                j
+            })
+        }).collect();
+        let costs = self.c_internal.clone();
+        let mut seed = 1_234_567_u32;
+        for (j, c) in self.c_internal.iter_mut().enumerate() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            if self.bounds.ub[j].is_finite() && self.bounds.lb[j] < self.bounds.ub[j] {
+                *c += 1e-4 * f64::from(seed) / f64::from(u32::MAX);
+            }
+        }
+        let auxiliary = self.recover_with_zero_artificials(work, &columns, fixed.clone());
+        self.c_internal = costs;
+        if auxiliary == LpStatus::Optimal && self.verify_original_basis().is_ok() {
+            self.verified_dual_root = true;
+            return self.call_stop_status(work).unwrap_or(LpStatus::Optimal);
+        }
+        // 辅助问题的不可行、无界或目标值均不能作为原问题证据。
+        self.numerical_error = None;
+        if let Some(status) = self.call_stop_status(work) {
+            self.rebuild_initial_basis();
+            self.phase1_pending = self.num_art > 0;
+            return status;
+        }
+        let status = self.recover_with_zero_artificials(work, &columns, fixed);
+        self.verified_dual_root = status == LpStatus::Optimal;
+        status
+    }
+
+    fn cold_start(&mut self, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        self.rebuild_initial_basis();
+        self.devex_reset();
+        self.run_cold_two_phase_with_limit(work)
+    }
+
+    /// 宽等式模型容易在同一退化顶点反复换基。轻微错开各行右端只用于选基，
+    /// 从不把辅助问题的状态、目标或可行解报告给调用者。
+    fn solve_with_perturbed_basis(&mut self, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        let original = self.row_rhs.clone();
+        let mut seed = 1_234_567_u32;
+        for (i, rhs) in self.row_rhs.iter_mut().enumerate() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let fraction = f64::from(seed) / f64::from(u32::MAX);
+            let shift = 1e-4 * self.row_scale[i].min(1.0) * (0.1 + fraction);
+            *rhs += if self.row_op[i] == RelOp::Ge { -shift } else { shift };
+        }
+        let auxiliary = self.cold_start(work);
+        self.row_rhs = original;
+        if auxiliary == LpStatus::Optimal && !self.artificials_in_basis()
+            && self.verify_original_basis().is_ok()
+        {
+            return self.call_stop_status(work).unwrap_or(LpStatus::Optimal);
+        }
+
+        // 不复用辅助问题的不可行/无界判断。超限时同样先清掉辅助基，保证传给
+        // 调用者的 x 和后续 resolve 的状态只来自原模型。重试不重领时间或迭代额度。
+        self.numerical_error = None;
+        self.rebuild_initial_basis();
+        self.devex_reset();
+        if let Some(status) = self.call_stop_status(work) {
+            self.phase1_pending = self.num_art > 0;
+            return status;
+        }
+        self.run_cold_two_phase_with_limit(work)
     }
 
     /// 热启动求解（S3）：语义对齐 simplex.rs::resolve——
@@ -2505,6 +2687,22 @@ impl SparseSimplex {
             || (self.dual_main_calls >= DUAL_MAIN_FUSE_MIN_CALLS
                 && self.dual_main_fallthroughs.saturating_mul(100)
                     >= self.dual_main_calls.saturating_mul(DUAL_MAIN_FAIL_RATE_PCT));
+        #[cfg(feature = "choice_dual_root")]
+        if need_repair && self.verified_dual_root && !self.phase1_pending && self.artificials_in_basis() {
+            match self.dual_repair_from_basis::<true, false>(work) {
+                DualRepair::Repaired if self.verify_original_basis().is_ok() => {
+                    return self.build_solution(self.call_stop_status(work).unwrap_or(LpStatus::Optimal));
+                }
+                DualRepair::Stopped(status) => return self.build_solution(status),
+                _ => {
+                    // 未验证的换基结果不能作为证书。常规恢复会基于当前原行、右端及界重建。
+                    self.verified_dual_root = false;
+                    self.rebuild_initial_basis();
+                    let status = self.run_cold_two_phase_with_limit(work);
+                    return self.build_solution(status);
+                }
+            }
+        }
         if need_repair && !self.phase1_pending && !self.artificials_in_basis() {
             // 熔断跳过时**不**计入 Fallthrough 计数（主循环未被调用，
             // 计数冻结在熔断阈值上；重开尝试的通道是上方 Repaired 清零，
@@ -2698,14 +2896,18 @@ impl SparseSimplex {
         self.basis.iter().any(|&c| c >= ncs)
     }
 
-    /// 静态非基列对偶可行性预检（与 simplex.rs::dual_feasible 同款）。
-    fn dual_feasible(&mut self) -> bool {
-        let ncs = self.ncols_static();
-        let m = self.basis.len();
-        for i in 0..m {
+    /// 由当前基与第二阶段目标计算对偶价格。
+    fn dual_prices(&mut self) -> Vec<f64> {
+        for i in 0..self.basis.len() {
             self.cb[i] = self.cost_of(self.basis[i], 2);
         }
-        let y = self.btran_full(&self.cb);
+        self.btran_full(&self.cb)
+    }
+
+    /// 预检静态非基列的对偶可行性，通过时返回当前基的对偶价格。
+    fn feasible_dual_prices(&mut self) -> Option<Vec<f64>> {
+        let ncs = self.ncols_static();
+        let y = self.dual_prices();
         for j in 0..ncs {
             if self.in_basis[j] {
                 continue;
@@ -2723,17 +2925,17 @@ impl SparseSimplex {
             }
             let rc = self.cost_of(j, 2) - dot;
             if !rc.is_finite() {
-                return false;
+                return None;
             }
             if self.at_upper[j] {
                 if rc > self.tol.optimality {
-                    return false;
+                    return None;
                 }
             } else if rc < -self.tol.optimality {
-                return false;
+                return None;
             }
         }
-        true
+        Some(y)
     }
 
     /// 有界变量对偶单纯形修复（与 simplex.rs::dual_repair 同款算法，三角
@@ -2748,11 +2950,11 @@ impl SparseSimplex {
     }
 
     fn dual_repair_with_limit(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
-        self.dual_repair_from_basis::<false>(work)
+        self.dual_repair_from_basis::<false, false>(work)
     }
 
     /// 热启动沿用原选行规则；冷恢复才从单位松弛基维护逆基各行的长度平方。
-    fn dual_repair_from_basis<const STEEPEST: bool>(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
+    fn dual_repair_from_basis<const STEEPEST: bool, const RESET_PRIMAL_WEIGHTS: bool>(&mut self, work: &mut LpWorkLimit<'_>) -> DualRepair {
         #[cfg(feature = "lu_failure_diagnostics")]
         {self.lu_trace.phase="dual_repair";self.lu_trace.reason="dual_repair";}
         const BUDGET_BASE: u32 = 2_000;
@@ -2760,9 +2962,10 @@ impl SparseSimplex {
         if let Some(st) = work.start_status(self.time_deadline) {
             return DualRepair::Stopped(st);
         }
-        if !self.dual_feasible() {
+        let Some(first_y) = self.feasible_dual_prices() else {
             return DualRepair::GiveUp;
-        }
+        };
+        let mut first_y = Some(first_y);
         let m = self.basis.len();
         let ncs = self.ncols_static();
         let budget = BUDGET_BASE.saturating_add((m as u32).saturating_mul(50));
@@ -2778,16 +2981,13 @@ impl SparseSimplex {
             if STEEPEST && self.iter_call >= call_limit {
                 return DualRepair::Stopped(LpStatus::IterationLimit);
             }
-            // y = BTRAN(c_B)（检验数新鲜度：上一轮主元已改基）。
-            for i in 0..m {
-                self.cb[i] = self.cost_of(self.basis[i], 2);
-            }
-            let y = self.btran_full(&self.cb);
+            // 首轮沿用入口预检的对偶价格，换基后用当前基重算。
+            let y = first_y.take().unwrap_or_else(|| self.dual_prices());
             // (1) 选相对违反最重的基行（绝对 feasibility 过滤 + 界幅归一
             // 排序，与 simplex.rs 同款）。
             let mut worst: Option<(usize, f64, bool)> = None;
             for i in 0..m {
-                let (lb, ub) = self.col_bounds(self.basis[i]);
+                let (lb, ub) = self.primal_col_bounds(self.basis[i], 2);
                 let v_lb = lb - self.x_b[i];
                 let v_ub = self.x_b[i] - ub;
                 let (viol, below) = if v_lb > v_ub { (v_lb, true) } else { (v_ub, false) };
@@ -2819,8 +3019,39 @@ impl SparseSimplex {
             let mut e = vec![0.0f64; m];
             e[r] = 1.0;
             let rho = self.btran_full(&e);
+            // 若逆基的一行只有一个非零数，表格行就是对应原行的倍数。原行中
+            // 未出现的列不可能通过主元筛选；松弛列仍须按自己的符号一并检查。
+            let single_row = if RESET_PRIMAL_WEIGHTS {
+                let mut nz = rho.iter().enumerate().filter(|(_, value)| **value != 0.0);
+                nz.next().and_then(|(row, &weight)| {
+                    (weight.is_finite() && nz.next().is_none()).then_some((row, weight))
+                })
+            } else {
+                None
+            };
+            // 若对偶价格在同一行之外全为零，列点积也只剩原行的这一项。
+            let single_price = single_row.and_then(|(row, _)| {
+                y.iter().enumerate().all(|(i, &value)| i == row || value == 0.0).then_some(y[row])
+            });
+            #[cfg(feature = "sparse_row_products")]
+            let mut prepared_row = single_row.is_none() && self.devex_active && self.prepare_dual_pivot_row(&rho);
+            #[cfg(not(feature = "sparse_row_products"))]
+            let prepared_row = false;
             let mut best: Option<(f64, f64, usize, f64)> = None; // (ratio, |a|, q, delta)
-            for j in 0..ncs {
+            let count = single_row.map_or(ncs, |(row, _)| {
+                self.row_terms[row].len() + usize::from(self.row_slack[row].is_some())
+            });
+            for index in 0..count {
+                let (j, coefficient) = match single_row {
+                    Some((row, _)) => match self.row_terms[row].get(index) {
+                        Some(&term) => term,
+                        None => {
+                            let j = self.row_slack[row].expect("计数包含该行的松弛列");
+                            (j, self.layout.slack[j - self.num_structural].sign)
+                        }
+                    },
+                    None => (index, 0.0),
+                };
                 if self.in_basis[j] {
                     continue;
                 }
@@ -2828,13 +3059,10 @@ impl SparseSimplex {
                 if ub - lb <= self.tol.feasibility {
                     continue;
                 }
-                let mut a = 0.0;
-                for k in self.col_start[j]..self.col_start[j + 1] {
-                    let rr = rho[self.col_rows[k]];
-                    if rr != 0.0 {
-                        a += rr * self.col_vals[k];
-                    }
-                }
+                let a = match single_row {
+                    Some((_, weight)) => weight * coefficient,
+                    None => self.pivot_row_value(&rho, j, prepared_row),
+                };
                 if a.abs() < self.tol.pivot {
                     continue;
                 }
@@ -2846,13 +3074,10 @@ impl SparseSimplex {
                 if !below && da <= 0.0 {
                     continue;
                 }
-                let mut dot = 0.0;
-                for k in self.col_start[j]..self.col_start[j + 1] {
-                    let yr = y[self.col_rows[k]];
-                    if yr != 0.0 {
-                        dot += yr * self.col_vals[k];
-                    }
-                }
+                let dot = match single_price {
+                    Some(price) => price * coefficient,
+                    None => self.pivot_row_value(&y, j, false),
+                };
                 let rc = self.cost_of(j, 2) - dot;
                 if !rc.is_finite() {
                     return DualRepair::GiveUp;
@@ -2879,15 +3104,9 @@ impl SparseSimplex {
                 return DualRepair::GiveUp;
             };
             // (3) 步长 t：出基变量恰好落到被违反的界；FTRAN 入基列取主元。
-            let mut a = 0.0;
-            for k in self.col_start[q]..self.col_start[q + 1] {
-                let rr = rho[self.col_rows[k]];
-                if rr != 0.0 {
-                    a += rr * self.col_vals[k];
-                }
-            }
-            let (lb_r, ub_r) = self.col_bounds(self.basis[r]);
-            let (target, hit_upper) = if below { (lb_r, false) } else { (ub_r, true) };
+            let a = self.pivot_row_value(&rho, q, prepared_row);
+            let (lb_r, ub_r) = self.primal_col_bounds(self.basis[r], 2);
+            let (target, hit_upper) = if below { (lb_r, false) } else { (ub_r, self.basis[r] < ncs) };
             let t = (target - self.x_b[r]) / (-delta * a);
             if !t.is_finite() || t < 0.0 {
                 return DualRepair::GiveUp;
@@ -2898,6 +3117,9 @@ impl SparseSimplex {
                 if !self.just_refactored {
                     #[cfg(feature = "lu_failure_diagnostics")]
                     {self.lu_trace.reason="dual_repair_retry";}
+                    // 相同的基重新分解后，浮点表格行可能改变。用新因子重算权重。
+                    #[cfg(feature = "sparse_row_products")]
+                    { prepared_row = false; }
                     if self.refactor().is_err() {
                         return DualRepair::GiveUp;
                     }
@@ -2913,7 +3135,7 @@ impl SparseSimplex {
                 return DualRepair::GiveUp;
             }
             work.charge_step();
-            if let Err(error) = self.do_pivot(q, r, delta, t, hit_upper) {
+            if let Err(error) = self.pivot_with_devex_row::<RESET_PRIMAL_WEIGHTS>(q, r, delta, t, hit_upper, prepared_row) {
                 if STEEPEST {
                     self.count_step(t);
                     self.numerical_error = Some(error.message());
@@ -3005,13 +3227,14 @@ impl SparseSimplex {
         }
         self.dual_main_calls += 1;
         // 入口对偶可行性 rc 扫描红线：对偶不可行基不跑主循环（对偶单纯形
-        // 的前提），回退第二层 dual_repair——其入口同款 dual_feasible 复查
+        // 的前提），回退第二层 dual_repair——其入口同款对偶可行性复查
         // 同时是本循环 BFRT 中途 GiveUp 后状态污染的防线（见下方两处
         // GiveUp 的【复盘补丁 B】注释）。
-        if !self.dual_feasible() {
+        let Some(first_y) = self.feasible_dual_prices() else {
             self.dual_main_fallthroughs += 1;
             return DualResolveOutcome::Fallthrough;
-        }
+        };
+        let mut first_y = Some(first_y);
         let m = self.basis.len();
         let ncs = self.ncols_static();
         let mut guard = DualDegenGuard::default();
@@ -3035,12 +3258,8 @@ impl SparseSimplex {
                     }
                 }
             }
-            // y = BTRAN(c_B)：rc 每迭代现算（与 run_phase 同款新鲜度契约，
-            // 无增量漂移）。
-            for i in 0..m {
-                self.cb[i] = self.cost_of(self.basis[i], 2);
-            }
-            let y = self.btran_full(&self.cb);
+            // 首轮沿用入口预检的对偶价格，换基后用当前基重算。
+            let y = first_y.take().unwrap_or_else(|| self.dual_prices());
             if y.iter().any(|v| !v.is_finite()) {
                 return DualResolveOutcome::Fallthrough; // 对偶变量非有限
             }
@@ -3206,7 +3425,7 @@ impl SparseSimplex {
                 //   任何前置复查。
                 // · 两个「主元仍过小」出口：因子化完好（refactor 成功或
                 //   未动），仅翻转污染 ⇒ 普通回退，安全性**完全依赖回退
-                //   链**：第二层 dual_repair 入口的 dual_feasible() 复查会
+                //   链**：第二层 dual_repair 入口的对偶可行性复查会
                 //   发现被翻列的对偶违反 ⇒ GiveUp ⇒ 第三层整基重建从零
                 //   重来。⚠️ 禁止在 dual_repair 之前插入任何不经
                 //   dual_feasible 复查的修复/续跑路径——那会在对偶不可行
@@ -3926,6 +4145,35 @@ impl SparseSimplex {
         true
     }
 
+    /// 稀疏时沿行散加，稠密时逐列计算。覆盖固定非基列，因为它们的 Devex 权重也要更新。
+    #[cfg(feature = "sparse_row_products")]
+    fn prepare_dual_pivot_row(&mut self, rho: &[f64]) -> bool {
+        #[cfg(test)]
+        if self.row_products_disabled { return false; }
+        if !self.prepare_row_products(rho, false, usize::MAX) {
+            let n = self.ncols_static();
+            self.row_products.resize(n, 0.0);
+            for j in 0..n {
+                if !self.in_basis[j] {
+                    self.row_products[j] = self.pivot_row_value(rho, j, false);
+                }
+            }
+        }
+        true
+    }
+
+    #[inline]
+    fn pivot_row_value(&self, rho: &[f64], j: usize, _prepared: bool) -> f64 {
+        #[cfg(feature = "sparse_row_products")]
+        if _prepared { return self.row_products[j]; }
+        let mut result = 0.0;
+        for k in self.col_start[j]..self.col_start[j + 1] {
+            let value = rho[self.col_rows[k]];
+            if value != 0.0 { result += value * self.col_vals[k]; }
+        }
+        result
+    }
+
     /// 行号升序与 CSC 的逐列求和顺序完全相同。±0 均跳过；非有限
     /// 乘子不跳过，保留旧路径 NaN/Inf 的传播与后续错误处理。
     #[cfg(feature = "sparse_row_products")]
@@ -4058,7 +4306,7 @@ impl SparseSimplex {
     /// 跳过）。任一权重越过（或失真为非有限）[`DEVEX_RESET_THRESHOLD`]
     /// ⇒ 参考框架重置。Bland 模式打分不用权重，但更新照常维护——释放
     /// Bland 后权重仍与基演进一致。
-    fn devex_update(&mut self, q: usize, r: usize, leaving: usize) {
+    fn devex_update(&mut self, q: usize, r: usize, leaving: usize, prepared_row: bool) {
         #[cfg(feature = "sparse_profile")]
         let _cost_guard = cost_profile::enter(3);
         if !self.devex_active {
@@ -4078,11 +4326,15 @@ impl SparseSimplex {
         let w_q = self.devex_w[q]; // q 恒为静态列（定价只扫静态段）
         let m = self.basis.len();
         // ρ = e_rᵀB⁻¹（主元前基）。
-        let mut e = vec![0.0f64; m];
-        e[r] = 1.0;
-        let rho = self.btran_full(&e);
+        let rho = if prepared_row {
+            Vec::new()
+        } else {
+            let mut e = vec![0.0f64; m];
+            e[r] = 1.0;
+            self.btran_full(&e)
+        };
         #[cfg(feature = "sparse_row_products")]
-        let use_row_products = self.prepare_row_products(&rho, false, q);
+        let use_row_products = prepared_row || self.prepare_row_products(&rho, false, q);
         #[cfg(not(feature = "sparse_row_products"))]
         let use_row_products = false;
         let mut breach = false;
@@ -4092,19 +4344,7 @@ impl SparseSimplex {
                 // 为单位向量（αr_j ∈ {0,1}）且不入定价，不设权重。
                 continue;
             }
-            let mut a = 0.0;
-            #[cfg(feature = "sparse_row_products")]
-            if use_row_products {
-                a = self.row_products[j];
-            }
-            if !use_row_products {
-                for k in self.col_start[j]..self.col_start[j + 1] {
-                    let rr = rho[self.col_rows[k]];
-                    if rr != 0.0 {
-                        a += rr * self.col_vals[k];
-                    }
-                }
-            }
+            let a = self.pivot_row_value(&rho, j, use_row_products);
             if a == 0.0 {
                 continue;
             }
@@ -4283,6 +4523,18 @@ impl SparseSimplex {
         t: f64,
         hit_upper: bool,
     ) -> std::result::Result<(), RefactorFailure> {
+        self.pivot_with_devex_row::<false>(q, r, delta, t, hit_upper, false)
+    }
+
+    fn pivot_with_devex_row<const RESET_PRIMAL_WEIGHTS: bool>(
+        &mut self,
+        q: usize,
+        r: usize,
+        delta: f64,
+        t: f64,
+        hit_upper: bool,
+        prepared_row: bool,
+    ) -> std::result::Result<(), RefactorFailure> {
         #[cfg(feature = "phase1_progress_diagnostics")]
         phase1_progress_diagnostics::invalidate(self.diagnostic_owner());
         #[cfg(feature = "sparse_profile")]
@@ -4314,7 +4566,9 @@ impl SparseSimplex {
         }
         // Devex 权重更新：须在 ETA 追加与基交换之前（αr 为主元前基的
         // 表格行，见 `devex_update` 文档）。
-        self.devex_update(q, r, leaving);
+        if !RESET_PRIMAL_WEIGHTS {
+            self.devex_update(q, r, leaving, prepared_row);
+        }
         let mut nz: Vec<(usize, f64)> = Vec::new();
         for (i, &v) in self.alpha.iter().enumerate() {
             if i != r && v != 0.0 {
@@ -4495,7 +4749,7 @@ impl SparseSimplex {
             }
             #[cfg(test)]
             refactor_fault::phase1_recovery_boundary(self, false);
-            if let Some(status) = self.phase1_recovery_stop_status(work) {
+            if let Some(status) = self.call_stop_status(work) {
                 return status;
             }
             // 失效基不能再读。不调用 start_call，沿用预算、计数和反循环记账。
@@ -4510,31 +4764,56 @@ impl SparseSimplex {
             self.devex_reset();
             #[cfg(test)]
             refactor_fault::phase1_recovery_boundary(self, true);
-            if let Some(status) = self.phase1_recovery_stop_status(work) {
+            if let Some(status) = self.call_stop_status(work) {
                 return status;
             }
             self.run_two_phase_attempt(true, work, PrimalAttempt::RetryPhase1, &mut false)
         }
     }
 
+    #[cfg(feature = "sparse_phase1_recovery")]
+    fn proof_start_columns(&self, bounds: &Bounds, first: usize) -> Option<Vec<usize>> {
+        // 非基变量贴零价或目标最优端点；上界无限的负费用列无法这样选基。
+        if self.c_internal.iter().zip(&bounds.ub).any(|(&c, &u)| c < 0. && !u.is_finite()) {
+            return None;
+        }
+        self.row_slack.iter().zip(&self.row_terms).map(|(&slack, row)| {
+            slack.or_else(|| row.iter().find_map(|&(j, a)| {
+                (j >= first && a.abs() >= self.tol.pivot && self.c_internal[j] == 0.
+                    && bounds.lb[j] == 0. && bounds.ub[j] == 0.
+                    && self.col_start[j + 1] - self.col_start[j] == 1).then_some(j)
+            }))
+        }).collect()
+    }
+
     /// 不等式自带单位松弛列。结构变量贴到目标最优的有限端点，松弛列作基，
     /// 原目标的非基检验数即目标系数。此时可能有原始违约，由对偶法修回。
     #[cfg(feature = "sparse_phase1_recovery")]
     fn recover_from_slack_basis(&mut self, work: &mut LpWorkLimit<'_>) -> LpStatus {
+        let columns: Vec<_> = self.row_slack.iter().map(|s| s.expect("每行均有松弛列")).collect();
+        self.recover_from_basis(work, &columns)
+    }
+
+    #[cfg(feature = "sparse_phase1_recovery")]
+    fn recover_from_basis(&mut self, work: &mut LpWorkLimit<'_>, columns: &[usize]) -> LpStatus {
+        self.recover_with_zero_artificials(work, columns, Vec::new())
+    }
+    #[cfg(feature = "sparse_phase1_recovery")]
+    fn recover_with_zero_artificials(&mut self, work: &mut LpWorkLimit<'_>, columns: &[usize], fixed: Vec<(usize, f64)>) -> LpStatus {
         let ncs = self.ncols_static();
-        self.in_basis.truncate(ncs);
+        self.in_basis.resize(ncs + fixed.len(), false);
         self.in_basis.fill(false);
-        self.at_upper.truncate(ncs);
+        self.at_upper.resize(ncs + fixed.len(), false);
         self.at_upper.fill(false);
         for (upper, &cost) in self.at_upper.iter_mut().zip(&self.c_internal) {
             *upper = cost < 0.0;
         }
-        for (basic, slack) in self.basis.iter_mut().zip(&self.row_slack) {
-            *basic = slack.expect("对偶冷恢复要求每行有松弛列");
+        for (basic, &column) in self.basis.iter_mut().zip(columns) {
+            *basic = column;
             self.in_basis[*basic] = true;
         }
-        self.num_art = 0;
-        self.art_info.clear();
+        self.num_art = fixed.len();
+        self.art_info = fixed;
         // 成功前保留欠账：中断后 resolve 需要重新检查当前基。
         self.phase1_pending = true;
         if let Err(error) = self.refactor() {
@@ -4543,7 +4822,10 @@ impl SparseSimplex {
         }
         #[cfg(test)]
         refactor_fault::phase1_recovery_boundary(self, true);
-        match self.dual_repair_from_basis::<true>(work) {
+        // 此段仅使用对偶行权重，结束便重置原始定价权重，逐次维护它们没有用途。
+        let repair = self.dual_repair_from_basis::<true, true>(work);
+        self.devex_reset();
+        match repair {
             DualRepair::Stopped(status) => return status,
             DualRepair::GiveUp => {
                 self.numerical_error.get_or_insert_with(|| "松弛基对偶修复未完成".to_string());
@@ -4551,14 +4833,21 @@ impl SparseSimplex {
             }
             DualRepair::Repaired => {}
         }
-        if let Some(status) = self.phase1_recovery_stop_status(work) { return status; }
+        if let Some(status) = self.call_stop_status(work) { return status; }
         // 增量基本值不能单独证明原始可行。按原行、原右端、原界重算，再验证原目标。
-        let verified = self.refactor().map_err(|e| e.message())
-            .and_then(|()| self.check_phase_basic_values(2));
-        if let Err(message) = verified {
+        if let Err(message) = self.verify_original_basis() {
             self.numerical_error = Some(message);
             return LpStatus::IterationLimit;
         }
+        if let Some(status) = self.call_stop_status(work) { return status; }
+        self.phase1_pending = false;
+        LpStatus::Optimal
+    }
+
+    /// 按当前原始右端和变量界重新分解，逐行检查实际输出点，再检查原目标检验数。
+    fn verify_original_basis(&mut self) -> std::result::Result<(), String> {
+        self.refactor().map_err(|e| e.message())?;
+        self.check_phase_basic_values(2)?;
         let values = self.structural_solution();
         for (i, terms) in self.row_terms.iter().enumerate() {
             let activity: f64 = terms.iter().map(|&(j, a)| a * values[j]).sum();
@@ -4569,18 +4858,13 @@ impl SparseSimplex {
                 RelOp::Eq => residual.abs(),
             };
             if !residual.is_finite() || violation > self.tol.feasibility {
-                self.numerical_error = Some(format!("松弛基恢复后原约束第 {i} 行未通过复核"));
-                return LpStatus::IterationLimit;
+                return Err(format!("基恢复后原约束第 {i} 行未通过复核"));
             }
         }
-        if !self.dual_feasible() {
-            self.numerical_error = Some("松弛基恢复后原目标检验数未通过复核".to_string());
-            return LpStatus::IterationLimit;
+        if self.feasible_dual_prices().is_none() {
+            return Err("基恢复后原目标检验数未通过复核".into());
         }
-        if let Some(status) = self.phase1_recovery_stop_status(work) { return status; }
-        self.phase1_pending = false;
-        self.devex_reset();
-        LpStatus::Optimal
+        Ok(())
     }
 
     fn call_iteration_limit(&self) -> u64 {
@@ -4588,8 +4872,7 @@ impl SparseSimplex {
         self.iter_limit_hint.map_or(base, |hint| hint.max(1_000))
     }
 
-    #[cfg(feature = "sparse_phase1_recovery")]
-    fn phase1_recovery_stop_status(&self, work: &LpWorkLimit<'_>) -> Option<LpStatus> {
+    fn call_stop_status(&self, work: &LpWorkLimit<'_>) -> Option<LpStatus> {
         // 同阶段循环：先检查工作余额，再检查迭代上限和绝对期限。
         if let Some(status) = work.stop_status(self.time_deadline) {
             return Some(status);
@@ -4847,7 +5130,7 @@ impl SparseSimplex {
                             if _attempt == PrimalAttempt::ColdPhase1 {
                                 return PhaseOutcome::ColdPhase1LuFailure(msg);
                             }
-                            if let Some(status) = self.phase1_recovery_stop_status(work) {
+                            if let Some(status) = self.call_stop_status(work) {
                                 self.numerical_error = Some(msg);
                                 return if status == LpStatus::TimeLimit {
                                     PhaseOutcome::TimedOut
@@ -5144,12 +5427,16 @@ impl SparseSimplex {
 
     fn start_call(&mut self) {
         self.iter_call = 0;
+        self.pivots_since_time_check = TIME_CHECK_INTERVAL;
+        self.reset_anti_cycle();
+    }
+
+    fn reset_anti_cycle(&mut self) {
         self.degenerate_streak = 0;
         self.bland = false;
         self.bland_permanent = false;
         self.bland_dwell = 0;
         self.bland_rearms = 0;
-        self.pivots_since_time_check = TIME_CHECK_INTERVAL;
     }
 
     /// 提取公开的结构变量解；贴界修正与冷恢复的原约束复核使用同一组值。
@@ -5247,6 +5534,10 @@ impl LpEngine for SparseSimplex {
     fn proof_diagnostics(&self) -> LpDiagnostics {
         LpDiagnostics { numerical_error:self.numerical_error.clone(),phase1_pending:Some(self.phase1_pending) }
     }
+    #[cfg(feature = "choice_dual_root")]
+    fn solve_choice_root(&mut self, bounds: &Bounds) -> LpSolution {
+        self.solve_from(bounds, None, true)
+    }
     fn solve(&mut self, bounds: &Bounds) -> LpSolution {
         self.solve(bounds)
     }
@@ -5313,6 +5604,361 @@ mod tests {
     use crate::simplex::Simplex as DenseSimplex;
     use std::path::PathBuf;
 
+
+    #[cfg(feature = "sparse_phase1_recovery")]
+    mod proof_dual_tests {
+        use super::*;
+
+        fn mixed() -> Problem {
+            prob(Sense::Minimize,
+                vec![var("甲", 0., 1.), var("乙", 0., 1.), var("固定零", 0., 0.)],
+                vec![(0, -3.), (1, -1.)], vec![
+                    (vec![(0, 8.), (1, 8.), (2, 8.)], RelOp::Eq, 8.),
+                    (vec![(0, 1.)], RelOp::Le, 0.75),
+                    (vec![(1, 1.)], RelOp::Ge, 0.125),
+                ])
+        }
+
+        #[test]
+        fn dual_root_row_support_preserves_pivots_and_bound_endpoints() {
+            // 两种方向的原行均有松弛列，固定列没有入基自由度。负费用列
+            // 先贴上界，两个基行同时违约；试算随后会出现多项逆基行。
+            let p = prob(Sense::Minimize,
+                vec![var("甲", 0., 2.), var("乙", 0., 2.), var("丙", 0., 1.), var("固定", 0., 0.)],
+                vec![(0, -5.), (1, -4.), (2, -2.)], vec![
+                    (vec![(0, 2.), (1, 1.), (2, 1.), (3, 1.)], RelOp::Le, 2.5),
+                    (vec![(0, -1.), (1, -3.)], RelOp::Ge, -3.25),
+                ]);
+            let mut old = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            old.devex_active = true;
+            old.devex_reset();
+            for (upper, &cost) in old.at_upper.iter_mut().zip(&old.c_internal) {
+                *upper = cost < 0.;
+            }
+            old.refactor().unwrap();
+            let mut new = old.clone();
+            assert_eq!(old.dual_repair_from_basis::<true, false>(&mut LpWorkLimit::unlimited()), DualRepair::Repaired);
+            assert_eq!(new.dual_repair_from_basis::<true, true>(&mut LpWorkLimit::unlimited()), DualRepair::Repaired);
+            assert!(new.iterations_total > 1);
+            assert_eq!(new.iterations_total, old.iterations_total);
+            assert_eq!(new.basis, old.basis);
+            assert_eq!(new.at_upper, old.at_upper);
+            assert_eq!(new.x_b, old.x_b);
+            new.verify_original_basis().unwrap();
+            old.verify_original_basis().unwrap();
+            assert_eq!(new.structural_reduced_costs(), old.structural_reduced_costs());
+        }
+
+        #[test]
+        fn verified_original_primal_dual_and_sibling_resolve() {
+            let p = mixed();
+            let b = Bounds::from_problem(&p);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert!(s.proof_start_columns(&b, 2).is_some());
+            let sol = s.solve_proof(&b, 2);
+            assert_eq!(sol.status, LpStatus::Optimal);
+            assert_eq!(sol.x, [0.75, 0.25, 0.]);
+            assert!(s.phase1_pending == false && s.num_art == 0);
+            assert_eq!(sol.duals.len(), 3);
+            // 在未经归一的原行和列界上独立回算拉格朗日界。
+            let mut cost = vec![-3., -1., 0.];
+            let mut lower = 0.;
+            for (r, &pi) in p.constraints.iter().zip(&sol.duals) {
+                assert!((r.op != RelOp::Le || pi <= 0.) && (r.op != RelOp::Ge || pi >= 0.));
+                lower += r.rhs * pi;
+                for &(j, a) in &r.expr.terms { cost[j] -= a * pi; }
+            }
+            for (j, c) in cost.into_iter().enumerate() {
+                lower += c * if c >= 0. { b.lb[j] } else { b.ub[j] };
+            }
+            assert!((lower - sol.objective).abs() < 1e-10);
+            for cap in [0.25, 0.50] {
+                let mut child = s.clone();
+                let mut domain = b.clone();
+                domain.ub[0] = cap;
+                let result = child.resolve(&domain);
+                assert_eq!(result.status, LpStatus::Optimal);
+                assert_eq!(result.objective, -1. - 2. * cap);
+                assert_eq!(result.x[2], 0.);
+            }
+        }
+
+        #[test]
+        fn refuses_unbounded_cost_endpoint_shared_or_nonzero_auxiliary() {
+            let mut p = mixed();
+            p.vars[0].ub = f64::INFINITY;
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let b = Bounds::from_problem(&p);
+            assert!(s.proof_start_columns(&b, 2).is_none());
+            assert_eq!(s.solve_proof(&b, 2).objective, -2.5);
+            let mut p = mixed();
+            p.vars[2].ub = 0.5;
+            let s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert!(s.proof_start_columns(&Bounds::from_problem(&p), 2).is_none());
+            p.vars[2].ub = 0.;
+            p.add_constraint(None, vec![(2, 1.)], RelOp::Le, 0.).unwrap();
+            let s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert!(s.proof_start_columns(&Bounds::from_problem(&p), 2).is_none());
+        }
+
+        #[test]
+        fn proof_start_does_not_refund_iterations_before_fallback() {
+            let n = 1001;
+            let vars = (0..2 * n).map(|j| var(&format!("x{j}"), 0., if j < n { 1. } else { 0. })).collect();
+            let rows = (0..n).map(|j| (vec![(j, 1.), (n + j, 1.)], RelOp::Eq, 1.)).collect();
+            let p = prob(Sense::Minimize, vars, vec![], rows);
+            let b = Bounds::from_problem(&p);
+            let mut engine = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            engine.set_iter_limit_hint(Some(1000));
+            let sol = engine.solve_proof(&b, n);
+            assert_eq!(sol.status, LpStatus::IterationLimit);
+            assert!(sol.objective.is_nan());
+            assert_eq!(engine.iterations(), 1000);
+            engine.set_iter_limit_hint(None);
+            let recovered = engine.solve_proof(&b, n);
+            assert_eq!(recovered.status, LpStatus::Optimal);
+            assert!(recovered.x[..n].iter().all(|&v| v == 1.));
+            assert!(recovered.x[n..].iter().all(|&v| v == 0.));
+        }
+
+        #[test]
+        fn expired_deadline_is_not_an_infeasibility_or_optimality_certificate() {
+            let mut p = mixed();
+            let b = Bounds::from_problem(&p);
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            s.set_time_deadline(Some(std::time::Instant::now()));
+            let stopped = s.solve_proof(&b, 2);
+            assert_eq!(stopped.status, LpStatus::TimeLimit);
+            assert!(stopped.objective.is_nan());
+            s.set_time_deadline(None);
+            assert_eq!(s.resolve(&b).objective, -2.5);
+            p.constraints[0].rhs = 24.;
+            let mut s = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            assert_eq!(s.solve_proof(&b, 2).status, LpStatus::Infeasible);
+        }
+    }
+
+    #[cfg(feature = "choice_dual_root")]
+    mod ordinary_dual_tests {
+        use super::*;
+
+        fn mixed() -> Problem {
+            let tol = Tolerances::default();
+            prob(Sense::Minimize,
+                vec![var("甲", 0., 1.), var("乙", 0., 1.), var("固定零", 0., 0.)],
+                vec![(0, -3.), (1, -1.)], vec![
+                    (vec![(0, 1.), (1, 1.), (2, 1.)], RelOp::Eq, 1.),
+                    (vec![(0, 4.), (1, 4.), (2, 4.)], RelOp::Eq, 4.),
+                    (vec![(0, 1.)], RelOp::Le, 0.75),
+                    (vec![(1, 1.)], RelOp::Ge, 0.125),
+                    (vec![(2, tol.zero / 2.)], RelOp::Eq, 0.),
+                ])
+        }
+
+        #[test]
+        fn original_layout_duals_resolve_and_added_cut_match_the_dense_engine() {
+            let p = mixed();
+            let bounds = Bounds::from_problem(&p);
+            let tol = Tolerances::default();
+            let mut verified = SparseSimplex::new(&p, tol).unwrap();
+            assert_eq!(verified.solve_choice_root(&bounds).status, LpStatus::Optimal);
+            assert!(verified.verified_dual_root && verified.artificials_in_basis());
+            for kind in [LpEngineKind::Revised, LpEngineKind::Tableau] {
+                let mut lp = new_engine(&p, tol, kind).unwrap();
+                let before: Vec<_> = (0..p.constraints.len()).map(|r| lp.row_of_constraint(r)).collect();
+                let sol = lp.solve_choice_root(&bounds);
+                assert_eq!(sol.status, LpStatus::Optimal);
+                assert_eq!(sol.x, [0.75, 0.25, 0.]);
+                assert_eq!(sol.objective, -2.5);
+                assert_eq!(sol.duals.len(), 5);
+                assert_eq!(sol.duals[4], 0.);
+                let mut costs = [-3., -1., 0.];
+                let mut lower = 0.;
+                for (row, &y) in p.constraints.iter().zip(&sol.duals) {
+                    assert!((row.op != RelOp::Le || y <= 0.) && (row.op != RelOp::Ge || y >= 0.));
+                    lower += row.rhs * y;
+                    for &(j, a) in &row.expr.terms { costs[j] -= a * y; }
+                }
+                for (j, c) in costs.iter().enumerate() {
+                    lower += c * if *c < 0. { bounds.ub[j] } else { bounds.lb[j] };
+                }
+                assert!((lower - sol.objective).abs() < 1e-9);
+                assert_eq!(before, (0..5).map(|r| lp.row_of_constraint(r)).collect::<Vec<_>>());
+                assert_eq!(before, [Some(0), Some(1), Some(2), Some(3), None]);
+                let layout = lp.column_layout();
+                assert_eq!((layout.num_structural, layout.slack.len()), (3, 2));
+                let static_cols = layout.num_structural + layout.slack.len();
+                assert_eq!(lp.structural_reduced_costs().len(), 3);
+                assert!(lp.nonbasic_columns().iter().all(|c| c.col < static_cols));
+                for i in 0..lp.num_rows() {
+                    assert!(lp.tableau_row_terms(i).0.iter().all(|&(j, _)| j < static_cols));
+                }
+                let mut child = lp.snapshot();
+                let mut narrowed = bounds.clone();
+                narrowed.ub[0] = 0.5;
+                assert_eq!(child.resolve(&narrowed).objective, -2.);
+                assert_eq!(child.add_row(&[(0, 1.)], RelOp::Le, 0.25).unwrap(), 0);
+                let cut = child.resolve(&narrowed);
+                assert_eq!(cut.status, LpStatus::Optimal);
+                assert_eq!(cut.x, [0.25, 0.75, 0.]);
+                assert_eq!(child.row_of_cut(0), Some(4));
+                assert_eq!(lp.num_rows(), 4);
+                assert_eq!(lp.resolve(&bounds).objective, -2.5);
+            }
+        }
+
+        #[test]
+        fn perturbed_cost_cannot_prove_the_wrong_original_endpoint() {
+            let p = prob(Sense::Minimize, vec![var("有界", 0., 1.), var("无界", 0., f64::INFINITY)],
+                vec![(0, -1e-6)], vec![(vec![(1, 1.)], RelOp::Eq, 0.)]);
+            let b = Bounds::from_problem(&p);
+            let mut lp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let sol = lp.solve_choice_root(&b);
+            assert_eq!(sol.status, LpStatus::Optimal);
+            assert_eq!(sol.x, [1., 0.]);
+            assert_eq!(sol.objective, -1e-6);
+            let mut unbounded = p.clone();
+            unbounded.set_objective(vec![(0, -1.)], 0.).unwrap();
+            unbounded.vars[0].ub = f64::INFINITY;
+            let mut lp = SparseSimplex::new(&unbounded, Tolerances::default()).unwrap();
+            assert_eq!(lp.solve_choice_root(&Bounds::from_problem(&unbounded)).status, LpStatus::Unbounded);
+            assert!(!lp.verified_dual_root);
+        }
+
+        #[test]
+        fn expired_root_budget_restores_original_cost_for_warm_retry() {
+            let p = mixed();
+            let b = Bounds::from_problem(&p);
+            let mut lp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+            let costs = lp.c_internal.clone();
+            lp.set_time_deadline(Some(std::time::Instant::now()));
+            let sol = lp.solve_choice_root(&b);
+            assert_eq!(sol.status, LpStatus::TimeLimit);
+            assert!(sol.objective.is_nan() && !lp.verified_dual_root);
+            assert_eq!(lp.c_internal, costs);
+            lp.set_time_deadline(None);
+            assert_eq!(lp.resolve(&b).objective, -2.5);
+        }
+    }
+
+    #[cfg(feature = "choice_dual_root")]
+    #[test]
+    fn narrow_choice_root_restores_incompatible_auxiliary_rhs_and_honors_deadline() {
+        let n = 4096;
+        let m = 256;
+        let vars = (0..n).map(|j| var(&format!("x{j}"), 0., if j < m { 0. } else { 1. })).collect();
+        let rows = (0..m).map(|j| (vec![(j, 1.)], if j < m / 2 { RelOp::Eq } else { RelOp::Le }, 0.)).collect();
+        let costs = (m..m + 410).map(|j| (j, -1.)).collect();
+        let p = prob(Sense::Minimize, vars, costs, rows);
+        let bounds = Bounds::from_problem(&p);
+        let mut lp = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        let rhs = lp.row_rhs.clone();
+        // 固定零变量不能满足被扰动为正的等式，辅助模型的不可行不能当成原题结论。
+        let sol = lp.solve_choice_root(&bounds);
+        assert_eq!(sol.status, LpStatus::Optimal);
+        assert_eq!(sol.objective, -410.);
+        assert!(sol.x[..m].iter().all(|v| *v == 0.));
+        assert_eq!(rhs, lp.row_rhs);
+        lp.set_time_deadline(Some(std::time::Instant::now()));
+        let interrupted = lp.solve_choice_root(&bounds);
+        assert_eq!(interrupted.status, LpStatus::TimeLimit);
+        assert!(interrupted.objective.is_nan());
+        assert_eq!(rhs, lp.row_rhs);
+        lp.set_time_deadline(None);
+        assert_eq!(lp.resolve(&bounds).objective, -410.);
+    }
+
+    #[test]
+    fn perturbed_rhs_is_never_a_certificate_for_original_rows() {
+        // 第一项扰动后有解但原题无解；第二项恰好相反。第三项的扰动最优
+        // 目标与原题不同，只有在原右端重构后才可与稠密引擎一致。
+        for (op, rhs, upper, status) in [
+            (RelOp::Ge, 1e-6, 0., LpStatus::Infeasible),
+            (RelOp::Eq, 0., 0., LpStatus::Optimal),
+            (RelOp::Eq, 7., 8., LpStatus::Optimal),
+        ] {
+            let p = prob(Sense::Minimize, vec![var("x", 0., upper)], vec![(0, 1.)],
+                vec![(vec![(0, 1.)], op, rhs)]);
+            let bounds = Bounds::from_problem(&p);
+            let tol = Tolerances::default();
+            let reference = DenseSimplex::new(&p, tol).unwrap().solve(&bounds);
+            let mut sparse = SparseSimplex::new(&p, tol).unwrap();
+            sparse.bounds = bounds;
+            let st = sparse.solve_with_perturbed_basis(&mut LpWorkLimit::unlimited());
+            assert_eq!(st, status);
+            assert_eq!(st, reference.status);
+            assert_eq!(sparse.row_rhs, [rhs]);
+            if st == LpStatus::Optimal {
+                let result = sparse.build_solution(st);
+                assert_eq!(result.x, reference.x);
+                assert_eq!(result.objective, reference.objective);
+            }
+        }
+    }
+
+    #[test]
+    fn auxiliary_unbounded_ray_does_not_hide_infeasibility() {
+        // 放宽 x 的下界行后，y 的方向无界；原题却因固定的 x 不可行。
+        let p = prob(Sense::Minimize, vec![var("x", 0., 0.), var("y", 0., f64::INFINITY)],
+            vec![(1, -1.)], vec![(vec![(0, 1.)], RelOp::Ge, 1e-6)]);
+        let mut sparse = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        sparse.bounds = Bounds::from_problem(&p);
+        assert_eq!(sparse.solve_with_perturbed_basis(&mut LpWorkLimit::unlimited()), LpStatus::Infeasible);
+    }
+
+    #[test]
+    fn easy_wide_root_retains_original_basis_and_iteration_count() {
+        // 两个相同的等式若先扰动，辅助问题会变成不可行，白耗额外主元。
+        let vars = (0..4096).map(|j| var(&format!("x{j}"), 0., 3.)).collect();
+        let p = prob(Sense::Minimize, vars, vec![(0, 2.)], vec![
+            (vec![(0, 1.)], RelOp::Eq, 1.), (vec![(0, 1.)], RelOp::Eq, 1.),
+        ]);
+        let bounds = Bounds::from_problem(&p);
+        let mut expected = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        let mut sparse = expected.clone();
+        expected.bounds = bounds.clone();
+        expected.start_call();
+        assert_eq!(expected.cold_start(&mut LpWorkLimit::unlimited()), LpStatus::Optimal);
+        let actual = sparse.solve(&bounds);
+        assert_eq!(actual.x, expected.structural_solution());
+        assert_eq!(sparse.basis, expected.basis);
+        assert_eq!(sparse.iterations_total, expected.iterations_total);
+    }
+
+    #[test]
+    fn stalled_wide_root_shares_iteration_limit_with_auxiliary_basis() {
+        let n = 4096;
+        let vars = (0..n).map(|j| var(&format!("x{j}"), 0., 1.)).collect();
+        let p = prob(Sense::Minimize, vars, (1..n).map(|j| (j, -1.)).collect(),
+            vec![(vec![(0, 1.)], RelOp::Eq, 0.5)]);
+        let mut sparse = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        sparse.set_iter_limit_hint(Some(2100));
+        let result = sparse.solve(&Bounds::from_problem(&p));
+        assert_eq!(result.status, LpStatus::IterationLimit);
+        assert_eq!(sparse.iterations_total, 2100);
+        assert_eq!(sparse.iter_limit_hint, Some(2100));
+        assert_eq!(sparse.row_rhs, [0.5]);
+    }
+
+    #[test]
+    fn wide_rhs_time_limit_leaves_original_model_for_resolve() {
+        // 通过真实入口覆盖宽等式条件；界与目标均在原空间上验证。
+        let vars = (0..4096).map(|j| var(&format!("x{j}"), 0., 3.)).collect();
+        let p = prob(Sense::Minimize, vars, vec![(0, 2.)],
+            vec![(vec![(0, 1.)], RelOp::Eq, 1.)]);
+        let mut sparse = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        let bounds = Bounds::from_problem(&p);
+        sparse.set_time_deadline(Some(std::time::Instant::now()));
+        let interrupted = sparse.solve(&bounds);
+        assert_eq!(interrupted.status, LpStatus::TimeLimit);
+        assert!(interrupted.objective.is_nan() && sparse.phase1_pending);
+        assert_eq!(sparse.row_rhs, [1.]);
+        sparse.set_time_deadline(None);
+        let result = sparse.resolve(&bounds);
+        assert_eq!(result.status, LpStatus::Optimal);
+        assert_eq!(result.objective, 2.);
+        assert_eq!(result.x[0], 1.);
+    }
 
     mod safe_primal_ratio_tests {
         use super::*;
@@ -6995,7 +7641,7 @@ mod tests {
             assert_eq!(solution.objective, expected.objective);
             assert_eq!(solution.objective, 7.0);
             assert_eq!(engine.num_art, 0);
-            assert!(engine.etas.is_empty() && engine.dual_feasible());
+            assert!(engine.etas.is_empty() && engine.feasible_dual_prices().is_some());
             assert!(engine.check_phase_basic_values(2).is_ok());
         }
 
@@ -7292,6 +7938,61 @@ mod tests {
             assert_eq!(recovered.status, LpStatus::Optimal);
             assert_eq!(recovered.objective, 1.0);
         }
+    }
+
+    #[cfg(feature = "sparse_row_products")]
+    #[test]
+    fn dual_pivot_row_reuse_matches_column_path_with_a_fixed_nonbasic() {
+        let p = prob(
+            Sense::Maximize,
+            vec![var("x", 0.0, 10.0), var("固定", 0.0, 0.0), var("y", 0.0, 10.0)],
+            vec![(0, 3.0), (2, 1.0)],
+            vec![(vec![(0, 2.0), (1, 8.0), (2, 1.0)], RelOp::Le, 5.0)],
+        );
+        let mut bounds = Bounds::from_problem(&p);
+        let mut cached = SparseSimplex::new(&p, Tolerances::default()).unwrap();
+        cached.devex_active = true;
+        cached.dual_main_enabled = false;
+        let mut cold = cached.clone();
+        cold.row_products_disabled = true;
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(cached.solve(&bounds).x, cold.solve(&bounds).x);
+        let before = cached.iterations();
+        bounds.ub[0] = 2.0;
+        let a = cached.resolve(&bounds);
+        let b = cold.resolve(&bounds);
+        assert_eq!(a.status, LpStatus::Optimal);
+        assert_eq!(a.x, vec![2.0, 0.0, 1.0]);
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.objective.to_bits(), b.objective.to_bits());
+        assert_eq!(bits(&a.x), bits(&b.x));
+        assert_eq!(bits(&a.duals), bits(&b.duals));
+        assert_eq!(bits(&cached.devex_w), bits(&cold.devex_w));
+        assert!(cached.devex_w[1] > 1.0, "固定非基列的权重也必须参与更新");
+        assert_eq!(cached.basis, cold.basis);
+        assert_eq!(cached.iterations(), cold.iterations());
+        assert!(cached.iterations() > before, "收界后必须实际换基");
+    }
+
+    #[test]
+    fn medium_choice_engine_requires_mutex_rows_and_respects_explicit_engine() {
+        use crate::model::{RelOp, Sense, VarType, Variable};
+        let mut p = Problem::new("互斥宽表", Sense::Minimize);
+        p.add_vars((0..4000).map(|j| Variable {
+            name: format!("x{j}"), var_type: VarType::Binary, lb: 0., ub: 1.,
+        }).collect()).unwrap();
+        for i in 0..190 {
+            let row = (0..400).map(|j| ((j + i * 10) % 4000, 1.)).collect();
+            p.add_constraint(None, row, RelOp::Eq, 1.).unwrap();
+        }
+        assert_eq!(effective_engine(&p, LpEngineKind::Auto), LpEngineKind::Revised);
+        assert_eq!(effective_engine(&p, LpEngineKind::Tableau), LpEngineKind::Tableau);
+        let tail = p.constraints.split_off(170);
+        assert_eq!(effective_engine(&p, LpEngineKind::Auto), LpEngineKind::Tableau);
+        p.constraints.extend(tail);
+        for row in &mut p.constraints { row.rhs = 2.; }
+        assert_eq!(effective_engine(&p, LpEngineKind::Auto), LpEngineKind::Tableau);
+        assert_eq!(effective_engine(&p, LpEngineKind::Revised), LpEngineKind::Revised);
     }
 
     #[cfg(feature = "sparse_row_products")]

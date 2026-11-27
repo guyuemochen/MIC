@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """micpython —— milp 求解器的 gurobipy 风格 Python 绑定。
 
-零第三方依赖（ctypes + 标准库），Python 3.8+。目标求解器为本地 FFI 库
+零第三方依赖（ctypes + 标准库），Python 3.7+。目标求解器为本地 FFI 库
 ``milp-ffi``（见 ``micpython/_ffi.py`` 的装载规则与 ABI 契约）。
 
 - ``import micpython`` **无副作用**（惰性装载 DLL）：首次构造

@@ -2379,6 +2379,23 @@ pub fn cut_loop_recorded<E: LpEngine>(
             profile_bound = (result.status == LpStatus::Optimal).then_some(result.objective).filter(|v|v.is_finite());
             crate::proof_profile::lp("cut_entry",&result,s.iterations().saturating_sub(profile_initial_iterations),None,0);
         }
+        // 根割要在原坐标中回代端点、右端和小数部分。若一个浮点间距已大于
+        // 可行性或割违反量的容差，保留当前根 LP，交由常规分支搜索。
+        if result.status == LpStatus::Optimal {
+            let resolution = tol.feasibility.min(opts.min_violation);
+            let coarse = |v: f64| {
+                let v = v.abs();
+                v.is_finite() && v.next_up() - v > resolution
+            };
+            if bounds.lb.iter().chain(&bounds.ub).chain(&result.x).any(|&v| coarse(v))
+                || problem.constraints.iter().any(|row| {
+                    let max = row.expr.terms.iter().fold(0.0_f64, |a, t| a.max(t.1.abs()));
+                    max > tol.zero && (!(row.rhs / max).is_finite() || coarse(row.rhs / max))
+                })
+            {
+                return Ok((0, LpStatus::Optimal, recorded));
+            }
+        }
         result.status
     };
     if status != LpStatus::Optimal {

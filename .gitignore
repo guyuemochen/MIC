@@ -1,6 +1,9 @@
 # Rust 构建缓存（cargo 生成，可随时重建）
 target/
 
+# 基准脚本每次运行的新报告与原始记录
+/bench/runs/
+
 # ZCode 工作流运行记录（机器管理）
 .zcode/
 .zcodeignore

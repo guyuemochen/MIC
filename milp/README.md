@@ -577,7 +577,8 @@ lp-wide-1000x2000 8.84→7.56s（0.85×），目标极差 0.00；默认 auto 生
   setcover 至 400×800、marketsplit 至 5×50，共 22 个 `.milp` 算例。计时
   矩阵分两集（`bench/run_timings.py --set gate|full`）：gate = 6 算例 ×
   30s 时限（单次实测约 2 分钟、设计上限 3 分钟，快速回归）；full = 18 算例 × threads {1,4} ×
-  90s（中位数 JSON + 逐次原始记录）。2026-10 大规模轮（R1–R8 保留 + R9 空集
+  90s（中位数 JSON + 逐次原始记录）。每次运行写入 `bench/runs/` 下独立的目录。
+  2026-10 大规模轮（R1–R8 保留 + R9 空集
   回退）逐轮同窗交错 A/B 实测与数据见 `docs/large-scale-report.md`。
 
 ### 根节点 GMI 割（WP3）

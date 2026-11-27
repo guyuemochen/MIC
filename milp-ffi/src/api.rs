@@ -28,8 +28,9 @@ use std::sync::Arc;
 
 use milp::branch_bound::{BbOptions, BinaryPropagationMode, SearchControl, SearchHooks};
 use milp::error::MilpError;
-use milp::model::{RelOp, Sense, SolveStatus, Tolerances, VarType};
+use milp::model::{RelOp, Sense, SolveStatus, Tolerances, VarType, Variable};
 use milp::search_ctrl::{format_number, format_progress_line, ProgressInfo};
+use milp::simplex_sparse::LpEngineKind;
 use milp::solver::{solve_controlled, SolveOptions};
 
 use crate::error::{
@@ -360,10 +361,7 @@ pub extern "C" fn milp_ffi_add_var(
 /// 1. 预检（不触碰模型）：vtype 枚举（→9）、lb 非有限（→9）、ub 非有限/
 ///    +∞（→9）、name 元素 NULL（→1）或非 UTF-8（→8）、批内重名（→2）、
 ///    撞现有变量名（→2）——错误消息带元素下标；
-/// 2. 入模：逐个 `Problem::add_var` + `set_var_bounds`（保留字 / lb>ub /
-///    Binary 界越出 [0,1] 等模型语义的单一事实源仍在此层，→2）。预检后
-///    理论全部成功；防御性兜底：任一步失败则 `vars.truncate(原长度)` 回滚
-///    （本函数不触碰 obj/cons/sense，截断即精确还原）后映射错误码。
+/// 2. 模型层统一检查重名、保留字和变量界后整批写入（模型语义错误→2）。
 #[no_mangle]
 pub extern "C" fn milp_ffi_add_vars_batch(
     model: *mut c_void,
@@ -449,58 +447,30 @@ pub extern "C" fn milp_ffi_add_vars_batch(
             unsafe { *first_index_out = mb.problem.vars.len() as u32 };
             return MILP_FFI_OK;
         }
-        // 预检三（重名）：现有名集合 + 批内增量插入，批内重复/撞现有均 →2。
-        let mut used: std::collections::HashSet<String> = mb
-            .problem
-            .vars
-            .iter()
-            .map(|v| v.name.clone())
-            .collect();
         if names.is_null() {
-            // 自动命名 x{k}：跳过与现有/批内已用名重名（x\d+ 不撞保留字表）。
+            let used: std::collections::HashSet<&str> =
+                mb.problem.vars.iter().map(|v| v.name.as_str()).collect();
+            // 序号单调递增，自动名只可能与原有变量重名。
             let mut k = 0usize;
-            for _ in 0..n {
-                loop {
-                    let candidate = format!("x{k}");
-                    k += 1;
-                    if !used.contains(&candidate) {
-                        used.insert(candidate.clone());
-                        name_strs.push(candidate);
-                        break;
-                    }
-                }
-            }
-        } else {
-            for (i, name) in name_strs.iter().enumerate() {
-                if !used.insert(name.clone()) {
-                    return set_error(
-                        ERR_INVALID_MODEL,
-                        &format!("变量名 `{name}` 重复（批量第 {i} 个，与批内更早元素或现有变量重名）"),
-                    );
+            while name_strs.len() < n {
+                let candidate = format!("x{k}");
+                k += 1;
+                if !used.contains(candidate.as_str()) {
+                    name_strs.push(candidate);
                 }
             }
         }
-        // 入模 + 防御性回滚：预检后理论全部成功，仍兜底 Problem 层语义拒绝
-        // （保留字/lb>ub/Binary 界）——失败即 vars.truncate(原长度) 精确还原。
-        let orig_len = mb.problem.vars.len();
-        for i in 0..n {
-            match mb.problem.add_var(&name_strs[i], var_types[i]) {
-                Ok(index) => {
-                    if let Err(err) = mb
-                        .problem
-                        .set_var_bounds(index, lb_arr[i], ub_arr[i])
-                    {
-                        mb.problem.vars.truncate(orig_len);
-                        return map_milp_error(err);
-                    }
-                }
-                Err(err) => {
-                    mb.problem.vars.truncate(orig_len);
-                    return map_milp_error(err);
-                }
-            }
-        }
-        unsafe { *first_index_out = orig_len as u32 };
+        let vars = name_strs.into_iter().enumerate().map(|(i, name)| Variable {
+            name,
+            var_type: var_types[i],
+            lb: lb_arr[i],
+            ub: ub_arr[i],
+        }).collect();
+        let first = match mb.problem.add_vars(vars) {
+            Ok(first) => first,
+            Err(err) => return map_milp_error(err),
+        };
+        unsafe { *first_index_out = first as u32 };
         MILP_FFI_OK
     })
 }
@@ -729,14 +699,14 @@ pub extern "C" fn milp_ffi_set_param_real(model: *mut c_void, name: *const c_cha
                 mb.params.log_period_secs = if value == 0.0 { None } else { Some(value) };
                 MILP_FFI_OK
             }
-            "Threads" | "HeuristicMode" | "BinaryPropagation" => set_error(
+            "Threads" | "HeuristicMode" | "BinaryPropagation" | "LpEngine" => set_error(
                 ERR_ARG,
                 &format!("参数 `{name_str}` 不是 real 类型入口（请用对应类型的 setter）"),
             ),
             _ => set_error(
                 ERR_UNKNOWN_PARAM,
                 &format!(
-                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LpEngine/LogPeriodSecs）"
                 ),
             ),
         }
@@ -764,7 +734,7 @@ pub extern "C" fn milp_ffi_set_param_int(model: *mut c_void, name: *const c_char
                 mb.params.threads = value as usize;
                 MILP_FFI_OK
             }
-            "TimeLimit" | "MIPGap" | "LogPeriodSecs" | "HeuristicMode" | "BinaryPropagation" => {
+            "TimeLimit" | "MIPGap" | "LogPeriodSecs" | "HeuristicMode" | "BinaryPropagation" | "LpEngine" => {
                 set_error(
                     ERR_ARG,
                     &format!("参数 `{name_str}` 不是 int 类型入口（请用对应类型的 setter）"),
@@ -773,15 +743,15 @@ pub extern "C" fn milp_ffi_set_param_int(model: *mut c_void, name: *const c_char
             _ => set_error(
                 ERR_UNKNOWN_PARAM,
                 &format!(
-                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
+                    "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LpEngine/LogPeriodSecs）"
                 ),
             ),
         }
     })
 }
 
-/// str 型参数：HeuristicMode、BinaryPropagation（auto|on|off，大小写敏感）；未知值→9；
-/// 类型不符→9；名字不存在→10。
+/// str 型参数：HeuristicMode、BinaryPropagation（auto|on|off），
+/// LpEngine（auto|tableau|revised）。大小写敏感，未知值或类型不符→9，名字不存在→10。
 #[no_mangle]
 pub extern "C" fn milp_ffi_set_param_str(
     model: *mut c_void,
@@ -827,6 +797,19 @@ pub extern "C" fn milp_ffi_set_param_str(
                     }
                 };
             }
+            "LpEngine" => {
+                mb.params.lp_engine = match value_str {
+                    "auto" => LpEngineKind::Auto,
+                    "tableau" => LpEngineKind::Tableau,
+                    "revised" => LpEngineKind::Revised,
+                    _ => {
+                        return set_error(
+                            ERR_ARG,
+                            "LpEngine 非法（合法值：auto|tableau|revised，大小写敏感）",
+                        )
+                    }
+                };
+            }
             "TimeLimit" | "Threads" | "MIPGap" | "LogPeriodSecs" => {
                 return set_error(
                     ERR_ARG,
@@ -837,7 +820,7 @@ pub extern "C" fn milp_ffi_set_param_str(
                 return set_error(
                     ERR_UNKNOWN_PARAM,
                     &format!(
-                        "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LogPeriodSecs）"
+                        "未知参数名 `{name_str}`（合法参数：TimeLimit/Threads/MIPGap/HeuristicMode/BinaryPropagation/LpEngine/LogPeriodSecs）"
                     ),
                 )
             }
@@ -853,7 +836,8 @@ pub extern "C" fn milp_ffi_set_param_str(
 /// 求解。选项组装纪律（镜像 main.rs:294-327）：
 /// - `SolveOptions`：Tolerances::default + BbOptions::default（FFI 固定
 ///   root_cuts=true、use_presolve=true），按 HeuristicMode 覆盖 `heuristics`，
-///   按 BinaryPropagation 覆盖 `binary_row_propagation`，按 TimeLimit 覆盖
+///   按 BinaryPropagation 覆盖 `binary_row_propagation`，按 LpEngine 覆盖
+///   `lp_engine`，按 TimeLimit 覆盖
 ///   `time_limit_ms`（秒→毫秒按 [`secs_to_limit_ms`] 四舍五入 + 下限 1ms，0=不限）；
 /// - `SearchControl`：threads / mipgap_percent / adaptive_heuristics=
 ///   (mode==Auto) / log_period_secs / degrade=default；
@@ -880,6 +864,7 @@ pub extern "C" fn milp_ffi_solve(model: *mut c_void) -> i32 {
             bb: BbOptions {
                 heuristics: !matches!(params.heuristic_mode, HMode::Off),
                 binary_row_propagation: params.binary_row_propagation,
+                lp_engine: params.lp_engine,
                 time_limit_ms,
                 ..BbOptions::default()
             },

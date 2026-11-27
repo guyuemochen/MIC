@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""汇总 bench/raw_runs.jsonl（profile_stats 每行一次运行）为 bench/baseline.json。
+"""汇总 bench/raw_runs.jsonl（profile_stats 每行一次运行），在 bench/runs/ 下生成 baseline.json。
 
 口径（自述）：
 - 第 3 轮（2026-10-09）：13 算例（旧 7 + 新 6）× threads ∈ {1,4}，快算例 3 次、
@@ -16,9 +16,10 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
+from run_artifacts import new_run_dir
+
 ROOT = Path(__file__).parent
 RAW = ROOT / "raw_runs.jsonl"
-OUT = ROOT / "baseline.json"
 
 rows = [json.loads(l) for l in RAW.read_text(encoding="utf-8").splitlines() if l.strip()]
 
@@ -173,6 +174,7 @@ doc = {
         },
     },
 }
+OUT = new_run_dir("baseline") / "baseline.json"
 OUT.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"wrote {OUT}")
 for r in results:

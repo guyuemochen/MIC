@@ -55,7 +55,7 @@ ctypes 对应列见文末类型对齐表。
 | 12 | `int32_t milp_ffi_set_objective(void *model, const uint32_t *var_idx, const double *coeffs, uint32_t count, int32_t sense, double offset)` | `sense`：0=保持现状, 1=MINIMIZE, 2=MAXIMIZE（**仅在目标写入成功后**写 `problem.sense`——下标越界→2 失败时模型零突变，对齐 add_var 回滚纪律）；`offset` 即 `obj_offset`；`count=0`（空目标）合法；offset/系数非有限→9 |
 | 13 | `int32_t milp_ffi_set_param_real(void *model, const char *name, double value)` | real 型参数（见参数表）；非有限/负→9；类型不符→9；名字不存在→10 |
 | 14 | `int32_t milp_ffi_set_param_int(void *model, const char *name, int64_t value)` | int 型参数（`Threads` 1..=1024，越界→9） |
-| 15 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`、`BinaryPropagation` 均接受 `auto\|on\|off`，大小写敏感，未知值→9） |
+| 15 | `int32_t milp_ffi_set_param_str(void *model, const char *name, const char *value)` | str 型参数（`HeuristicMode`、`BinaryPropagation`、`LpEngine`，大小写敏感，未知值→9） |
 | 16 | `int32_t milp_ffi_solve(void *model)` | 选项组装见下文；`Err` 按 `MilpError` 变体映射 2-6 且**不覆盖旧结果**；`Ok`（含 Infeasible/Unbounded/LimitReached）存档并返回 0，状态经 getter 读取 |
 | 17 | `int32_t milp_ffi_get_status(void *model, int32_t *out)` | 0=NOT_SOLVED, 1=OPTIMAL, 2=INFEASIBLE, 3=UNBOUNDED, 4=LIMIT_REACHED |
 | 18 | `int32_t milp_ffi_get_objective(void *model, double *out)` | 无解（未求解/无可行解）→11 |
@@ -126,6 +126,7 @@ ctypes 对应列见文末类型对齐表。
 | MIPGap | real 百分比 | ≥0（**0=关闭**） | 0 | `SearchControl.mipgap_percent`（None/Some(p>0)） |
 | HeuristicMode | str | `auto\|on\|off`（大小写敏感） | **`on`** | off ⇒ `bb.heuristics=false`；on/auto ⇒ true；auto 另置 `adaptive_heuristics=true` |
 | BinaryPropagation | str | `auto\|on\|off`（大小写敏感） | `auto` | `BbOptions.binary_row_propagation` |
+| LpEngine | str | `auto\|tableau\|revised`（大小写敏感） | `auto` | `BbOptions.lp_engine` |
 | LogPeriodSecs | real 秒 | ≥0（**0=关闭**，>0 开启） | 0 | `SearchControl.log_period_secs` + 仅开启时注入 stdout 进度钩子（镜像 milp CLI `--log-secs`） |
 
 - **0 是规范关断编码，任何后设值可覆盖先设值**：先 `TimeLimit=5.0` 再

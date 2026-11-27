@@ -19,8 +19,9 @@ watchdog_kill，不拖垮全表。
 - 算例来自 bench/instances/*.milp（统一解析后接入各 API）；
 - 全部求解器 threads=1、统一时限；build/solve 分计（perf_counter）；
 - 目标值交叉核对（DP .opt 真值一并核对），不一致显式 MISMATCH；
-- 结果写 bench/python_bench_results.{json,md}。
+- 每次全量运行或合并在 bench/runs/ 下新建目录，保存 JSON 和 Markdown 报告。
 """
+import argparse
 import json
 import re
 import subprocess
@@ -28,8 +29,11 @@ import sys
 import time
 from pathlib import Path
 
+from run_artifacts import new_run_dir
+
 ROOT = Path(__file__).resolve().parent.parent
 INST = ROOT / "bench" / "instances"
+ARCHIVED_REPORT = ROOT / "bench" / "python_bench_results.json"
 GRACE_SECS = 120.0  # 看门狗宽限：超过时限这么多仍不返回 ⇒ 强杀
 
 INSTANCES = [
@@ -237,9 +241,6 @@ def write_results(rows):
                 if r["objective"] is not None and abs(r["objective"] - dp) > 1e-6:
                     mismatch.append((name + " [DP]", [(r["solver"], r["objective"], dp)]))
 
-    (ROOT / "bench" / "python_bench_results.json").write_text(
-        json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
-
     lines = ["# micpython × 开源求解器（HiGHS / SCIP）同机对比", "",
              "环境：conda `mic-bench`（py3.11，pip 的 scipy/ortools 官方轮子），threads=1，"
              "时限见正文；机器 15W 笔记本（墙钟噪声 ±20-60%，见 docs/parallel-profiling.md §1.3）。"
@@ -266,9 +267,12 @@ def write_results(rows):
         lines += ["", "## MISMATCH（目标不一致，需人工核查）", ""]
         for name, detail in mismatch:
             lines.append(f"- {name}: {detail}")
-    (ROOT / "bench" / "python_bench_results.md").write_text(
+    run_dir = new_run_dir("python-bench")
+    (run_dir / "python_bench_results.json").write_text(
+        json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    (run_dir / "python_bench_results.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
-    print(f"done; mismatch={len(mismatch)}", flush=True)
+    print(f"完成，目标不一致 {len(mismatch)} 项；报告目录：{run_dir}", flush=True)
 
 
 def main_driver():
@@ -295,15 +299,24 @@ def main_driver():
     write_results(rows)
 
 
-if __name__ == "__main__":
-    if len(sys.argv) >= 4 and sys.argv[1] == "--pair":
-        print(json.dumps(run_pair(sys.argv[2], sys.argv[3]), ensure_ascii=False))
-    elif len(sys.argv) >= 3 and sys.argv[1] == "--merge":
-        # --merge <jsonl>：以现有 json 为底，用 jsonl 中的行（--pair 输出）替换同键行后重写
-        base = json.loads((ROOT / "bench" / "python_bench_results.json").read_text(encoding="utf-8"))
+def main():
+    parser = argparse.ArgumentParser(description="micpython 与 HiGHS、SCIP 的同机对比")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pair", nargs=2, metavar=("算例", "求解器"), help="运行一组并将 JSON 打印到标准输出")
+    mode.add_argument("--merge", type=Path, metavar="JSONL", help="将逐行补测记录合入报告，生成新报告")
+    parser.add_argument("--base", type=Path, help="供 --merge 读取的 JSON 报告，默认使用已归档报告")
+    args = parser.parse_args()
+    if args.base is not None and args.merge is None:
+        parser.error("--base 需要与 --merge 一起使用")
+
+    if args.pair is not None:
+        print(json.dumps(run_pair(*args.pair), ensure_ascii=False))
+    elif args.merge is not None:
+        base_path = args.base if args.base is not None else ARCHIVED_REPORT
+        base = json.loads(base_path.read_text(encoding="utf-8"))
         key = lambda r: (r["instance"], r["solver"])  # noqa: E731
         repl = {}
-        for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+        for line in args.merge.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
                 repl[key(r)] = r
@@ -311,3 +324,7 @@ if __name__ == "__main__":
         write_results(rows)
     else:
         main_driver()
+
+
+if __name__ == "__main__":
+    main()

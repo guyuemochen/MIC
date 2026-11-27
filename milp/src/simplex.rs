@@ -54,7 +54,7 @@
 //!   按入基列下标）一律取最小下标；|主元|最大规则仅 Dantzig 阶段使用。
 //! - 比值测试同时考虑基变量上下界与入基变量自身界翻转；主元 |p| ≥ tol.pivot
 //!   才允许；入基列无任何阻挡 ⇒ Unbounded。检验数由当前表格在三入口
-//!   （price / dual_feasible / dual_repair 每轮迭代顶部）批量重算
+//!   （原始定价、对偶可行性预检、对偶修复换基后的比值测试）批量重算
 //!   （compute_rc_batch：值级等价于逐列现算，不增量维护，无定价漂移）；
 //!   每 200 次主元用原始数据重算 B⁻¹b；NaN/Inf 立即按数值失败处理。迭代
 //!   上限 max(10_000, 20×(m+n))（割循环内经 set_iter_limit_hint 收紧为
@@ -1402,21 +1402,17 @@ impl Simplex {
     /// 不改变任何数值，含 ±0 符号位）。
     ///
     /// 轴1（稀疏散射，规模门后置）：禁用态（m×ncols ≤
-    /// [`RC_SPARSE_CELL_THRESHOLD`]）走下方纯稠密旧路径不动——小算例行为
-    /// 逐字节不变；启用态稀疏标记行改按行非零索引散射 `rc[j] -= cb·row[i][j]`
+    /// [`RC_SPARSE_CELL_THRESHOLD`]）按完整行更新；启用态稀疏标记行按行非零
+    /// 索引散射 `rc[j] -= cb·row[i][j]`
     /// （跳过该行 matrix[i][j]==0 的格）：每列的减法序列仍与稠密路径同序
     /// （行 i 升序），跳过项是精确无操作（减 ±0 至多把 −0.0 翻成 +0.0，
     /// f64 == 不可分辨），结果保持 == 相等；稠密标记行（空索引）回退 zip
     /// 循环（与旧稠密路径逐字节同序）。
     ///
-    /// # 新鲜度契约（三入口各自在入口无条件重算）
-    /// 禁止只由 price 刷新后他处复用——do_pivot、phase 切换、add_row、
-    /// 整基重建都会使缓存陈旧。三入口：
-    /// (a) [`price`] 入口；(b) [`dual_feasible`] 入口（resolve 入口距上次
-    /// price 可能隔 phase 切换/add_row/整基重建）；(c) [`dual_repair`]
-    /// 外层循环每轮迭代顶部（上一轮 do_pivot 已改表，下一轮列扫描前必须
-    /// 重算；扫描“只对过滤列读取”是省工而非新鲜度保证，二者不得混淆）。
-    /// v1 不做表格版本号脏标记，三入口无条件重算。
+    /// # 新鲜度契约
+    /// 原始定价和对偶预检各自重算，避免跨换基、阶段切换、加割或重建复用。
+    /// 对偶预检通过后首轮比值测试仍读同一表格，沿用刚计算的检验数。
+    /// 此后换基使缓存失效，需要继续比值测试时立即按当前表格重算。
     fn compute_rc_batch(&mut self, phase: u8) {
         let m = self.basis.len();
         let ncols = self.ncols_static() + self.num_art;
@@ -1426,9 +1422,12 @@ impl Simplex {
             self.cb_scratch[i] = self.cost_of(self.basis[i], phase);
         }
         self.rc_scratch.clear();
-        self.rc_scratch.resize(ncols, 0.0);
-        for j in 0..ncols {
-            self.rc_scratch[j] = self.cost_of(j, phase);
+        if phase == 1 {
+            self.rc_scratch.resize(self.ncols_static(), 0.0);
+            self.rc_scratch.resize(ncols, 1.0);
+        } else {
+            self.rc_scratch.extend_from_slice(&self.c_internal);
+            self.rc_scratch.resize(ncols, 0.0);
         }
         if self.nz_enabled {
             // 启用态走外置散射路径（轴1）：稀疏标记行按行索引散射，稠密标记
@@ -1443,8 +1442,8 @@ impl Simplex {
             if cb != 0.0 {
                 let row = &self.matrix[i];
                 let rc = &mut self.rc_scratch;
-                for j in 0..ncols {
-                    rc[j] -= cb * row[j];
+                for (value, &coefficient) in rc[..ncols].iter_mut().zip(&row[..ncols]) {
+                    *value -= cb * coefficient;
                 }
             }
         }
@@ -1465,8 +1464,8 @@ impl Simplex {
             let row = &self.matrix[i];
             let rc = &mut self.rc_scratch;
             if self.row_nz[i].is_empty() {
-                for j in 0..ncols {
-                    rc[j] -= cb * row[j];
+                for (value, &coefficient) in rc[..ncols].iter_mut().zip(&row[..ncols]) {
+                    *value -= cb * coefficient;
                 }
             } else {
                 for &e in self.row_nz[i].iter() {
@@ -3178,10 +3177,6 @@ impl Simplex {
             if let Some(st) = work.start_status(self.time_deadline) {
                 return DualRepair::Stopped(st);
             }
-            // 新鲜度规范 (c)：外层循环每轮迭代顶部重算检验数——上一轮
-            // do_pivot 已改表，下一轮列扫描读取的 rc 必须反映当前表格
-            // （扫描“只对过滤列读取”是省工而非新鲜度保证，二者不得混淆）。
-            self.compute_rc_batch(2);
             // (1) 选相对违反最重的基行（below = 低于 lb ⇒ 需升到 lb）。
             //     过滤阈值用**绝对** feasibility——与入口 [`Self::basics_violated`]
             //     （绝对 feas）同口径、严于终检的 10·feas：若用相对阈值
@@ -3212,6 +3207,10 @@ impl Simplex {
             };
             if iters >= budget {
                 return DualRepair::GiveUp;
+            }
+            // 入口验证已计算当前表格的检验数，后续只在换基后继续比值测试时重算。
+            if iters != 0 {
+                self.compute_rc_batch(2);
             }
             let use_bland = iters >= bland_at || degen >= DEGEN_BLAND;
             // (2) 对偶比值测试：方向可行（below ⇒ δ·a<0，above ⇒ δ·a>0）的

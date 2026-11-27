@@ -5,7 +5,8 @@
 //! - [`dive`]：fix-and-dive 潜水，逐步固定“最接近整数的非整整数变量”。
 //! - [`sub_mip`]（方向 1）：根节点 sub-MIP 启发式——根 LP 解中已取整数值的
 //!   整数变量按该值固定（RENS 型受限子问题），对剩余分数变量跑一次封顶的
-//!   嵌套分支定界（确定性深限/节点上限）。
+//!   嵌套分支定界（确定性深限/节点上限）。宽模型中由整数等式决定的余量
+//!   随其他选择调整，潜水和受限搜索均在完整模型上核对候选。
 //! - [`subset_sum_mitm`]（R5-retry）：子集和 meet-in-the-middle 可行性
 //!   启发式——全 Binary + 全 Eq + 整系数类的**精确**可行点发现（n ≤ 42
 //!   全变量半枚举；n ≤ 84 窗口半枚举 + LCG 确定性窗口），脱离 LP 信息源
@@ -17,9 +18,198 @@ use std::hash::{DefaultHasher, Hasher};
 use std::time::Instant;
 
 use crate::branch_bound::{is_integral, select_branch_var};
-use crate::model::{Problem, RelOp, Sense, Tolerances, VarType};
+use crate::model::{Constraint, Problem, RelOp, Sense, Tolerances, VarType};
 use crate::simplex::{Bounds, LpSolution, LpStatus};
 use crate::simplex_sparse::LpEngine;
+
+/// 宽模型常用一列整数余量记录等式未分配的量。若右端和其他整数列的
+/// 系数都是该列系数的整数倍，确定其余整数后，余量自然取整。潜水和
+/// 受限搜索不提前固定它，以免锁死能够互换的选择；候选仍由完整模型复核。
+fn heuristic_integers(problem: &Problem) -> Vec<usize> {
+    let mut vars = problem.integer_vars();
+    if vars.len() < 4096
+        || vars.len() / 8 < problem.constraints.len()
+        || !vars.iter().any(|&j| problem.vars[j].ub == f64::INFINITY)
+    {
+        return vars;
+    }
+    let mut occurrences = vec![0u8; problem.vars.len()];
+    for row in &problem.constraints {
+        for &(j, _) in &row.expr.terms {
+            occurrences[j] = occurrences[j].saturating_add(1);
+        }
+    }
+    let mut implied = vec![false; problem.vars.len()];
+    for row in &problem.constraints {
+        if row.op != RelOp::Eq {
+            continue;
+        }
+        let Some(&(j, a)) = row.expr.terms.iter().find(|&&(j, _)| {
+            let v = &problem.vars[j];
+            occurrences[j] == 1 && v.var_type == VarType::Integer && v.ub == f64::INFINITY
+        }) else { continue };
+        let Some((unit, power)) = crate::model::dyadic(a) else { continue };
+        if unit == 0 {
+            continue;
+        }
+        let multiple = |value| {
+            crate::model::dyadic(value).is_some_and(|(k, e)| {
+                k == 0 || (e >= power && k % unit == 0)
+            })
+        };
+        // 每个等式至多跳过一列；其又只出现于这一行，因而不存在循环依赖。
+        if multiple(row.rhs) && row.expr.terms.iter().all(|&(k, b)| {
+            problem.vars[k].var_type != VarType::Continuous && multiple(b)
+        }) {
+            implied[j] = true;
+        }
+    }
+    vars.retain(|&j| !implied[j]);
+    vars
+}
+
+#[derive(Clone, Copy)]
+struct RowSlack {
+    column: usize,
+    coefficient: f64,
+    cost: f64,
+    integer: bool,
+}
+
+struct CompletionRow {
+    rhs: f64,
+    op: RelOp,
+    slack: [Option<RowSlack>; 2],
+}
+
+impl CompletionRow {
+    /// 给定已选列的活动度，尝试只用一个私有余量补齐本行。
+    fn complete(&self, activity: f64) -> Option<(Option<RowSlack>, f64)> {
+        let gap = self.rhs - activity;
+        if gap == 0. || (self.op == RelOp::Le && gap > 0.) || (self.op == RelOp::Ge && gap < 0.) {
+            return Some((None, 0.));
+        }
+        let slack = self.slack[(gap < 0.) as usize]?;
+        let value = gap / slack.coefficient;
+        (value.is_finite() && (!slack.integer || value.fract() == 0.))
+            .then_some((Some(slack), value))
+    }
+
+    fn cost(&self, activity: f64) -> Option<f64> {
+        let (slack, value) = self.complete(activity)?;
+        Some(slack.map_or(0., |s| value * s.cost))
+    }
+}
+
+/// 宽模型若多数行有独占的非负余量，先从零点按实际费用下降量加入整数选择。
+/// 选一列后只需重算它影响的行。保留数次不同的贪心顺序，并尝试撤换已选列；
+/// 总工作量按稀疏项访问数限制。补不齐即放弃这个点，只有全模型复核能接受它。
+pub(crate) fn private_slack_start(
+    p: &Problem, bounds: &Bounds, tol: &Tolerances, deadline: Option<Instant>,
+) -> Option<Incumbent> {
+    let n = p.vars.len();
+    let m = p.constraints.len();
+    if n < 4096 || n / 8 < m || m == 0 || p.sense != Sense::Minimize
+        || p.vars.iter().any(|v| v.lb != 0.) || !p.vars.iter().any(|v| v.ub.is_infinite())
+    {
+        return None;
+    }
+    let mut costs = vec![0.; n];
+    for &(j, c) in &p.obj.terms { costs[j] = c; }
+    let mut count = vec![0u8; n];
+    let mut terms = 0_usize;
+    for row in &p.constraints {
+        terms = terms.checked_add(row.expr.terms.len())?;
+        if terms > 2_000_000 || mitm_expired(deadline) { return None; }
+        for &(j, _) in &row.expr.terms { count[j] = count[j].saturating_add(1); }
+    }
+    let mut rows = Vec::with_capacity(m);
+    let mut columns = vec![Vec::new(); n];
+    let mut load = vec![0_f64; n];
+    for (i, row) in p.constraints.iter().enumerate() {
+        if mitm_expired(deadline) { return None; }
+        let mut repair = CompletionRow { rhs: row.rhs, op: row.op, slack: [None; 2] };
+        for &(j, a) in &row.expr.terms {
+            let var = &p.vars[j];
+            if count[j] == 1 && var.ub == f64::INFINITY && costs[j] >= 0. {
+                let slot = &mut repair.slack[(a < 0.) as usize];
+                if slot.is_none_or(|s| costs[j] / a.abs() < s.cost / s.coefficient.abs()) {
+                    *slot = Some(RowSlack { column: j, coefficient: a, cost: costs[j],
+                        integer: var.var_type != VarType::Continuous });
+                }
+            } else if var.var_type != VarType::Continuous && var.ub.is_finite() && var.ub >= 1. {
+                columns[j].push((i, a));
+                if row.rhs > 0. { load[j] += (a / row.rhs).abs(); }
+            }
+        }
+        rows.push(repair);
+    }
+    if rows.iter().filter(|r| r.slack.iter().any(Option::is_some)).count() < m.div_ceil(2) {
+        return None;
+    }
+    let choices: Vec<_> = (0..n).filter(|&j| !columns[j].is_empty()).collect();
+    let mut best: Option<Incumbent> = None;
+    let mut best_choices = Vec::new();
+    let mut sweeps = (24_000_000 / terms.max(n)).min(128);
+    for attempt in 0..8 {
+        if sweeps == 0 || mitm_expired(deadline) { break; }
+        let mut x = vec![0.; n];
+        let mut selected = Vec::new();
+        let mut activity = vec![0.; m];
+        let mut skip = None;
+        // 先各用一次绝对降幅和单位资源降幅。随后撤掉两个相邻的选择，
+        // 临时禁止先加回第一个，给多个短选项替代一个长选项的机会。
+        if attempt >= 2 {
+            if best_choices.len() < 2 { break; }
+            let a = (attempt - 2) % best_choices.len();
+            let b = (a + 1) % best_choices.len();
+            skip = Some(best_choices[a]);
+            for (k, &j) in best_choices.iter().enumerate() {
+                if k == a || k == b { continue; }
+                selected.push(j);
+                x[j] += 1.;
+                for &(i, a) in &columns[j] { activity[i] += a; }
+            }
+        }
+        let Some(mut row_cost): Option<Vec<_>> = rows.iter().zip(&activity)
+            .map(|(row, &lhs)| row.cost(lhs)).collect() else { continue };
+        while sweeps > 0 && !mitm_expired(deadline) {
+            sweeps -= 1;
+            let mut pick = None;
+            let mut best_score = 0.;
+            for (k, &j) in choices.iter().enumerate() {
+                if k % 256 == 0 && mitm_expired(deadline) { break; }
+                if x[j] + 1. > bounds.ub[j] || skip == Some(j) { continue; }
+                let delta = columns[j].iter().try_fold(costs[j], |d, &(i, a)| {
+                    Some(d + rows[i].cost(activity[i] + a)? - row_cost[i])
+                });
+                if let Some(delta) = delta {
+                    let score = if attempt % 2 == 0 { delta } else { delta / load[j].max(1.).sqrt() };
+                    if score < best_score { best_score = score; pick = Some(j); }
+                }
+            }
+            let Some(j) = pick else { break; };
+            skip = None;
+            x[j] += 1.;
+            selected.push(j);
+            for &(i, a) in &columns[j] {
+                activity[i] += a;
+                row_cost[i] = rows[i].cost(activity[i])?;
+            }
+        }
+        if selected.is_empty() { continue; }
+        for (r, lhs) in rows.iter().zip(activity) {
+            if let (Some(s), value) = r.complete(lhs)? { x[s.column] = value; }
+        }
+        if let Some(inc) = round_and_check(p, bounds, &x, tol) {
+            if best.as_ref().is_none_or(|old| inc.objective < old.objective) {
+                best = Some(inc);
+                best_choices = selected;
+            }
+        }
+    }
+    best
+}
 
 /// 启发式得到的可行整数解。
 #[derive(Debug, Clone)]
@@ -170,7 +360,129 @@ pub(crate) fn dive_with_work_budget(
     lp_x: &[f64],
     max_fixes: usize,
     tol: &Tolerances,
-    mut budget: Option<&mut HeuristicWorkBudget>,
+    budget: Option<&mut HeuristicWorkBudget>,
+) -> Option<Incumbent> {
+    dive_with_priority(problem, simplex, bounds, lp_x, max_fixes, tol, budget, None)
+}
+
+/// 同号等式和单侧容量都能证明这些非负整数变量至多选一。
+pub(crate) fn is_choice_row(p: &Problem, row: &Constraint) -> bool {
+    let packing = match row.op {
+        RelOp::Le => row.rhs > 0.,
+        RelOp::Ge => row.rhs < 0.,
+        RelOp::Eq => row.rhs != 0.,
+    };
+    packing && row.expr.terms.len() >= 2 && row.expr.terms.iter().all(|&(j, a)| {
+        a == row.rhs && p.vars[j].lb >= 0. && p.vars[j].var_type != VarType::Continuous
+    })
+}
+
+/// 宽模型中至少一半的列参与至多选一的约束时，根潜水和后续限时搜索共用这份列标记。
+pub(crate) fn wide_choice_columns(p: &Problem) -> Option<Vec<bool>> {
+    if p.vars.len() < 4096 || p.vars.len() / 8 < p.constraints.len()
+        || !p.vars.iter().any(|v| v.var_type == VarType::Integer && v.ub == f64::INFINITY)
+    {
+        return None;
+    }
+    let mut choice = vec![false; p.vars.len()];
+    // 已由单侧行覆盖的模型沿用原潜水顺序，仅在覆盖不足时引入等式。
+    for equalities in [false, true] {
+        for r in &p.constraints {
+            if (r.op == RelOp::Eq) == equalities && is_choice_row(p, r) {
+                for &(j, _) in &r.expr.terms { choice[j] = true; }
+            }
+        }
+        if choice.iter().filter(|&&yes| yes).count() >= p.vars.len() / 2 {
+            return Some(choice);
+        }
+    }
+    None
+}
+
+/// 中等宽度的纯整数模型若只剩少数分数互斥项，直接分支可避免两轮重复潜水。
+/// 阈值只选择搜索顺序，原树仍用完整的 LP 界证明。更宽的模型已有专门候选搜索。
+pub(crate) fn short_choice_tree(p: &Problem, x: &[f64], tol: &Tolerances) -> bool {
+    let n = p.vars.len();
+    if !(1024..4096).contains(&n) || n / 8 < p.constraints.len() || x.len() != n {
+        return false;
+    }
+    let mut fractional = vec![false; n];
+    let mut binary = 0;
+    let mut other = 0;
+    for (j, (v, &value)) in p.vars.iter().zip(x).enumerate() {
+        if v.var_type == VarType::Continuous || !value.is_finite() {
+            return false;
+        }
+        if (value - value.round()).abs() <= tol.integrality {
+            continue;
+        }
+        if v.var_type == VarType::Binary {
+            binary += 1;
+            fractional[j] = true;
+        } else {
+            other += 1;
+        }
+        if binary > 16 || other > 1 {
+            return false;
+        }
+    }
+    if binary == 0 {
+        return false;
+    }
+    // 分数二元列都须确实处于“至多选一”的同号约束内。越界、非互斥模型仍用根启发式。
+    for row in &p.constraints {
+        if !is_choice_row(p, row) {
+            continue;
+        }
+        for &(j, _) in &row.expr.terms {
+            if fractional[j] {
+                fractional[j] = false;
+                binary -= 1;
+            }
+        }
+        if binary == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// 替代项很多时，直接试选互斥行中 LP 值最大的分数列。根基副本上的工作计入启发式统计。
+pub(crate) fn choice_dive(
+    p: &Problem, simplex: &dyn LpEngine, bounds: &Bounds, x: &[f64], choice: &[bool],
+    max_fixes: usize, tol: &Tolerances, shared: Option<&mut HeuristicWorkBudget>,
+) -> (Option<Incumbent>, u64) {
+    if max_fixes == 0 || !choice.iter().zip(x).any(|(&yes, &v)| {
+        yes && (v - v.round()).abs() > tol.integrality
+    }) {
+        return (None, 0);
+    }
+    let limit = HeuristicWorkBudget {
+        remaining_work: shared.as_ref().map_or(1024, |b| b.remaining_work.min(1024)),
+        lp_calls: shared.as_ref().map_or(16, |b| b.lp_calls.min(16)),
+    };
+    if limit.remaining_work == 0 || limit.lp_calls == 0 { return (None, 0); }
+    let mut work = limit;
+    let mut probe = simplex.snapshot();
+    probe.set_iter_limit_hint(Some(limit.remaining_work));
+    let candidate = dive_with_priority(p, &mut probe, bounds, x, max_fixes.min(12),
+        tol, Some(&mut work), Some(choice));
+    let iterations = probe.iterations().saturating_sub(simplex.iterations());
+    if let Some(shared) = shared {
+        let spent = if cfg!(feature = "root_heuristic_work_limit") {
+            limit.remaining_work - work.remaining_work
+        } else { iterations };
+        shared.remaining_work = shared.remaining_work.saturating_sub(spent);
+        shared.lp_calls -= limit.lp_calls - work.lp_calls;
+    }
+    (candidate, iterations)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dive_with_priority(
+    problem: &Problem, simplex: &mut dyn LpEngine, bounds: &Bounds, lp_x: &[f64],
+    max_fixes: usize, tol: &Tolerances, mut budget: Option<&mut HeuristicWorkBudget>,
+    choices: Option<&[bool]>,
 ) -> Option<Incumbent> {
     let n = problem.vars.len();
     if lp_x.len() != n || bounds.lb.len() != n || bounds.ub.len() != n {
@@ -179,7 +491,7 @@ pub(crate) fn dive_with_work_budget(
     if lp_x.iter().any(|v| !v.is_finite()) {
         return None;
     }
-    let int_vars = problem.integer_vars();
+    let int_vars = if choices.is_some() { problem.integer_vars() } else { heuristic_integers(problem) };
     let mut dive_bounds = bounds.clone();
     let mut cur_x = lp_x.to_vec();
     let mut fixes = 0usize;
@@ -188,17 +500,18 @@ pub(crate) fn dive_with_work_budget(
     loop {
         // 选最接近整数的非整整数变量（并列取最小下标）。
         let mut pick: Option<usize> = None;
-        let mut best_dist = f64::INFINITY;
+        let mut best_rank = f64::INFINITY;
         for &j in &int_vars {
             let dist = (cur_x[j] - cur_x[j].round()).abs();
-            if dist > tol.integrality && dist < best_dist {
-                best_dist = dist;
+            let rank = if choices.is_some_and(|g| g[j]) { -cur_x[j] } else { dist };
+            if dist > tol.integrality && rank < best_rank {
+                best_rank = rank;
                 pick = Some(j);
             }
         }
         let j = match pick {
             None => {
-                // 全部整数变量已满足整数性：复核后返回。
+                // 所选整数列均已取整。复核仍涵盖所有余量、原行和变量界。
                 return round_and_check(problem, bounds, &cur_x, tol);
             }
             Some(j) => j,
@@ -209,10 +522,8 @@ pub(crate) fn dive_with_work_budget(
             return round_and_check(problem, bounds, &cur_x, tol);
         }
         // 固定到 round 值（夹回界）。
-        let target = cur_x[j]
-            .round()
-            .max(dive_bounds.lb[j])
-            .min(dive_bounds.ub[j]);
+        let rounded = if choices.is_some_and(|g| g[j]) { 1. } else { cur_x[j].round() };
+        let target = rounded.max(dive_bounds.lb[j]).min(dive_bounds.ub[j]);
         dive_bounds.lb[j] = target;
         dive_bounds.ub[j] = target;
         fixes += 1;
@@ -347,7 +658,7 @@ pub(crate) fn sub_mip_with_work_budget(
     if root_lp_x.iter().any(|v| !v.is_finite()) {
         return None;
     }
-    let int_vars = problem.integer_vars();
+    let int_vars = heuristic_integers(problem);
     // 受限子问题（RENS 邻域）：整数性已满足的整数变量固定到 round 值
     //（夹回原界），分数整数变量保持自由。
     let mut sub = bounds.clone();
@@ -363,7 +674,7 @@ pub(crate) fn sub_mip_with_work_budget(
         }
     }
     if fractional == 0 {
-        return None; // 根 LP 已全整：无受限邻域可搜（主流程按 (e) 记录）
+        return None; // 无独立整数列可分支；主搜索仍检查全部整数变量。
     }
     if budget.is_none() {
         return sub_mip_with_caps(problem, simplex, bounds, &sub, incumbent_obj, tol,
@@ -415,7 +726,7 @@ fn sub_mip_with_caps_and_budget(
     budget: Option<&mut HeuristicWorkBudget>,
     fallback_x: Option<&[f64]>,
 ) -> Option<Incumbent> {
-    let int_vars = problem.integer_vars();
+    let int_vars = heuristic_integers(problem);
     let mut ctx = SubMipCtx {
         problem,
         base,
@@ -1159,6 +1470,181 @@ mod tests {
 
     fn tol() -> Tolerances {
         Tolerances::default()
+    }
+
+    fn pad_wide_problem(p: &mut Problem) {
+        use crate::model::Variable;
+        for j in p.vars.len()..4100 {
+            p.vars.push(Variable {
+                name: format!("补列{j}"),
+                var_type: VarType::Binary,
+                lb: 0.0,
+                ub: 0.0,
+            });
+        }
+    }
+
+    #[test]
+    fn implicit_integers_require_independent_exact_rows() {
+        let mut p = Problem::new("余量识别", Sense::Minimize);
+        let x = p.add_var("选择", VarType::Binary).unwrap();
+        let c = p.add_var("连续", VarType::Continuous).unwrap();
+        let slacks: Vec<_> = (0..8).map(|j|
+            p.add_var(&format!("余量{j}"), VarType::Integer).unwrap()
+        ).collect();
+        let mut row = |terms, rhs| p.add_constraint(None, terms, RelOp::Eq, rhs).unwrap();
+        row(vec![(x, 1.5), (slacks[0], -0.75), (slacks[1], 0.75)], 0.0);
+        row(vec![(slacks[2], 1.), (slacks[3], 1.)], 2.);
+        row(vec![(slacks[2], 1.), (slacks[3], -1.)], 0.);
+        row(vec![(x, 1.), (slacks[4], 1.)], 1_f64.next_up());
+        row(vec![(x, 1_f64.next_down()), (slacks[5], 1.)], 2.);
+        row(vec![(c, 1.), (slacks[6], 1.)], 1.);
+        p.add_constraint(None, vec![(x, 1.), (slacks[7], 1.)], RelOp::Le, 1.).unwrap();
+        pad_wide_problem(&mut p);
+        let choices = heuristic_integers(&p);
+        // 同一行的两个私有余量最多排除一列。跨行相连的列、非整倍数、
+        // 含连续项的等式和不等式，都保留原整数选择。
+        assert!(!choices.contains(&slacks[0]));
+        assert!(slacks[1..].iter().all(|j| choices.contains(j)));
+        assert!(choices.contains(&x));
+    }
+
+    #[test]
+    fn missing_heuristic_candidate_leaves_full_integer_search_open() {
+        use crate::branch_bound::{branch_and_bound, BbOptions};
+        use crate::model::SolveStatus;
+        let mut p = Problem::new("完整验整", Sense::Maximize);
+        let x = p.add_var("选择", VarType::Binary).unwrap();
+        let s = p.add_var("余量", VarType::Integer).unwrap();
+        p.add_constraint(None, vec![(x, 1.), (s, 1.)], RelOp::Eq, 1.).unwrap();
+        p.add_constraint(None, vec![(x, 1.)], RelOp::Le, 0.5).unwrap();
+        // 非整数目标可隔离主搜索的节点上限，避免整数目标截断在根恰好证优。
+        p.set_objective(vec![(x, 0.75)], 0.).unwrap();
+        pad_wide_problem(&mut p);
+        let bounds = Bounds::from_problem(&p);
+        let mut lp = Simplex::new(&p, tol()).unwrap();
+        let root = lp.solve(&bounds);
+        assert!(!heuristic_integers(&p).contains(&s));
+        assert_eq!((root.x[x], root.x[s]), (0.5, 0.5));
+        assert!(dive(&p, &mut lp, &bounds, &root.x, 0, &tol()).is_none());
+        // 独立列全整也须取整余量并复核原行；这一候选会违反等式。
+        let mut bad = root.x;
+        bad[x] = 0.;
+        bad[s] = 0.4;
+        assert!(dive(&p, &mut lp, &bounds, &bad, 0, &tol()).is_none());
+        let mut opts = BbOptions {
+            dive_max_fixes: 0, root_cuts: false, local_cuts: false,
+            node_limit: 1, ..BbOptions::default()
+        };
+        assert_eq!(branch_and_bound(&p, &opts, tol()).unwrap().status, SolveStatus::LimitReached);
+        opts.node_limit = 100;
+        let solved = branch_and_bound(&p, &opts, tol()).unwrap();
+        assert_eq!(solved.status, SolveStatus::Optimal);
+        let values = solved.best_values.unwrap();
+        assert_eq!((values[x], values[s]), (0., 1.));
+        assert_eq!(solved.best_objective, Some(0.));
+    }
+
+    #[test]
+    fn private_slacks_produce_checked_assignments_before_the_root_lp() {
+        let mut p = Problem::new("行补偿", Sense::Minimize);
+        let x = p.add_var("早班", VarType::Binary).unwrap();
+        let y = p.add_var("晚班", VarType::Binary).unwrap();
+        let d = p.add_var("缺人", VarType::Integer).unwrap();
+        let under = p.add_var("工时不足", VarType::Continuous).unwrap();
+        let over = p.add_var("工时超出", VarType::Continuous).unwrap();
+        p.add_constraint(None, vec![(x, 1.), (y, 1.), (d, 1.)], RelOp::Eq, 2.).unwrap();
+        p.add_constraint(None, vec![(x, 2.), (y, 2.), (under, 1.), (over, -1.)],
+            RelOp::Eq, 1.).unwrap();
+        p.add_constraint(None, vec![(x, 1.), (y, 1.)], RelOp::Le, 1.).unwrap();
+        p.set_objective(vec![(d, 8.), (under, 1.), (over, 2.)], 7.).unwrap();
+        pad_wide_problem(&mut p);
+        let bounds = Bounds::from_problem(&p);
+        let inc = private_slack_start(&p, &bounds, &tol(), None).unwrap();
+        assert_eq!(&inc.values[..5], &[1., 0., 1., 0., 1.]);
+        assert_eq!(inc.objective, 17.);
+        assert!(private_slack_start(&p, &bounds, &tol(), Some(Instant::now())).is_none());
+        // 半个缺人罚项不满足整数性；此启发式的失败不给主搜索提供任何界。
+        p.constraints[0].rhs = 1.5;
+        assert!(private_slack_start(&p, &bounds, &tol(), None).is_none());
+    }
+
+    #[test]
+    fn choice_equalities_accept_both_signs_and_require_nonnegative_integers() {
+        let mut p = Problem::new("等式互斥", Sense::Minimize);
+        for name in ["早班", "晚班"] { p.add_var(name, VarType::Integer).unwrap(); }
+        for scale in [2., -0.25] {
+            p.add_constraint(None, vec![(0,scale),(1,scale)], RelOp::Eq, scale).unwrap();
+            assert!(is_choice_row(&p,p.constraints.last().unwrap()));
+        }
+        p.vars[1].lb = -1.;
+        assert!(!is_choice_row(&p,&p.constraints[0]));
+        p.vars[1].lb = 0.;
+        p.vars[1].var_type = VarType::Continuous;
+        assert!(!is_choice_row(&p,&p.constraints[0]));
+    }
+
+    #[test]
+    fn short_tree_requires_all_fractional_binary_columns_to_be_covered() {
+        let mut p = Problem::new("小互斥树", Sense::Minimize);
+        for j in 0..1022 {
+            p.add_var(&format!("x{j}"), VarType::Binary).unwrap();
+        }
+        let a = p.add_var("a", VarType::Integer).unwrap();
+        let b = p.add_var("b", VarType::Integer).unwrap();
+        p.add_constraint(None, vec![(0, 1.), (1, 1.)], RelOp::Eq, 1.).unwrap();
+        let mut x = vec![0.; p.vars.len()];
+        assert!(!short_choice_tree(&p, &x, &tol()));
+        x[0] = 0.5;
+        x[1] = 0.5;
+        x[a] = 1.5;
+        assert!(short_choice_tree(&p, &x, &tol()));
+        x[2] = 0.5;
+        assert!(!short_choice_tree(&p, &x, &tol()));
+        x[2] = 0.;
+        x[b] = 0.5;
+        assert!(!short_choice_tree(&p, &x, &tol()));
+    }
+
+    #[test]
+    fn choice_dive_honors_work_and_keeps_the_root_basis() {
+        let mut p = Problem::new("互斥替代", Sense::Maximize);
+        let x = p.add_var("甲", VarType::Binary).unwrap();
+        let y = p.add_var("乙", VarType::Binary).unwrap();
+        let spare = p.add_var("余量", VarType::Integer).unwrap();
+        pad_wide_problem(&mut p);
+        assert!(wide_choice_columns(&p).is_none());
+        let group = (0..p.vars.len()).filter(|&j| j != spare).map(|j| (j, 1.)).collect();
+        p.add_constraint(None, group, RelOp::Le, 1.).unwrap();
+        p.add_constraint(None, vec![(x, 2.)], RelOp::Le, 1.).unwrap();
+        p.set_objective(vec![(x, 2.), (y, 1.)], 0.).unwrap();
+        let bounds = Bounds::from_problem(&p);
+        let mut lp = Simplex::new(&p, tol()).unwrap();
+        let root = lp.solve(&bounds);
+        assert_eq!((root.x[x], root.x[y]), (0.5, 0.5));
+        let before = lp.iterations();
+        let basis = lp.basis_columns().to_vec();
+        let mut work = HeuristicWorkBudget { remaining_work: 100, lp_calls: 0 };
+        let choice = wide_choice_columns(&p).unwrap();
+        let mut reversed = p.clone();
+        for r in &mut reversed.constraints {
+            if r.op == RelOp::Le {
+                r.op = RelOp::Ge;
+                r.rhs = -r.rhs;
+                for (_, a) in &mut r.expr.terms { *a = -*a; }
+            }
+        }
+        assert_eq!(wide_choice_columns(&reversed).unwrap(), choice);
+        let (none, used) = choice_dive(&p, &lp, &bounds, &root.x, &choice, 2, &tol(), Some(&mut work));
+        assert!(none.is_none());
+        assert_eq!(used, 0);
+        work.lp_calls = 8;
+        let (candidate, _) = choice_dive(&p, &lp, &bounds, &root.x, &choice, 2, &tol(), Some(&mut work));
+        let inc = candidate.unwrap();
+        assert_eq!((inc.values[x], inc.values[y], inc.objective), (0., 1., 1.));
+        assert!(work.lp_calls < 8);
+        assert_eq!(lp.iterations(), before);
+        assert_eq!(lp.basis_columns(), basis);
     }
 
     /// （R5-retry）MITM 生产入口在 marketsplit-4x40（全变量精确）与

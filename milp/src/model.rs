@@ -101,6 +101,25 @@ pub struct Variable {
     pub ub: f64,
 }
 
+impl Variable {
+    fn check_bounds(&self, lb: f64, ub: f64) -> Result<()> {
+        if !(lb <= ub) {
+            // 同时覆盖 lb>ub 与 lb/ub 为 NaN 的情形（NaN 的任何比较均为假）
+            return Err(MilpError::InvalidModel(format!(
+                "变量 `{}` 的界非法：lb = {lb}，ub = {ub}（要求 lb ≤ ub）",
+                self.name
+            )));
+        }
+        if self.var_type == VarType::Binary && !(0.0 <= lb && ub <= 1.0) {
+            return Err(MilpError::InvalidModel(format!(
+                "Binary 变量 `{}` 的界 [{lb}, {ub}] 超出 [0,1]",
+                self.name
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// 稀疏线性表达式。
 ///
 /// 不变量：`terms` 按变量下标严格升序、无重复下标、无零系数；由所有构造入口
@@ -220,6 +239,36 @@ impl Problem {
         Ok(index)
     }
 
+    /// 批量添加变量并返回首列下标。重名、保留字或非法变量界使整批失败。
+    pub fn add_vars(&mut self, vars: Vec<Variable>) -> Result<usize> {
+        let first = self.vars.len();
+        let mut names: std::collections::HashSet<&str> =
+            self.vars.iter().map(|v| v.name.as_str()).collect();
+        names.reserve(vars.len());
+        for (i, v) in vars.iter().enumerate() {
+            if !names.insert(&v.name) {
+                return Err(MilpError::InvalidModel(format!(
+                    "变量名 `{}` 重复（批量第 {i} 个，与批内更早元素或现有变量重名）", v.name
+                )));
+            }
+        }
+        for v in &vars {
+            if is_reserved_word(&v.name) {
+                return Err(MilpError::InvalidModel(format!(
+                    "变量名 `{}` 撞 .milp 文法保留字", v.name
+                )));
+            }
+            if !v.lb.is_finite() {
+                return Err(MilpError::InvalidModel(format!(
+                    "变量 `{}` 的下界 {} 必须为有限数", v.name, v.lb
+                )));
+            }
+            v.check_bounds(v.lb, v.ub)?;
+        }
+        self.vars.extend(vars);
+        Ok(first)
+    }
+
     /// 设置变量上下界。
     ///
     /// 模型层宽松：允许 `ub = f64::INFINITY`（lb≤ub 校验仍执行）；
@@ -228,19 +277,7 @@ impl Problem {
         let variable = self.vars.get(var).ok_or_else(|| {
             MilpError::InvalidModel(format!("变量下标 {var} 越界（变量数 {}）", self.vars.len()))
         })?;
-        if !(lb <= ub) {
-            // 同时覆盖 lb>ub 与 lb/ub 为 NaN 的情形（NaN 的任何比较均为假）
-            return Err(MilpError::InvalidModel(format!(
-                "变量 `{}` 的界非法：lb = {lb}，ub = {ub}（要求 lb ≤ ub）",
-                variable.name
-            )));
-        }
-        if variable.var_type == VarType::Binary && !(0.0 <= lb && ub <= 1.0) {
-            return Err(MilpError::InvalidModel(format!(
-                "Binary 变量 `{}` 的界 [{lb}, {ub}] 超出 [0,1]",
-                variable.name
-            )));
-        }
+        variable.check_bounds(lb, ub)?;
         let variable = &mut self.vars[var];
         variable.lb = lb;
         variable.ub = ub;
